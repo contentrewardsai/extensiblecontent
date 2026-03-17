@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "Whop App",
-	description: "My Whop App",
+	title: "Extensible Content — Extension demo",
+	description: "Chrome extension demo — side panel + workflow on a stock-photo style page",
 };
 
 export default function RootLayout({
