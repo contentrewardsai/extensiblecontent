@@ -6,9 +6,14 @@
 		"dev": "whop-proxy --command 'next dev --turbopack'",
 		"build": "next build",
 		"start": "next start",
-		"lint": "biome lint"
+		"lint": "biome lint",
+		"db:migrate": "dotenv -e .env.local -- supabase db push",
+		"db:push": "dotenv -e .env.local -- supabase db push",
+		"db:reset": "dotenv -e .env.local -- supabase db reset"
 	},
 	"dependencies": {
+		"@supabase/ssr": "^0.9.0",
+		"@supabase/supabase-js": "^2.99.2",
 		"@vercel/functions": "^3.1.4",
 		"@whop/react": "0.3.0",
 		"@whop/sdk": "0.0.3",
@@ -18,6 +23,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.2.6",
+		"supabase": "^2.81.0",
 		"@tailwindcss/postcss": "^4.1.14",
 		"@types/node": "^20.19.21",
 		"@types/react": "19.2.2",

@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Extensible Content",
+  "version": "1.0.0",
+  "description": "Chrome extension for Extensible Content — connect to your Whop app",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://*/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "https://*/*"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Extensible Content"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/extension/*",
+        "https://*/extension/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
