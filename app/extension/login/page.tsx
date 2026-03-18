@@ -135,10 +135,16 @@ export default function ExtensionLoginPage() {
 		);
 	}
 	if (status === "error") {
+		const isOAuthConfig = message.toLowerCase().includes("oauth not configured");
 		return (
 			<div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 p-8">
 				<p className="text-lg font-medium text-red-700">Sign in failed</p>
 				<p className="text-sm text-gray-600">{message}</p>
+				{isOAuthConfig && (
+					<p className="max-w-md text-xs text-gray-500 text-center">
+						Add NEXT_PUBLIC_WHOP_APP_ID, WHOP_CLIENT_SECRET (OAuth client secret from Whop dashboard, not API key), and Supabase vars to your deployment environment (e.g. Vercel).
+					</p>
+				)}
 				<button
 					type="button"
 					onClick={() => {

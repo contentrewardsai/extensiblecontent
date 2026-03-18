@@ -22,10 +22,24 @@ export async function POST(request: NextRequest) {
 	const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 	if (!clientId || !clientSecret) {
-		return Response.json({ error: "OAuth not configured" }, { status: 500 });
+		const missing = [
+			!clientId && "NEXT_PUBLIC_WHOP_APP_ID",
+			!clientSecret && "WHOP_CLIENT_SECRET",
+		].filter(Boolean);
+		return Response.json(
+			{ error: `OAuth not configured: missing ${(missing as string[]).join(", ")}` },
+			{ status: 500 },
+		);
 	}
 	if (!supabaseUrl || !supabaseServiceKey) {
-		return Response.json({ error: "Supabase not configured" }, { status: 500 });
+		const missing = [
+			!supabaseUrl && "NEXT_PUBLIC_SUPABASE_URL",
+			!supabaseServiceKey && "SUPABASE_SERVICE_ROLE_KEY",
+		].filter(Boolean);
+		return Response.json(
+			{ error: `Supabase not configured: missing ${(missing as string[]).join(", ")}` },
+			{ status: 500 },
+		);
 	}
 
 	let body: { code: string; code_verifier: string; redirect_uri: string };
