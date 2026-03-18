@@ -17,17 +17,12 @@ interface WhopUserInfo {
 
 export async function POST(request: NextRequest) {
 	const clientId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
-	const clientSecret = process.env.WHOP_CLIENT_SECRET;
 	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 	const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-	if (!clientId || !clientSecret) {
-		const missing = [
-			!clientId && "NEXT_PUBLIC_WHOP_APP_ID",
-			!clientSecret && "WHOP_CLIENT_SECRET",
-		].filter(Boolean);
+	if (!clientId) {
 		return Response.json(
-			{ error: `OAuth not configured: missing ${(missing as string[]).join(", ")}` },
+			{ error: "OAuth not configured: missing NEXT_PUBLIC_WHOP_APP_ID" },
 			{ status: 500 },
 		);
 	}
@@ -53,6 +48,8 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Missing code, code_verifier, or redirect_uri" }, { status: 400 });
 	}
 
+	// PKCE only - Whop OAuth token exchange uses code_verifier, no client_secret needed.
+	// (Sending client_secret can fail with "lacks oauth:token_exchange permission" if app is public.)
 	const tokenRes = await fetch("https://api.whop.com/oauth/token", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -61,7 +58,6 @@ export async function POST(request: NextRequest) {
 			code,
 			redirect_uri,
 			client_id: clientId,
-			client_secret: clientSecret,
 			code_verifier,
 		}),
 	});

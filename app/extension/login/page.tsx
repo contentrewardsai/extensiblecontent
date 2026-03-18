@@ -142,7 +142,7 @@ export default function ExtensionLoginPage() {
 				<p className="text-sm text-gray-600">{message}</p>
 				{isOAuthConfig && (
 					<p className="max-w-md text-xs text-gray-500 text-center">
-						Add NEXT_PUBLIC_WHOP_APP_ID, WHOP_CLIENT_SECRET (OAuth client secret from Whop dashboard, not API key), and Supabase vars to your deployment environment (e.g. Vercel).
+						Add NEXT_PUBLIC_WHOP_APP_ID and Supabase vars to your deployment environment (e.g. Vercel). OAuth uses PKCE; WHOP_CLIENT_SECRET is not required.
 					</p>
 				)}
 				<button

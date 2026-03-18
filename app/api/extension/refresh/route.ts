@@ -9,10 +9,9 @@ interface WhopTokenResponse {
 
 export async function POST(request: NextRequest) {
 	const clientId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
-	const clientSecret = process.env.WHOP_CLIENT_SECRET;
 
-	if (!clientId || !clientSecret) {
-		return Response.json({ error: "OAuth not configured" }, { status: 500 });
+	if (!clientId) {
+		return Response.json({ error: "OAuth not configured: missing NEXT_PUBLIC_WHOP_APP_ID" }, { status: 500 });
 	}
 
 	let body: { refresh_token: string };
@@ -26,6 +25,7 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Missing refresh_token" }, { status: 400 });
 	}
 
+	// PKCE/public client - no client_secret for refresh
 	const res = await fetch("https://api.whop.com/oauth/token", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -33,7 +33,6 @@ export async function POST(request: NextRequest) {
 			grant_type: "refresh_token",
 			refresh_token,
 			client_id: clientId,
-			client_secret: clientSecret,
 		}),
 	});
 
