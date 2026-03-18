@@ -64,10 +64,12 @@ export async function POST(request: NextRequest) {
 
 	if (!tokenRes.ok) {
 		const err = await tokenRes.json().catch(() => ({}));
-		return Response.json(
-			{ error: (err as { error_description?: string }).error_description || "Token exchange failed" },
-			{ status: 400 },
-		);
+		const desc = (err as { error_description?: string }).error_description || "Token exchange failed";
+		// Add fix hint for common Whop OAuth config issue
+		const hint = desc.includes("oauth:token_exchange")
+			? " In Whop Dashboard: OAuth app → switch to Public client mode, or enable oauth:token_exchange permission."
+			: "";
+		return Response.json({ error: desc + hint }, { status: 400 });
 	}
 
 	const tokens = (await tokenRes.json()) as WhopTokenResponse;

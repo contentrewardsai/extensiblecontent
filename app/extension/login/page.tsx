@@ -140,9 +140,14 @@ export default function ExtensionLoginPage() {
 			<div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 p-8">
 				<p className="text-lg font-medium text-red-700">Sign in failed</p>
 				<p className="text-sm text-gray-600">{message}</p>
-				{isOAuthConfig && (
+				{message.includes("oauth:token_exchange") && (
 					<p className="max-w-md text-xs text-gray-500 text-center">
-						Add NEXT_PUBLIC_WHOP_APP_ID and Supabase vars to your deployment environment (e.g. Vercel). OAuth uses PKCE; WHOP_CLIENT_SECRET is not required.
+						Whop Dashboard → your app → OAuth: switch to <strong>Public</strong> client mode, or enable <code>oauth:token_exchange</code> permission for the client secret.
+					</p>
+				)}
+				{isOAuthConfig && !message.includes("oauth:token_exchange") && (
+					<p className="max-w-md text-xs text-gray-500 text-center">
+						Add NEXT_PUBLIC_WHOP_APP_ID and Supabase vars to your deployment (e.g. Vercel).
 					</p>
 				)}
 				<button
