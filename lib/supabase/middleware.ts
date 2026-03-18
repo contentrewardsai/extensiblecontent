@@ -8,17 +8,23 @@ const EXTENSION_CORS_HEADERS = {
 };
 
 export async function updateSession(request: NextRequest) {
+	// Extension routes: no Supabase session needed; add CORS for API
 	if (request.nextUrl.pathname.startsWith("/api/extension")) {
 		if (request.method === "OPTIONS") {
 			return new NextResponse(null, { status: 204, headers: EXTENSION_CORS_HEADERS });
 		}
-	}
-	let response = NextResponse.next({ request });
-	if (request.nextUrl.pathname.startsWith("/api/extension")) {
+		const response = NextResponse.next({ request });
 		for (const [k, v] of Object.entries(EXTENSION_CORS_HEADERS)) {
 			response.headers.set(k, v);
 		}
+		return response;
 	}
+	// Extension login page: no Supabase session needed
+	if (request.nextUrl.pathname.startsWith("/extension/")) {
+		return NextResponse.next({ request });
+	}
+
+	let response = NextResponse.next({ request });
 
 	const supabase = createServerClient(
 		process.env.NEXT_PUBLIC_SUPABASE_URL!,
