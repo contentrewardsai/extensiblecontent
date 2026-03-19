@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import { createUploadPostProfile } from "@/lib/upload-post";
+import { createUploadPostProfile, generateUploadPostJwt } from "@/lib/upload-post";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -98,6 +98,26 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: msg }, { status: 500 });
 	}
 
+	// Generate JWT immediately so the link is ready without a separate connect-url call
+	const appOrigin = process.env.NEXT_PUBLIC_APP_ORIGIN ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://extensiblecontent.com");
+	const redirectUrl = `${appOrigin}/extension/settings?upload=connected`;
+	let jwtAccessUrl: string | null = null;
+	let jwtExpiresAt: string | null = null;
+	try {
+		const jwtRes = await generateUploadPostJwt(uploadPostUsername, apiKey, {
+			redirect_url: redirectUrl,
+			connect_title: "Connect Social Media Accounts",
+			connect_description: "Connect your social media accounts to post from Extensible Content.",
+			show_calendar: false,
+		});
+		if (jwtRes.success && jwtRes.access_url) {
+			jwtAccessUrl = jwtRes.access_url;
+			jwtExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+		}
+	} catch {
+		// Non-fatal: user can request connect-url later
+	}
+
 	// Insert into our DB (exclude api_key from response)
 	const insertRow: Record<string, unknown> = {
 		id: accountId,
@@ -110,6 +130,8 @@ export async function POST(request: NextRequest) {
 	if (isByok) {
 		insertRow.upload_post_api_key_encrypted = userApiKey!.trim();
 	}
+	if (jwtAccessUrl) insertRow.jwt_access_url = jwtAccessUrl;
+	if (jwtExpiresAt) insertRow.jwt_expires_at = jwtExpiresAt;
 
 	const { data: account, error } = await supabase
 		.from("upload_post_accounts")
