@@ -78,6 +78,20 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "ShotStack render failed" }, { status: 500 });
 	}
 
+	// Store in shotstack_renders (all renders)
+	const creditsUsed = env === "stage" ? 0 : creditsNeeded;
+	const { error: renderError } = await supabase.from("shotstack_renders").insert({
+		user_id: user.user_id,
+		shotstack_render_id: result.id,
+		request_json: edit,
+		status: result.status,
+		credits_used: creditsUsed,
+		env,
+	});
+	if (renderError) {
+		console.error("[shotstack] shotstack_renders insert failed:", renderError);
+	}
+
 	// Deduct credits and record usage (only for managed, non-BYOK; skip for staging)
 	if (!use_own_key && env !== "stage") {
 		const { data: u } = await supabase.from("users").select("shotstack_credits").eq("id", user.user_id).single();

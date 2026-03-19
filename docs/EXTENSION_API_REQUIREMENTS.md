@@ -21,4 +21,4 @@ The extensiblecontent.com site should expose these endpoints for the Chrome exte
 - GET /api/extension/industries, GET /api/extension/platforms, GET /api/extension/monetization
 - **Upload-Post accounts:** GET/POST /api/extension/upload-post-accounts, GET/PATCH/DELETE /api/extension/upload-post-accounts/[id], POST /api/extension/upload-post-accounts/[id]/connect-url
 - **Upload-Post proxy:** POST /api/extension/upload-post/proxy
-- **ShotStack:** POST /api/extension/shotstack/render, GET /api/extension/shotstack/status/[id], GET /api/extension/shotstack/credits
+- **ShotStack:** POST /api/extension/shotstack/render, GET /api/extension/shotstack/status/[id], GET /api/extension/shotstack/renders, GET /api/extension/shotstack/credits

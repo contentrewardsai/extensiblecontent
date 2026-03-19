@@ -50,8 +50,10 @@ This document describes the backend integration for ShotStack (video rendering) 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /api/extension/shotstack/render | Queue render. Body: `{ edit, duration_seconds, env?, use_own_key? }` |
-| GET | /api/extension/shotstack/status/[id] | Check render status |
+| GET | /api/extension/shotstack/status/[id] | Check render status (updates output_url when done) |
+| GET | /api/extension/shotstack/renders | List user's renders (optional ?env=stage) |
 | GET | /api/extension/shotstack/credits | Get user's credits |
+| POST | /api/shotstack/test-render | Backend test: submit Summer Holiday to staging. Header: `X-Test-Secret`. Query: `?wait=true` to poll until done. |
 
 ### Upload-Post Accounts
 | Method | Path | Description |
