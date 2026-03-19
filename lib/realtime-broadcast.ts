@@ -20,20 +20,21 @@ function getSupabaseKey(): string {
 }
 
 /**
- * Sends list_updated to each sidebar channel for the given sidebar IDs.
+ * Sends list_updated to the user's channel. One channel per user; all sidebars subscribe to it.
  * Uses REST API so no WebSocket subscription is needed on the server.
+ * @param userId - User ID; broadcasts to user:{userId}
  */
-export async function broadcastListUpdatedToSidebars(sidebarIds: string[]): Promise<void> {
-	if (sidebarIds.length === 0) return;
-
+export async function broadcastListUpdatedToUser(userId: string): Promise<void> {
 	const broadcastUrl = getRealtimeUrl();
 	const apikey = getSupabaseKey();
 
-	const messages = sidebarIds.map((id) => ({
-		topic: `sidebar:${id}`,
-		event: LIST_UPDATED_EVENT,
-		payload: LIST_UPDATED_PAYLOAD,
-	}));
+	const messages = [
+		{
+			topic: `user:${userId}`,
+			event: LIST_UPDATED_EVENT,
+			payload: LIST_UPDATED_PAYLOAD,
+		},
+	];
 
 	const res = await fetch(broadcastUrl, {
 		method: "POST",

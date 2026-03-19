@@ -38,6 +38,10 @@ yarn-error.log*
 .env.development
 .env*.local
 
+# cursor
+.cursor
+.cursorrules
+.cursorignore
 
 # vercel
 .vercel

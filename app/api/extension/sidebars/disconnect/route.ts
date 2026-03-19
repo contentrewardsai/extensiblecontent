@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import { broadcastListUpdatedToSidebars } from "@/lib/realtime-broadcast";
+import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { SidebarDisconnectBody } from "@/lib/types/sidebars";
 
 function getSupabase() {
@@ -53,13 +53,8 @@ export async function POST(request: NextRequest) {
 
 	await supabase.from("sidebars").delete().eq("id", toDelete.id);
 
-	// Broadcast list_updated to remaining sidebars
-	const { data: remaining } = await supabase
-		.from("sidebars")
-		.select("id")
-		.eq("user_id", user.user_id);
-	const ids = (remaining ?? []).map((r) => r.id);
-	await broadcastListUpdatedToSidebars(ids);
+	// Broadcast list_updated to user channel
+	await broadcastListUpdatedToUser(user.user_id);
 
 	return Response.json({ success: true });
 }

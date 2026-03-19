@@ -1,10 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import { broadcastListUpdatedToSidebars } from "@/lib/realtime-broadcast";
+import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
-
-const MAX_SIDEBARS_PER_USER = 10;
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -72,23 +70,7 @@ export async function POST(request: NextRequest) {
 		}
 		sidebar = updated as Sidebar;
 	} else {
-		// Count before insert
-		const { count, error: countError } = await supabase
-			.from("sidebars")
-			.select("id", { count: "exact", head: true })
-			.eq("user_id", user.user_id);
-
-		if (countError) {
-			return Response.json({ error: countError.message }, { status: 500 });
-		}
-		if ((count ?? 0) >= MAX_SIDEBARS_PER_USER) {
-			return Response.json(
-				{ error: "Maximum 10 sidebars per account" },
-				{ status: 429 }
-			);
-		}
-
-		// Insert new
+		// Insert new (no limit; one channel per user)
 		const { data: inserted, error: insertError } = await supabase
 			.from("sidebars")
 			.insert({
@@ -109,13 +91,8 @@ export async function POST(request: NextRequest) {
 		sidebar = inserted as Sidebar;
 	}
 
-	// Broadcast list_updated to all of user's sidebars
-	const { data: allSidebars } = await supabase
-		.from("sidebars")
-		.select("id")
-		.eq("user_id", user.user_id);
-	const ids = (allSidebars ?? []).map((r) => r.id);
-	await broadcastListUpdatedToSidebars(ids);
+	// Broadcast list_updated to user channel (all sidebars subscribe to it)
+	await broadcastListUpdatedToUser(user.user_id);
 
 	return Response.json(sidebar);
 }

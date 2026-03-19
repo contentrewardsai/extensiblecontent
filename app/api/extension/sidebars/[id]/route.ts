@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import { broadcastListUpdatedToSidebars } from "@/lib/realtime-broadcast";
+import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
 
 function getSupabase() {
@@ -60,13 +60,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: error?.message ?? "Failed to update sidebar" }, { status: 500 });
 	}
 
-	// Broadcast list_updated to all of user's sidebars
-	const { data: allSidebars } = await supabase
-		.from("sidebars")
-		.select("id")
-		.eq("user_id", user.user_id);
-	const ids = (allSidebars ?? []).map((r) => r.id);
-	await broadcastListUpdatedToSidebars(ids);
+	// Broadcast list_updated to user channel
+	await broadcastListUpdatedToUser(user.user_id);
 
 	return Response.json(sidebar as Sidebar);
 }

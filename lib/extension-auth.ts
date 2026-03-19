@@ -19,7 +19,10 @@ export interface ExtensionUser {
  */
 export async function getExtensionUser(request: NextRequest): Promise<ExtensionUser | null> {
 	const auth = request.headers.get("Authorization");
-	const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+	let token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+	if (!token) {
+		token = request.nextUrl.searchParams.get("token");
+	}
 	if (!token) return null;
 
 	const userinfoRes = await fetch("https://api.whop.com/oauth/userinfo", {
