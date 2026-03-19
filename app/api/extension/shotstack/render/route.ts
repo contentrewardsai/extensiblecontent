@@ -56,8 +56,8 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "ShotStack not configured" }, { status: 503 });
 	}
 
-	// Credit check (only for managed key + non-BYOK)
-	if (!use_own_key) {
+	// Credit check (only for managed key + non-BYOK; skip for staging - it's free)
+	if (!use_own_key && env !== "stage") {
 		const { data: userRow } = await supabase
 			.from("users")
 			.select("shotstack_credits")
@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "ShotStack render failed" }, { status: 500 });
 	}
 
-	// Deduct credits and record usage (only for managed, non-BYOK)
-	if (!use_own_key) {
+	// Deduct credits and record usage (only for managed, non-BYOK; skip for staging)
+	if (!use_own_key && env !== "stage") {
 		const { data: u } = await supabase.from("users").select("shotstack_credits").eq("id", user.user_id).single();
 		const current = Number(u?.shotstack_credits ?? 0);
 		await supabase
