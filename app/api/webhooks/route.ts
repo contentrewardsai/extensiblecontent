@@ -19,7 +19,9 @@ export async function POST(request: NextRequest): Promise<Response> {
 }
 
 async function handlePaymentSucceeded(payment: Payment) {
-	// This is a placeholder for a potentially long running operation
-	// In a real scenario, you might need to fetch user data, update a database, etc.
+	// TODO: Map Whop product/plan to:
+	// - shotstack_credits: add credits to users.shotstack_credits
+	// - max_upload_post_accounts: set users.max_upload_post_accounts
+	// Look up user by payment metadata (e.g. whop_user_id), then update Supabase.
 	console.log("[PAYMENT SUCCEEDED]", payment);
 }
