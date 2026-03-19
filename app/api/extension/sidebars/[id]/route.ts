@@ -61,10 +61,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
 	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 	if (body.sidebar_name !== undefined) {
-		if (typeof body.sidebar_name !== "string" || !body.sidebar_name.trim()) {
-			return Response.json({ error: "sidebar_name must be a non-empty string" }, { status: 400 });
+		if (typeof body.sidebar_name !== "string") {
+			return Response.json({ error: "sidebar_name must be a string" }, { status: 400 });
 		}
-		updates.sidebar_name = body.sidebar_name.trim();
+		// Empty string = skip update (keep existing name)
+		if (body.sidebar_name.trim()) {
+			updates.sidebar_name = body.sidebar_name.trim();
+		}
 	}
 	if (body.active_project_id !== undefined) {
 		updates.active_project_id = body.active_project_id ?? null;

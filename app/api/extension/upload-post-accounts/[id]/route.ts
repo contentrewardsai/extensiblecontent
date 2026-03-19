@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 	const supabase = getSupabase();
 	const { data: account, error } = await supabase
 		.from("upload_post_accounts")
-		.select("*")
+		.select("id, user_id, name, upload_post_username, uses_own_key, created_at, updated_at, jwt_access_url, jwt_expires_at")
 		.eq("id", id)
 		.eq("user_id", user.user_id)
 		.single();
@@ -61,7 +61,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		.update(updates)
 		.eq("id", id)
 		.eq("user_id", user.user_id)
-		.select()
+		.select("id, user_id, name, upload_post_username, uses_own_key, created_at, updated_at, jwt_access_url, jwt_expires_at")
 		.single();
 
 	if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -78,7 +78,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 	const supabase = getSupabase();
 	const { data: account, error: fetchError } = await supabase
 		.from("upload_post_accounts")
-		.select("upload_post_username, uses_own_key")
+		.select("upload_post_username, uses_own_key, upload_post_api_key_encrypted")
 		.eq("id", id)
 		.eq("user_id", user.user_id)
 		.single();
@@ -87,9 +87,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 		return Response.json({ error: "Not found" }, { status: 404 });
 	}
 
-	// Delete from Upload-Post (use our key for managed accounts)
-	const apiKey = getUploadPostKey();
-	if (apiKey && !account.uses_own_key) {
+	// Delete from Upload-Post when we have the key (managed or BYOK)
+	const apiKey = account.uses_own_key
+		? (account.upload_post_api_key_encrypted?.trim() ?? null)
+		: getUploadPostKey();
+	if (apiKey) {
 		try {
 			await deleteUploadPostProfile(account.upload_post_username, apiKey);
 		} catch (err) {

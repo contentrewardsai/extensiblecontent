@@ -33,6 +33,9 @@ This document describes the backend integration for ShotStack (video rendering) 
 | name | text | User-facing label |
 | upload_post_username | text | Stable ID for Upload-Post API |
 | uses_own_key | bool | true = user's key, false = our key |
+| upload_post_api_key_encrypted | text | BYOK: user's API key (plain for now; TODO encrypt) |
+| jwt_access_url | text | Cached JWT URL (valid 48h) |
+| jwt_expires_at | timestamptz | When cached JWT expires |
 
 ### shotstack_usage
 | Column | Type | Description |
@@ -59,11 +62,12 @@ This document describes the backend integration for ShotStack (video rendering) 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /api/extension/upload-post-accounts | List user's accounts |
-| POST | /api/extension/upload-post-accounts | Create account (name required) |
+| POST | /api/extension/upload-post-accounts | Create account. Body: `{ name, api_key? }`. With `api_key` = BYOK |
+| POST | /api/extension/upload-post-accounts/repair | Repair orphaned accounts (create missing Upload-Post profiles) |
 | GET | /api/extension/upload-post-accounts/[id] | Get one account |
 | PATCH | /api/extension/upload-post-accounts/[id] | Update name |
 | DELETE | /api/extension/upload-post-accounts/[id] | Delete account |
-| POST | /api/extension/upload-post-accounts/[id]/connect-url | Get JWT URL for connecting social handles |
+| POST | /api/extension/upload-post-accounts/[id]/connect-url | Get JWT URL (cached if >24h valid) |
 
 ### Posting Methods
 | Method | Path | Description |
@@ -91,11 +95,11 @@ This document describes the backend integration for ShotStack (video rendering) 
 
 ## Connect Flow (JWT)
 
-1. User creates upload-post account via `POST /api/extension/upload-post-accounts`
+1. User creates upload-post account via `POST /api/extension/upload-post-accounts` (optional `api_key` for BYOK)
 2. User requests connect URL: `POST /api/extension/upload-post-accounts/[id]/connect-url`
-3. Backend calls Upload-Post `generate-jwt`, returns `access_url`
+3. Backend returns cached JWT if valid (>24h remaining), else calls Upload-Post `generate-jwt`, caches, returns `access_url`
 4. User opens URL, connects Instagram/TikTok/etc. via OAuth
-5. After 48h, JWT expires; user can request a new connect URL if needed
+5. JWT expires in 48h; cron refreshes daily at 00:05 UTC
 
 ---
 
@@ -118,3 +122,4 @@ Look up user by `whop_user_id` from payment metadata.
 | UPLOAD_POST_API_KEY | Main key for managed accounts & proxy |
 | UPLOAD_POST_EXTENSION_KEY | Optional: key for extension (rotate frequently) |
 | NEXT_PUBLIC_APP_ORIGIN | Base URL for JWT redirect |
+| CRON_SECRET | For Vercel cron (upload-post JWT refresh); set in Vercel dashboard |
