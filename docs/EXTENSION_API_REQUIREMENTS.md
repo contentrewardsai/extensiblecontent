@@ -5,10 +5,10 @@ The extensiblecontent.com site should expose these endpoints for the Chrome exte
 ## Required by extension
 
 - **Page captures:** GET/POST /api/extension/page-captures, POST /api/extension/page-capture-sections
-- **Social profiles:** GET/POST /api/extension/social-profiles
+- **Social profiles:** GET/POST /api/extension/social-profiles, GET/PATCH/DELETE /api/extension/social-profiles/[id] ✓
 - **Upload-Post key:** GET /api/extension/upload-post-key ✓
 - **Pro status:** GET /api/extension/has-upgraded ✓
-- **Default project:** GET/PATCH /api/extension/user/default-project
+- **Default project:** GET/PATCH /api/extension/user/default-project ✓
 
 ## Implemented extension APIs
 

@@ -11,6 +11,26 @@ function getSupabase() {
 	return createClient(url, key);
 }
 
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+	const user = await getExtensionUser(request);
+	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+	const { id } = await params;
+	const supabase = getSupabase();
+	const { data: sidebar, error } = await supabase
+		.from("sidebars")
+		.select("*")
+		.eq("id", id)
+		.eq("user_id", user.user_id)
+		.single();
+
+	if (error || !sidebar) {
+		return Response.json({ error: "Sidebar not found" }, { status: 404 });
+	}
+
+	return Response.json(sidebar as Sidebar);
+}
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const user = await getExtensionUser(request);
 	if (!user) {
@@ -31,11 +51,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: "Sidebar not found" }, { status: 404 });
 	}
 
-	let body: SidebarUpdateBody;
+	let body: SidebarUpdateBody = {};
 	try {
-		body = await request.json();
+		const raw = await request.json();
+		if (raw && typeof raw === "object") body = raw as SidebarUpdateBody;
 	} catch {
-		return Response.json({ error: "Invalid JSON" }, { status: 400 });
+		// Empty or invalid body - treat as no-op, will only update updated_at if no fields
 	}
 
 	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -47,6 +68,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 	}
 	if (body.active_project_id !== undefined) {
 		updates.active_project_id = body.active_project_id ?? null;
+	}
+
+	// No fields to update - return current sidebar
+	if (Object.keys(updates).length <= 1) {
+		const { data: current } = await supabase
+			.from("sidebars")
+			.select("*")
+			.eq("id", id)
+			.eq("user_id", user.user_id)
+			.single();
+		if (current) return Response.json(current as Sidebar);
 	}
 
 	const { data: sidebar, error } = await supabase
