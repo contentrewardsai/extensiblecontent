@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 		query = query.eq("window_id", window_id!);
 	}
 
-	const { data: toDelete } = await query.single();
+	const { data: toDelete } = await query.maybeSingle();
 
 	if (!toDelete) {
 		// Already disconnected or not found - still return success

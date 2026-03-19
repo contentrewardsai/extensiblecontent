@@ -20,22 +20,28 @@ function withConnected(sidebar: Sidebar): Sidebar {
 }
 
 export async function GET(request: NextRequest) {
-	const user = await getExtensionUser(request);
-	if (!user) {
-		return Response.json({ error: "Unauthorized" }, { status: 401 });
+	try {
+		const user = await getExtensionUser(request);
+		if (!user) {
+			return Response.json({ error: "Unauthorized" }, { status: 401 });
+		}
+
+		const supabase = getSupabase();
+		const { data: sidebars, error } = await supabase
+			.from("sidebars")
+			.select("*")
+			.eq("user_id", user.user_id)
+			.order("last_seen", { ascending: false });
+
+		if (error) {
+			console.error("[sidebars] List error:", error);
+			return Response.json({ error: "Failed to list sidebars" }, { status: 500 });
+		}
+
+		const withConnectedFlag = (sidebars ?? []).map(withConnected);
+		return Response.json({ sidebars: withConnectedFlag });
+	} catch (err) {
+		console.error("[sidebars] Unexpected error:", err);
+		return Response.json({ error: "Failed to list sidebars" }, { status: 500 });
 	}
-
-	const supabase = getSupabase();
-	const { data: sidebars, error } = await supabase
-		.from("sidebars")
-		.select("*")
-		.eq("user_id", user.user_id)
-		.order("last_seen", { ascending: false });
-
-	if (error) {
-		return Response.json({ error: error.message }, { status: 500 });
-	}
-
-	const withConnectedFlag = (sidebars ?? []).map(withConnected);
-	return Response.json(withConnectedFlag);
 }
