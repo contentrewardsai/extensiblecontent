@@ -16,13 +16,20 @@ function getIpAddress(request: NextRequest): string | null {
 }
 
 function errorResponse(err: unknown, fallback = "Registration failed") {
+	const e = err as { message?: string; details?: string; code?: string };
 	const message =
-		(err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err));
-	const details =
-		(err as { details?: string })?.details ??
-		(err instanceof Error ? err.stack?.split("\n")[1]?.trim() : undefined);
+		e?.message ||
+		(err instanceof Error ? err.message : undefined) ||
+		(typeof err === "string" ? err : undefined) ||
+		(err ? JSON.stringify(err) : undefined) ||
+		fallback;
+	const details = e?.details ?? (err instanceof Error ? err.stack?.split("\n")[1]?.trim() : undefined);
+	const code = e?.code;
 	console.error("[sidebars/register]", err);
-	return Response.json({ error: message || fallback, details }, { status: 500 });
+	return Response.json(
+		{ error: String(message).slice(0, 500), details, code },
+		{ status: 500 },
+	);
 }
 
 export async function POST(request: NextRequest) {
@@ -114,8 +121,12 @@ export async function POST(request: NextRequest) {
 			sidebar = inserted as Sidebar;
 		}
 
-		// Broadcast list_updated to user channel (all sidebars subscribe to it)
-		await broadcastListUpdatedToUser(user.user_id);
+		// Broadcast list_updated to user channel (non-fatal; don't fail registration)
+		try {
+			await broadcastListUpdatedToUser(user.user_id);
+		} catch (broadcastErr) {
+			console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
+		}
 
 		// Include connected: true (just registered = active)
 		const response = { ...sidebar, connected: true };
