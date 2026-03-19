@@ -49,6 +49,9 @@ export default function ExtensionLoginPage() {
 			code_challenge: await sha256(pkce.codeVerifier),
 			code_challenge_method: "S256",
 		});
+		// Affiliate attribution: use URL param or default to contentrewardsai
+		const affiliate = new URLSearchParams(window.location.search).get("a") ?? "contentrewardsai";
+		params.set("a", affiliate);
 		window.location.href = `https://api.whop.com/oauth/authorize?${params}`;
 	}, []);
 
@@ -157,7 +160,8 @@ export default function ExtensionLoginPage() {
 						setMessage("");
 						window.history.replaceState({}, "", "/extension/login");
 					}}
-					className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+					className="rounded px-4 py-2 hover:opacity-90"
+					style={{ backgroundColor: "#2563eb", color: "#ffffff" }}
 				>
 					Try again
 				</button>
@@ -174,7 +178,8 @@ export default function ExtensionLoginPage() {
 			<button
 				type="button"
 				onClick={startOAuth}
-				className="rounded bg-blue-600 px-6 py-3 font-medium text-white hover:bg-blue-700"
+				className="rounded px-6 py-3 font-medium hover:opacity-90"
+				style={{ backgroundColor: "#2563eb", color: "#ffffff" }}
 			>
 				Login with Whop
 			</button>
