@@ -9,7 +9,7 @@ export async function GET(_request: NextRequest) {
 	}
 
 	const supabase = createClient(url, key);
-	const { data, error } = await supabase.from("platforms").select("id, name, slug, created_at").order("name");
+	const { data, error } = await supabase.from("platforms").select("id, name, slug, created_at").order("name", { ascending: false });
 
 	if (error) {
 		return Response.json({ error: error.message }, { status: 500 });
