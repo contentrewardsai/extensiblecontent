@@ -15,6 +15,16 @@ function getIpAddress(request: NextRequest): string | null {
 	return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
 }
 
+function errorResponse(err: unknown, fallback = "Registration failed") {
+	const message =
+		(err as { message?: string })?.message ?? (err instanceof Error ? err.message : String(err));
+	const details =
+		(err as { details?: string })?.details ??
+		(err instanceof Error ? err.stack?.split("\n")[1]?.trim() : undefined);
+	console.error("[sidebars/register]", err);
+	return Response.json({ error: message || fallback, details }, { status: 500 });
+}
+
 export async function POST(request: NextRequest) {
 	try {
 		const user = await getExtensionUser(request);
@@ -37,6 +47,14 @@ export async function POST(request: NextRequest) {
 			return Response.json({ error: "sidebar_name is required" }, { status: 400 });
 		}
 
+		const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+		const safeProjectId =
+			active_project_id &&
+			typeof active_project_id === "string" &&
+			UUID_REGEX.test(active_project_id.trim())
+				? active_project_id.trim()
+				: null;
+
 		const supabase = getSupabase();
 		const ipAddress = getIpAddress(request);
 		const now = new Date().toISOString();
@@ -50,8 +68,7 @@ export async function POST(request: NextRequest) {
 			.maybeSingle();
 
 		if (selectError) {
-			console.error("[sidebars/register] Select error:", selectError);
-			return Response.json({ error: "Registration failed" }, { status: 500 });
+			return errorResponse(selectError);
 		}
 
 		let sidebar: Sidebar;
@@ -62,7 +79,7 @@ export async function POST(request: NextRequest) {
 				.from("sidebars")
 				.update({
 					sidebar_name: sidebar_name.trim(),
-					active_project_id: active_project_id ?? null,
+					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,
 					updated_at: now,
@@ -72,8 +89,7 @@ export async function POST(request: NextRequest) {
 				.single();
 
 			if (updateError || !updated) {
-				console.error("[sidebars/register] Update error:", updateError);
-				return Response.json({ error: "Registration failed" }, { status: 500 });
+				return errorResponse(updateError);
 			}
 			sidebar = updated as Sidebar;
 		} else {
@@ -84,7 +100,7 @@ export async function POST(request: NextRequest) {
 					user_id: user.user_id,
 					window_id: window_id.trim(),
 					sidebar_name: sidebar_name.trim(),
-					active_project_id: active_project_id ?? null,
+					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,
 					updated_at: now,
@@ -93,8 +109,7 @@ export async function POST(request: NextRequest) {
 				.single();
 
 			if (insertError || !inserted) {
-				console.error("[sidebars/register] Insert error:", insertError);
-				return Response.json({ error: "Registration failed" }, { status: 500 });
+				return errorResponse(insertError);
 			}
 			sidebar = inserted as Sidebar;
 		}
@@ -106,7 +121,6 @@ export async function POST(request: NextRequest) {
 		const response = { ...sidebar, connected: true };
 		return Response.json({ sidebar: response });
 	} catch (err) {
-		console.error("[sidebars/register] Unexpected error:", err);
-		return Response.json({ error: "Registration failed" }, { status: 500 });
+		return errorResponse(err);
 	}
 }
