@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { userCanAccessWorkflow } from "@/lib/workflow-user-access";
 import type { Workflow, WorkflowUpdate } from "@/lib/types/workflows";
 
 function getSupabase() {
@@ -21,17 +22,6 @@ async function workflowWithAddedBy(supabase: SupabaseClient, wf: Record<string, 
 	} as Workflow;
 }
 
-async function userCanAccess(supabase: SupabaseClient, workflow: { created_by: string }, workflowId: string, userId: string): Promise<boolean> {
-	if (workflow.created_by === userId) return true;
-	const { data } = await supabase
-		.from("workflow_added_by")
-		.select("user_id")
-		.eq("workflow_id", workflowId)
-		.eq("user_id", userId)
-		.single();
-	return !!data;
-}
-
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const user = await getExtensionUser(request);
 	if (!user) {
@@ -47,7 +37,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 		return Response.json({ error: error?.message ?? "Workflow not found" }, { status: 404 });
 	}
 
-	const canAccess = await userCanAccess(supabase, workflow as { created_by: string }, id, user.user_id);
+	const canAccess = await userCanAccessWorkflow(supabase, workflow as { created_by: string }, id, user.user_id);
 	if (!canAccess) {
 		return Response.json({ error: "Workflow not found" }, { status: 404 });
 	}
@@ -70,7 +60,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: "Workflow not found" }, { status: 404 });
 	}
 
-	const canAccess = await userCanAccess(supabase, existing, id, user.user_id);
+	const canAccess = await userCanAccessWorkflow(supabase, existing, id, user.user_id);
 	if (!canAccess) {
 		return Response.json({ error: "Workflow not found" }, { status: 404 });
 	}
@@ -138,7 +128,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 		return Response.json({ error: "Workflow not found" }, { status: 404 });
 	}
 
-	const canAccess = await userCanAccess(supabase, existing, id, user.user_id);
+	const canAccess = await userCanAccessWorkflow(supabase, existing, id, user.user_id);
 	if (!canAccess) {
 		return Response.json({ error: "Workflow not found" }, { status: 404 });
 	}

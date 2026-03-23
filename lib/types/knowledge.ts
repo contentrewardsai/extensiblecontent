@@ -22,11 +22,15 @@ export interface KnowledgeAnswer {
 	answer_text: string | null;
 	submitter_user_id: string;
 	status: KnowledgeModerationStatus;
+	/** True when submitted with for_review; approval still requires KB-eligible workflow. */
+	workflow_kb_check_bypass: boolean;
 	created_at: string;
 	updated_at: string;
 	moderated_at: string | null;
 	moderated_by: string | null;
 	moderation_note: string | null;
+	/** Set on POST response when for_review was used with workflow_id. */
+	submission_kind?: "workflow_pending_catalog";
 }
 
 export interface KnowledgeQuestionSubmitBody {
@@ -42,6 +46,11 @@ export interface KnowledgeAnswerSubmitBody {
 	workflow_id?: string;
 	/** Plain-language answer; optional if workflow_id is set, required otherwise. */
 	text?: string;
+	/**
+	 * When true with workflow_id, skip strict catalog eligibility; caller must own workflow or be in added_by.
+	 * Row stays pending until moderated; DB blocks approve until workflow is KB-eligible.
+	 */
+	for_review?: boolean;
 }
 
 /** Minimal workflow fields returned with public Q&A (no workflow JSON body). */

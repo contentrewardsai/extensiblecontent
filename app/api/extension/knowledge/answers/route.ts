@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import type { KnowledgeAnswer, KnowledgeAnswerSubmitBody } from "@/lib/types/knowledge";
+import { userCanAccessWorkflow } from "@/lib/workflow-user-access";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -21,7 +22,9 @@ function workflowKbEligible(w: {
 
 /**
  * POST: Submit an answer — workflow link, text, or both (ExtensionApi.addWorkflowAnswerQA + optional text).
- * Body: { question_id, workflow_id?, text? } — at least one of workflow_id or text (non-empty).
+ * Body: { question_id, workflow_id?, text?, for_review? } — at least one of workflow_id or text (non-empty).
+ * With for_review: true, workflow_id is required; catalog eligibility is skipped for the workflow owner / added_by;
+ * row is pending until moderated; public QA requires approval and a KB-eligible workflow (DB-enforced on approve).
  */
 export async function POST(request: NextRequest) {
 	const user = await getExtensionUser(request);
@@ -40,10 +43,15 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "question_id is required" }, { status: 400 });
 	}
 
+	const forReview = body.for_review === true;
 	const workflowIdRaw = typeof body.workflow_id === "string" ? body.workflow_id.trim() : "";
 	const workflowId = workflowIdRaw || null;
 	const answerTextRaw = typeof body.text === "string" ? body.text.trim() : "";
 	const answerText = answerTextRaw || null;
+
+	if (forReview && !workflowId) {
+		return Response.json({ error: "for_review requires workflow_id" }, { status: 400 });
+	}
 
 	if (!workflowId && !answerText) {
 		return Response.json({ error: "At least one of workflow_id or text is required" }, { status: 400 });
@@ -61,7 +69,7 @@ export async function POST(request: NextRequest) {
 	if (workflowId) {
 		const { data: workflow, error: wErr } = await supabase
 			.from("workflows")
-			.select("id, published, approved, private, archived")
+			.select("id, published, approved, private, archived, created_by")
 			.eq("id", workflowId)
 			.maybeSingle();
 
@@ -69,7 +77,20 @@ export async function POST(request: NextRequest) {
 			return Response.json({ error: "Workflow not found" }, { status: 404 });
 		}
 
-		if (!workflowKbEligible(workflow as { published: boolean; approved: boolean; private: boolean; archived: boolean })) {
+		const wf = workflow as {
+			published: boolean;
+			approved: boolean;
+			private: boolean;
+			archived: boolean;
+			created_by: string;
+		};
+
+		if (forReview) {
+			const canPropose = await userCanAccessWorkflow(supabase, { created_by: wf.created_by }, workflowId, user.user_id);
+			if (!canPropose) {
+				return Response.json({ error: "Workflow not found" }, { status: 404 });
+			}
+		} else if (!workflowKbEligible(wf)) {
 			return Response.json(
 				{
 					error:
@@ -86,6 +107,7 @@ export async function POST(request: NextRequest) {
 		submitter_user_id: user.user_id,
 		status: "pending",
 		updated_at: now,
+		workflow_kb_check_bypass: forReview && !!workflowId,
 	};
 	if (workflowId) insertRow.workflow_id = workflowId;
 	if (answerText) insertRow.answer_text = answerText;
@@ -115,5 +137,10 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Failed to create answer" }, { status: 500 });
 	}
 
-	return Response.json(row as KnowledgeAnswer);
+	const payload: KnowledgeAnswer = { ...(row as KnowledgeAnswer) };
+	if (payload.workflow_kb_check_bypass) {
+		payload.submission_kind = "workflow_pending_catalog";
+	}
+
+	return Response.json(payload);
 }
