@@ -65,7 +65,16 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { name, workflow: workflowJson, private: priv = true, published = false, version = 1, initial_version = null, added_by = [] } = body;
+	const {
+		name,
+		workflow: workflowJson,
+		private: priv = true,
+		published = false,
+		approved = false,
+		version = 1,
+		initial_version = null,
+		added_by = [],
+	} = body;
 
 	if (!name || typeof name !== "string" || !name.trim()) {
 		return Response.json({ error: "name is required" }, { status: 400 });
@@ -76,12 +85,15 @@ export async function POST(request: NextRequest) {
 
 	const supabase = getSupabase();
 
+	// Opaque JSON: persist full `workflow` without stripping nested keys (e.g. analyzed.actions[].comment).
+	// See docs/BACKEND_IMPLEMENTATION_PROMPT.md and lib/workflow-json-contract.ts.
 	const insertRow: Record<string, unknown> = {
 		created_by: user.user_id,
 		name: name.trim(),
 		workflow: workflowJson,
 		private: priv,
 		published,
+		approved,
 		version,
 		initial_version,
 		updated_at: new Date().toISOString(),

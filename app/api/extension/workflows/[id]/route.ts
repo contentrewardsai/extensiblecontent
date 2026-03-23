@@ -82,7 +82,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { name, workflow: workflowJson, private: priv, published, version, initial_version, added_by } = body;
+	const { name, workflow: workflowJson, private: priv, published, approved, version, initial_version, added_by } = body;
 
 	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 	if (name !== undefined) {
@@ -95,10 +95,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		if (typeof workflowJson !== "object" || workflowJson === null) {
 			return Response.json({ error: "workflow must be an object" }, { status: 400 });
 		}
+		// Opaque JSON: replace full blob; do not strip nested keys. See docs/BACKEND_IMPLEMENTATION_PROMPT.md.
 		updates.workflow = workflowJson;
 	}
 	if (priv !== undefined) updates.private = priv;
 	if (published !== undefined) updates.published = published;
+	if (approved !== undefined) updates.approved = approved;
 	if (version !== undefined) updates.version = version;
 	if (initial_version !== undefined) updates.initial_version = initial_version;
 

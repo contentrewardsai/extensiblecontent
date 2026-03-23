@@ -5,6 +5,8 @@ export interface Workflow {
 	workflow: Record<string, unknown>;
 	private: boolean;
 	published: boolean;
+	/** Curator-approved; required with published + public for knowledge-base answer links. */
+	approved: boolean;
 	version: number;
 	initial_version: string | null;
 	archived: boolean;
@@ -19,6 +21,7 @@ export interface WorkflowInsert {
 	workflow: Record<string, unknown>;
 	private?: boolean;
 	published?: boolean;
+	approved?: boolean;
 	version?: number;
 	initial_version?: string | null;
 	added_by?: string[];
@@ -29,6 +32,7 @@ export interface WorkflowUpdate {
 	workflow?: Record<string, unknown>;
 	private?: boolean;
 	published?: boolean;
+	approved?: boolean;
 	version?: number;
 	initial_version?: string | null;
 	added_by?: string[];
