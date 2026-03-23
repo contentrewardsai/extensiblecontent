@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { countUploadPostAccountsForUser } from "@/lib/upload-post-account-limits";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -10,7 +11,8 @@ function getSupabase() {
 }
 
 /**
- * GET: Return whether the authenticated user has upgraded.
+ * GET: Pro / upgrade flag plus Upload-Post (Connected) account counts for extension UI.
+ * `num_accounts` / `max_accounts` align with POST /api/extension/social-profiles limits.
  */
 export async function GET(request: NextRequest) {
 	const user = await getExtensionUser(request);
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
 	const supabase = getSupabase();
 	const { data, error } = await supabase
 		.from("users")
-		.select("has_upgraded")
+		.select("has_upgraded, max_upload_post_accounts")
 		.eq("id", user.user_id)
 		.single();
 
@@ -27,5 +29,14 @@ export async function GET(request: NextRequest) {
 		return Response.json({ error: "User not found" }, { status: 404 });
 	}
 
-	return Response.json({ has_upgraded: !!data.has_upgraded });
+	const has_upgraded = !!data.has_upgraded;
+	const max_accounts = data.max_upload_post_accounts ?? 0;
+	const num_accounts = await countUploadPostAccountsForUser(supabase, user.user_id);
+
+	return Response.json({
+		has_upgraded,
+		pro: has_upgraded,
+		num_accounts,
+		max_accounts,
+	});
 }

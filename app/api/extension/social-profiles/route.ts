@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { countUploadPostAccountsForUser } from "@/lib/upload-post-account-limits";
 import { createUploadPostProfile, generateUploadPostJwt } from "@/lib/upload-post";
 
 function getSupabase() {
@@ -84,8 +85,8 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Upload-Post accounts are not available for your plan" }, { status: 403 });
 	}
 
-	const { count } = await supabase.from("upload_post_accounts").select("*", { count: "exact", head: true }).eq("user_id", user.user_id);
-	if (count !== null && count >= max) {
+	const numAccounts = await countUploadPostAccountsForUser(supabase, user.user_id);
+	if (numAccounts >= max) {
 		return Response.json(
 			{ error: `Maximum ${max} Upload-Post account(s) allowed. Upgrade to add more.` },
 			{ status: 403 }

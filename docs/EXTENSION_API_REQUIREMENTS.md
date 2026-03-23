@@ -7,7 +7,7 @@ The extensiblecontent.com site should expose these endpoints for the Chrome exte
 - **Page captures:** GET/POST /api/extension/page-captures, POST /api/extension/page-capture-sections
 - **Social profiles:** GET/POST /api/extension/social-profiles, GET/PATCH/DELETE /api/extension/social-profiles/[id] ✓ (uses upload_post_accounts; creates in Upload-Post)
 - **Upload-Post key:** GET /api/extension/upload-post-key ✓
-- **Pro status:** GET /api/extension/has-upgraded ✓
+- **Pro status:** GET /api/extension/has-upgraded ✓ — JSON `{ has_upgraded, pro, num_accounts, max_accounts }`. Field `pro` mirrors `has_upgraded` for older clients. `num_accounts` is the user’s Upload-Post / Connected profile count (`upload_post_accounts`). `max_accounts` is `users.max_upload_post_accounts` (same limit as POST `/api/extension/social-profiles`); when `max_accounts <= 0`, new Connected profiles are not allowed (server returns **403** on POST). Extensions should use `num_accounts` / `max_accounts` for UI such as “Connected: (n / max)” and upgrade CTAs; the server remains authoritative.
 - **Default project:** GET/PATCH /api/extension/user/default-project ✓
 
 ## Implemented extension APIs
