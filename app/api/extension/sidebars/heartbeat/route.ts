@@ -8,6 +8,7 @@ import {
 	normalizeBackendIdsForHeartbeat,
 	sidebarsWithConnectedInOrder,
 } from "@/lib/sidebar-heartbeat";
+import { parseExclusiveSidebarLookup } from "@/lib/sidebar-lookup-parse";
 import type { Sidebar, SidebarHeartbeatBody } from "@/lib/types/sidebars";
 
 function getSupabase() {
@@ -36,7 +37,9 @@ export async function POST(request: NextRequest) {
 		const supabase = getSupabase();
 
 		if (backend_ids !== undefined && backend_ids !== null) {
-			if (sidebar_id != null || window_id != null) {
+			const sidNoise = typeof sidebar_id === "string" && sidebar_id.trim().length > 0;
+			const widNoise = typeof window_id === "string" && window_id.trim().length > 0;
+			if (sidNoise || widNoise) {
 				return Response.json(
 					{ error: "backend_ids cannot be combined with sidebar_id or window_id" },
 					{ status: 400 },
@@ -57,36 +60,18 @@ export async function POST(request: NextRequest) {
 			return Response.json({ updated: batch.updated, requested, skipped, sidebars });
 		}
 
-		if (!sidebar_id && !window_id) {
-			return Response.json({ error: "sidebar_id, window_id, or backend_ids is required" }, { status: 400 });
-		}
-		if (sidebar_id && typeof sidebar_id !== "string") {
-			return Response.json({ error: "sidebar_id must be a string" }, { status: 400 });
-		}
-		if (window_id && typeof window_id !== "string") {
-			return Response.json({ error: "window_id must be a string" }, { status: 400 });
-		}
-		if (
-			sidebar_id &&
-			typeof sidebar_id === "string" &&
-			sidebar_id.trim() &&
-			window_id &&
-			typeof window_id === "string" &&
-			window_id.trim()
-		) {
-			return Response.json(
-				{ error: "Provide only one of sidebar_id or window_id, not both" },
-				{ status: 400 },
-			);
+		const parsed = parseExclusiveSidebarLookup(body);
+		if (!parsed.ok) {
+			return Response.json({ error: parsed.error }, { status: parsed.status });
 		}
 
 		const now = new Date().toISOString();
 
 		let query = supabase.from("sidebars").select("id").eq("user_id", user.user_id);
-		if (sidebar_id) {
-			query = query.eq("id", sidebar_id.trim());
+		if ("sidebar_id" in parsed) {
+			query = query.eq("id", parsed.sidebar_id);
 		} else {
-			query = query.eq("window_id", window_id!.trim());
+			query = query.eq("window_id", parsed.window_id);
 		}
 
 		const { data: row, error: findError } = await query.maybeSingle();

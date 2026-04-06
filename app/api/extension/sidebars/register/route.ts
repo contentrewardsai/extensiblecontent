@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
+import { normalizeRegisterSidebarName, normalizeRegisterWindowId } from "@/lib/sidebar-lookup-parse";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
 
@@ -48,12 +49,10 @@ export async function POST(request: NextRequest) {
 		}
 
 		const { window_id, sidebar_name, active_project_id } = body;
-		if (!window_id || typeof window_id !== "string" || !window_id.trim()) {
-			return Response.json({ error: "window_id is required" }, { status: 400 });
-		}
-		if (!sidebar_name || typeof sidebar_name !== "string" || !sidebar_name.trim()) {
-			return Response.json({ error: "sidebar_name is required" }, { status: 400 });
-		}
+		const win = normalizeRegisterWindowId(window_id);
+		if (!win.ok) return Response.json({ error: win.error }, { status: 400 });
+		const name = normalizeRegisterSidebarName(sidebar_name);
+		if (!name.ok) return Response.json({ error: name.error }, { status: 400 });
 
 		const safeProjectId = coerceActiveProjectId(active_project_id);
 
@@ -66,7 +65,7 @@ export async function POST(request: NextRequest) {
 			.from("sidebars")
 			.select("id")
 			.eq("user_id", user.user_id)
-			.eq("window_id", window_id.trim())
+			.eq("window_id", win.value)
 			.maybeSingle();
 
 		if (selectError) {
@@ -80,7 +79,7 @@ export async function POST(request: NextRequest) {
 			const { data: updated, error: updateError } = await supabase
 				.from("sidebars")
 				.update({
-					sidebar_name: sidebar_name.trim(),
+					sidebar_name: name.value,
 					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,
@@ -100,8 +99,8 @@ export async function POST(request: NextRequest) {
 				.from("sidebars")
 				.insert({
 					user_id: user.user_id,
-					window_id: window_id.trim(),
-					sidebar_name: sidebar_name.trim(),
+					window_id: win.value,
+					sidebar_name: name.value,
 					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,

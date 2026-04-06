@@ -55,7 +55,7 @@ Implemented under `app/api/extension/sidebars/`. The [ExtensibleContentExtension
 | Method | Path | Purpose |
 |--------|------|--------|
 | GET | `/api/extension/sidebars` | List rows for the user; each item includes `connected` (true if `last_seen` within ~1 hour). |
-| POST | `/api/extension/sidebars/register` | Upsert on `(user_id, window_id)`; body `window_id`, `sidebar_name`, optional `active_project_id` (invalid UUID coerced to null). |
+| POST | `/api/extension/sidebars/register` | Upsert on `(user_id, window_id)`; `window_id` max 512 chars, `sidebar_name` max 256; optional `active_project_id` (invalid UUID coerced to null). |
 | PATCH, POST | `/api/extension/sidebars/[id]` | Update name/project; always bumps `last_seen` (POST aliases PATCH for relays). |
 | POST | `/api/extension/sidebars/heartbeat` | Touch `last_seen` only: exactly one of `sidebar_id` or `window_id`, or batch body with `backend_ids` only (max 64 UUIDs). Batch JSON: `{ updated, requested, skipped, sidebars }` (`skipped` = ids not owned / unknown). |
 | POST | `/api/extension/sidebars/disconnect` | Delete row; exactly one of `sidebar_id` or `window_id`. |

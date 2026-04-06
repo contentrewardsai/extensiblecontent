@@ -1,5 +1,5 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..1b77986 100644
+index 02b2d5f..8aace24 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
 @@ -114,12 +114,13 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
@@ -7,10 +7,11 @@ index 02b2d5f..1b77986 100644
  Sidebars use `extension/sidebars-api.js`:
  
 -- `GET /api/extension/sidebars` – List connected sidebars
-+- `GET /api/extension/sidebars` – List connected sidebars (response includes `connected` from `last_seen`, ~1h threshold)
- - `POST /api/extension/sidebars/register` – Register/upsert sidebar
+-- `POST /api/extension/sidebars/register` – Register/upsert sidebar
 -- `PATCH /api/extension/sidebars/:id` – Update sidebar name or project
 -- `POST /api/extension/sidebars/disconnect` – Disconnect
++- `GET /api/extension/sidebars` – List connected sidebars (response includes `connected` from `last_seen`, ~1h threshold)
++- `POST /api/extension/sidebars/register` – Register/upsert sidebar (`window_id` max 512 chars, `sidebar_name` max 256)
 +- `PATCH /api/extension/sidebars/:id` – Update sidebar name or project; empty body refreshes `last_seen` (heartbeat). **`POST`** the same path is accepted if a relay only allows POST.
 +- `POST /api/extension/sidebars/heartbeat` – Refresh `last_seen` only: send **exactly one** of `sidebar_id` or `window_id` (**400** if both); or MCP batch `{ backend_ids: string[] }` only (Supabase UUIDs, max 64, deduped). Batch response: `{ updated, requested, skipped, sidebars }` (`skipped` = unknown / not-owned ids).
 +- `POST /api/extension/sidebars/disconnect` – Disconnect; **exactly one** of `sidebar_id` or `window_id` (**400** if both).

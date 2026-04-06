@@ -5,6 +5,7 @@ import {
 	parseActiveProjectIdForUpdate,
 	sidebarWithConnected,
 } from "@/lib/extension-sidebar";
+import { normalizeRegisterSidebarName } from "@/lib/sidebar-lookup-parse";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
 
@@ -78,7 +79,9 @@ async function handleSidebarUpdate(
 		}
 		// Empty string = skip update (keep existing name)
 		if (body.sidebar_name.trim()) {
-			updates.sidebar_name = body.sidebar_name.trim();
+			const n = normalizeRegisterSidebarName(body.sidebar_name);
+			if (!n.ok) return Response.json({ error: n.error }, { status: 400 });
+			updates.sidebar_name = n.value;
 		}
 	}
 	let projectIdChanged = false;
