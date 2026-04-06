@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import {
+	parseActiveProjectIdForUpdate,
+	sidebarWithConnected,
+} from "@/lib/extension-sidebar";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
 
@@ -28,10 +32,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 		return Response.json({ error: "Sidebar not found" }, { status: 404 });
 	}
 
-	return Response.json(sidebar as Sidebar);
+	return Response.json(sidebarWithConnected(sidebar as Sidebar));
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handleSidebarUpdate(
+	request: NextRequest,
+	params: Promise<{ id: string }>,
+): Promise<Response> {
 	const user = await getExtensionUser(request);
 	if (!user) {
 		return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -74,16 +81,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 			updates.sidebar_name = body.sidebar_name.trim();
 		}
 	}
+	let projectIdChanged = false;
 	if (body.active_project_id !== undefined) {
-		updates.active_project_id = body.active_project_id ?? null;
+		const parsed = parseActiveProjectIdForUpdate(body.active_project_id);
+		if (parsed.kind === "error") {
+			return Response.json({ error: parsed.message }, { status: 400 });
+		}
+		if (parsed.kind === "set") {
+			updates.active_project_id = parsed.id;
+			projectIdChanged = true;
+		}
 	}
 
 	/** Heartbeat-only PATCH (ExtensibleContentExtension fallback when MCP is off) must touch last_seen. */
-	const shouldBroadcastList =
-		(body.sidebar_name !== undefined &&
-			typeof body.sidebar_name === "string" &&
-			body.sidebar_name.trim() !== "") ||
-		body.active_project_id !== undefined;
+	const nameChanged =
+		body.sidebar_name !== undefined &&
+		typeof body.sidebar_name === "string" &&
+		body.sidebar_name.trim() !== "";
+	const shouldBroadcastList = nameChanged || projectIdChanged;
 
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
@@ -100,5 +115,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		await broadcastListUpdatedToUser(user.user_id);
 	}
 
-	return Response.json(sidebar as Sidebar);
+	return Response.json(sidebarWithConnected(sidebar as Sidebar));
+}
+
+/** Extension uses PATCH; MCP relay may use POST. */
+export async function PATCH(
+	request: NextRequest,
+	ctx: { params: Promise<{ id: string }> },
+) {
+	return handleSidebarUpdate(request, ctx.params);
+}
+
+export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+	return handleSidebarUpdate(request, ctx.params);
 }

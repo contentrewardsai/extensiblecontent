@@ -1,22 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import type { Sidebar } from "@/lib/types/sidebars";
+import { sidebarWithConnected } from "@/lib/extension-sidebar";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 	if (!url || !key) throw new Error("Supabase not configured");
 	return createClient(url, key);
-}
-
-/** Consider connected if last_seen within last 2 minutes */
-const STALE_THRESHOLD_MS = 2 * 60 * 1000;
-
-function withConnected(sidebar: Sidebar): Sidebar {
-	const lastSeen = new Date(sidebar.last_seen).getTime();
-	const connected = Date.now() - lastSeen < STALE_THRESHOLD_MS;
-	return { ...sidebar, connected };
 }
 
 export async function GET(request: NextRequest) {
@@ -38,7 +29,7 @@ export async function GET(request: NextRequest) {
 			return Response.json({ error: "Failed to list sidebars" }, { status: 500 });
 		}
 
-		const withConnectedFlag = (sidebars ?? []).map(withConnected);
+		const withConnectedFlag = (sidebars ?? []).map(sidebarWithConnected);
 		return Response.json({ sidebars: withConnectedFlag });
 	} catch (err) {
 		console.error("[sidebars] Unexpected error:", err);

@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { coerceActiveProjectId } from "@/lib/extension-sidebar";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
 
@@ -54,13 +55,7 @@ export async function POST(request: NextRequest) {
 			return Response.json({ error: "sidebar_name is required" }, { status: 400 });
 		}
 
-		const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-		const safeProjectId =
-			active_project_id &&
-			typeof active_project_id === "string" &&
-			UUID_REGEX.test(active_project_id.trim())
-				? active_project_id.trim()
-				: null;
+		const safeProjectId = coerceActiveProjectId(active_project_id);
 
 		const supabase = getSupabase();
 		const ipAddress = getIpAddress(request);
