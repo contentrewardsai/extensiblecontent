@@ -1,5 +1,5 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..b88db65 100644
+index 02b2d5f..c9e1149 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
 @@ -114,12 +114,17 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
@@ -17,7 +17,7 @@ index 02b2d5f..b88db65 100644
 +- `POST /api/extension/sidebars/disconnect` – Disconnect; **exactly one** of `sidebar_id` (UUID) or `window_id` (**400** if both).
  
 -**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
-+**Local MCP** (`mcp-server`, `GET` / `HEAD` `/api/sidebars`): With query `since`, `limit`, and/or `omit_connected`, proxies to the host through the relay (`GET` or `HEAD` respectively). **`HEAD`** returns **`X-Result-Count`** from the host when the relay succeeds; otherwise **`X-Result-Count`** is the local in-memory registry size. **`SidebarsApi.probeSidebarsListCount(opts)`** uses this path when MCP is healthy. The **Activity** tab (`sidepanel/sidepanel.js`) calls **`probeSidebarsListCount({ since })`** on periodic refresh when it already has a sidebar list — if the count is **0**, it skips **`listSidebars`** until a full fetch is needed again.
++**Local MCP** (`mcp-server`, `GET` / `HEAD` `/api/sidebars`): With query `since`, `limit`, and/or `omit_connected`, proxies to the host through the relay (`GET` or `HEAD` respectively). **`HEAD`** returns **`X-Result-Count`** from the host when the relay succeeds; otherwise **`X-Result-Count`** is the local in-memory registry size. **`SidebarsApi.probeSidebarsListCount(opts)`** uses this path when MCP is healthy. The **Activity** tab (`sidepanel/sidepanel.js`) calls **`probeSidebarsListCount({ since })`** on periodic refresh when it already has a sidebar list — if the count is **0**, it skips **`listSidebars`** until a full fetch is needed again. After **register** or **update** for this sidebar, **`refreshActivitySidebarsSoon()`** clears that cache so the list refetches immediately.
 +
 +**MCP relay** (`mcp/mcp-relay.html`): `BACKEND_FETCH` uses **`ExtensionConfig.APP_ORIGIN`** (from `extension/config.js`, loaded before `mcp-relay.js`). Optional override: `chrome.storage.local.cfsBackendApiOrigin` (string, no trailing slash). Defaults to `https://www.extensiblecontent.com` if config is missing.
 +
@@ -388,7 +388,7 @@ index 09af6fc..88610f1 100644
        });
        return;
 diff --git a/sidepanel/sidepanel.js b/sidepanel/sidepanel.js
-index 1a82973..24dc744 100644
+index 1a82973..2be0a49 100644
 --- a/sidepanel/sidepanel.js
 +++ b/sidepanel/sidepanel.js
 @@ -312,11 +312,21 @@
@@ -482,7 +482,20 @@ index 1a82973..24dc744 100644
            if (instances && instances.length > 0) {
              const RECENT_MS = 60 * 60 * 1000; // 1 hour – sidebars shown as Connected if last_seen within this window
              instances.forEach((inst) => {
-@@ -2578,7 +2624,7 @@
+@@ -665,6 +711,12 @@
+     });
+   }
+   window.refreshActivityPanel = refreshActivityPanel;
++  /** After local sidebar register/update: drop list cache so Activity shows fresh rows (not probe-skipped). */
++  function refreshActivitySidebarsSoon() {
++    clearSidebarInstancesState();
++    if (typeof window.refreshActivityPanel === 'function') window.refreshActivityPanel();
++  }
++  window.refreshActivitySidebarsSoon = refreshActivitySidebarsSoon;
+   window.updateWorkflowLastRunStatus = updateWorkflowLastRunStatus;
+ 
+   function updateStepHighlight(actionIndex) {
+@@ -2578,7 +2630,7 @@
            loadPulseFollowingAutomationBanner();
          }
          if (tabId === 'activity') {
@@ -491,7 +504,23 @@ index 1a82973..24dc744 100644
            refreshActivityPanel();
            refreshPulseWatchActivityPanel();
            startSidebarsPolling();
-@@ -19167,6 +19213,7 @@
+@@ -18987,6 +19039,7 @@
+         window._supabaseSidebarId = sid;
+         window._supabaseDisconnectToken = tokenRes.access_token;
+         if (typeof setSocketStatus === 'function') setSocketStatus('Connected', 'success');
++        if (typeof window.refreshActivitySidebarsSoon === 'function') window.refreshActivitySidebarsSoon();
+ 
+         // Start heartbeat: keep last_seen fresh on the backend while panel is open
+         if (_sidebarHeartbeatTimer) clearInterval(_sidebarHeartbeatTimer);
+@@ -19033,6 +19086,7 @@
+           sidebar_name: String(sidebarName || '').trim(),
+           active_project_id: projectId || null,
+         });
++        if (typeof window.refreshActivitySidebarsSoon === 'function') window.refreshActivitySidebarsSoon();
+       } catch (_) {}
+     }
+     function reportSidebarInstanceToBackend(overrides = {}) {
+@@ -19167,6 +19221,7 @@
            chrome.runtime.sendMessage({ type: 'LOGOUT' }, (r) => resolve(r));
          });
        }
