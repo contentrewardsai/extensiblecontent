@@ -4,6 +4,7 @@ import { getExtensionUser } from "@/lib/extension-auth";
 import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
 import { normalizeRegisterSidebarName, normalizeRegisterWindowId } from "@/lib/sidebar-lookup-parse";
 import { isProjectOwnedByUser } from "@/lib/sidebar-project";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
 
@@ -16,13 +17,6 @@ function getSupabase() {
 
 function getIpAddress(request: NextRequest): string | null {
 	return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
-}
-
-function isUniqueViolation(err: unknown): boolean {
-	const e = err as { code?: string; message?: string };
-	if (e?.code === "23505") return true;
-	const m = String(e?.message ?? "").toLowerCase();
-	return m.includes("unique") || m.includes("duplicate key");
 }
 
 function errorResponse(err: unknown, fallback = "Registration failed") {
@@ -128,7 +122,7 @@ export async function POST(request: NextRequest) {
 				.single();
 
 			if (insertError || !inserted) {
-				if (!isUniqueViolation(insertError)) {
+				if (!isPostgresUniqueViolation(insertError)) {
 					return errorResponse(insertError);
 				}
 				// Concurrent register: another request inserted the same (user_id, window_id)
