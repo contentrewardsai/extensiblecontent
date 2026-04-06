@@ -28,6 +28,21 @@ function parse(qs: string) {
 	if (r.ok) assert.equal(r.limit, 10);
 }
 {
+	const r = parse("?limit=%2010%20");
+	assert.ok(r.ok);
+	if (r.ok) assert.equal(r.limit, 10);
+}
+{
+	const r = parse("?omit_connected=1");
+	assert.ok(r.ok);
+	if (r.ok) assert.equal(r.omitConnected, true);
+}
+{
+	const r = parse("?omit_connected=false");
+	assert.ok(r.ok);
+	if (r.ok) assert.equal(r.omitConnected, false);
+}
+{
 	const r = parse("?limit=0");
 	assert.ok(!r.ok);
 }

@@ -1,5 +1,5 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..245acd4 100644
+index 02b2d5f..c30fccd 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
 @@ -114,12 +114,17 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
@@ -10,14 +10,14 @@ index 02b2d5f..245acd4 100644
 -- `POST /api/extension/sidebars/register` – Register/upsert sidebar
 -- `PATCH /api/extension/sidebars/:id` – Update sidebar name or project
 -- `POST /api/extension/sidebars/disconnect` – Disconnect
-+- `GET /api/extension/sidebars` – List connected sidebars (response includes `connected` from `last_seen`, ~1h threshold). Optional query: `since` (ISO 8601) — rows with `last_seen >= since`; `limit` (integer 1–200) — max rows returned (still ordered by `last_seen` desc).
++- `GET /api/extension/sidebars` – List connected sidebars (response includes `connected` from `last_seen`, ~1h threshold, unless `omit_connected=1`/`true`/`yes`). Optional query: `since` (ISO 8601) — rows with `last_seen >= since`; `limit` (integer 1–200). Response `Cache-Control: private, no-store`, `Vary: Authorization`.
 +- `POST /api/extension/sidebars/register` – Register/upsert sidebar (`window_id` max 512 chars, `sidebar_name` max 256). Optional `active_project_id` must be a project **you** own (**404** if the UUID is not yours).
 +- `GET` / `PATCH` / `POST` `/api/extension/sidebars/:id` – `:id` must be a UUID. Update sidebar name or project; non-null `active_project_id` must be your project (**404**). Empty body refreshes `last_seen` (heartbeat). **`POST`** aliases `PATCH` if a relay only allows POST.
 +- `POST /api/extension/sidebars/heartbeat` – Refresh `last_seen` only: send **exactly one** of `sidebar_id` (UUID) or `window_id` (**400** if both); or MCP batch `{ backend_ids: string[] }` only (Supabase UUIDs, max 64, deduped). Batch response: `{ updated, requested, skipped, sidebars }` (`skipped` = unknown / not-owned ids).
 +- `POST /api/extension/sidebars/disconnect` – Disconnect; **exactly one** of `sidebar_id` (UUID) or `window_id` (**400** if both).
  
 -**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
-+**Local MCP** (`mcp-server`, `GET /api/sidebars`): With query `since` and/or `limit`, proxies to `GET /api/extension/sidebars` on the host through the extension relay (same auth as other sidebar relay calls). If the relay is down or the proxy fails, returns the in-memory list for this machine only.
++**Local MCP** (`mcp-server`, `GET /api/sidebars`): With query `since`, `limit`, and/or `omit_connected`, proxies to `GET /api/extension/sidebars` on the host through the extension relay (same auth as other sidebar relay calls). If the relay is down or the proxy fails, returns the in-memory list for this machine only.
 +
 +**MCP relay** (`mcp/mcp-relay.html`): `BACKEND_FETCH` uses **`ExtensionConfig.APP_ORIGIN`** (from `extension/config.js`, loaded before `mcp-relay.js`). Optional override: `chrome.storage.local.cfsBackendApiOrigin` (string, no trailing slash). Defaults to `https://www.extensiblecontent.com` if config is missing.
 +
@@ -26,14 +26,14 @@ index 02b2d5f..245acd4 100644
  ---
  
 diff --git a/extension/sidebars-api.js b/extension/sidebars-api.js
-index 9347a07..ce75dab 100644
+index 9347a07..436bb5b 100644
 --- a/extension/sidebars-api.js
 +++ b/extension/sidebars-api.js
-@@ -234,21 +234,38 @@
+@@ -234,21 +234,39 @@
      }
    }
  
-+  /** Build query string for GET /api/extension/sidebars (since / limit). */
++  /** Build query string for GET /api/extension/sidebars (since / limit / omit_connected). */
 +  function buildSidebarsListQuery(opts) {
 +    const params = new URLSearchParams();
 +    if (opts.since != null && opts.since !== '') {
@@ -44,6 +44,7 @@ index 9347a07..ce75dab 100644
 +      const n = Number(opts.limit);
 +      if (Number.isFinite(n) && n >= 1 && n <= 200) params.set('limit', String(Math.floor(n)));
 +    }
++    if (opts.omit_connected) params.set('omit_connected', '1');
 +    const q = params.toString();
 +    return q ? '?' + q : '';
 +  }
@@ -52,8 +53,8 @@ index 9347a07..ce75dab 100644
     * List sidebars for the current user.
 -   * Routes through MCP if available (cached), otherwise direct to backend.
 -   * @param {{ _debug?: boolean }} opts
-+   * Routes through MCP if available (relay proxies since/limit to the host when set).
-+   * @param {{ _debug?: boolean, since?: string|number|Date, limit?: number }} opts
++   * Routes through MCP if available (relay proxies list query params to the host when set).
++   * @param {{ _debug?: boolean, since?: string|number|Date, limit?: number, omit_connected?: boolean }} opts
     * @returns {Promise<Array|{instances:Array,_raw:object}>}
     */
    async function listSidebars(opts = {}) {
@@ -73,7 +74,7 @@ index 9347a07..ce75dab 100644
          });
          if (res.ok) {
            const json = await res.json();
-@@ -264,7 +281,7 @@
+@@ -264,7 +282,7 @@
      // Direct to backend
      let res;
      try {
@@ -82,7 +83,7 @@ index 9347a07..ce75dab 100644
      } catch (e) {
        // 404 = endpoint not implemented yet; return empty list
        if (e?.status === 404) return opts._debug ? { instances: [], _raw: null } : [];
-@@ -365,10 +382,17 @@
+@@ -365,10 +383,17 @@
          return;
        } catch (_) {}
      }
@@ -104,25 +105,35 @@ index 9347a07..ce75dab 100644
  
    /**
 diff --git a/mcp-server/tools/sidebar.js b/mcp-server/tools/sidebar.js
-index 8ce7ba0..dcc8115 100644
+index 8ce7ba0..cab58bd 100644
 --- a/mcp-server/tools/sidebar.js
 +++ b/mcp-server/tools/sidebar.js
-@@ -222,8 +222,25 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+@@ -222,8 +222,35 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
      return res.json({ ok: true, sidebar: { id, ...entry } });
    });
  
 -  /* List sidebars */
 -  app.get('/api/sidebars', authMiddleware, (_req, res) => {
-+  /* List sidebars — local machine, or proxy to host when since/limit (global account filter) */
++  /* List sidebars — local machine, or proxy to host when query needs host semantics */
 +  app.get('/api/sidebars', authMiddleware, async (req, res) => {
 +    const since = req.query && req.query.since;
 +    const limit = req.query && req.query.limit;
-+    const wantsFiltered = (since != null && String(since).trim() !== '') || (limit != null && String(limit).trim() !== '');
-+    if (wantsFiltered && ctx.isRelayConnected()) {
++    const omit = req.query && req.query.omit_connected;
++    function truthyQuery(v) {
++      if (v == null) return false;
++      const t = String(v).trim().toLowerCase();
++      return t === '1' || t === 'true' || t === 'yes';
++    }
++    const wantsHost =
++      (since != null && String(since).trim() !== '') ||
++      (limit != null && String(limit).trim() !== '') ||
++      truthyQuery(omit);
++    if (wantsHost && ctx.isRelayConnected()) {
 +      try {
 +        const qs = new URLSearchParams();
 +        if (since != null && String(since).trim() !== '') qs.set('since', String(since));
 +        if (limit != null && String(limit).trim() !== '') qs.set('limit', String(limit));
++        if (truthyQuery(omit)) qs.set('omit_connected', '1');
 +        const path = '/api/extension/sidebars?' + qs.toString();
 +        const relayRes = await relayBackendFetch(ctx, path, 'GET', null);
 +        if (relayRes && relayRes.ok && relayRes.data && Array.isArray(relayRes.data.sidebars)) {
@@ -135,7 +146,7 @@ index 8ce7ba0..dcc8115 100644
      const sidebars = [];
      for (const [id, entry] of localSidebars) {
        sidebars.push({
-@@ -270,11 +287,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+@@ -270,11 +297,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
        _batchHeartbeatPending = true;
        setTimeout(async () => {
          _batchHeartbeatPending = false;

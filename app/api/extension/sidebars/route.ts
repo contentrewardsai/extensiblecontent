@@ -39,12 +39,16 @@ export async function GET(request: NextRequest) {
 			return Response.json({ error: "Failed to list sidebars" }, { status: 500 });
 		}
 
-		const withConnectedFlag = (sidebars ?? []).map(sidebarWithConnected);
+		const rows = (sidebars ?? []).map(sidebarWithConnected);
+		const payloadRows = listQ.omitConnected
+			? rows.map(({ connected: _c, ...rest }) => rest)
+			: rows;
 		return Response.json(
-			{ sidebars: withConnectedFlag },
+			{ sidebars: payloadRows },
 			{
 				headers: {
 					"Cache-Control": "private, no-store",
+					Vary: "Authorization",
 				},
 			},
 		);
