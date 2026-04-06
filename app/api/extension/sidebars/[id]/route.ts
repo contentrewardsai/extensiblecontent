@@ -56,10 +56,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		const raw = await request.json();
 		if (raw && typeof raw === "object") body = raw as SidebarUpdateBody;
 	} catch {
-		// Empty or invalid body - treat as no-op, will only update updated_at if no fields
+		// Empty or invalid body — still refresh last_seen (heartbeat via PATCH with no body)
 	}
 
-	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+	const now = new Date().toISOString();
+	const updates: Record<string, unknown> = {
+		updated_at: now,
+		last_seen: now,
+	};
+
 	if (body.sidebar_name !== undefined) {
 		if (typeof body.sidebar_name !== "string") {
 			return Response.json({ error: "sidebar_name must be a string" }, { status: 400 });
@@ -73,16 +78,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		updates.active_project_id = body.active_project_id ?? null;
 	}
 
-	// No fields to update - return current sidebar
-	if (Object.keys(updates).length <= 1) {
-		const { data: current } = await supabase
-			.from("sidebars")
-			.select("*")
-			.eq("id", id)
-			.eq("user_id", user.user_id)
-			.single();
-		if (current) return Response.json(current as Sidebar);
-	}
+	/** Heartbeat-only PATCH (ExtensibleContentExtension fallback when MCP is off) must touch last_seen. */
+	const shouldBroadcastList =
+		(body.sidebar_name !== undefined &&
+			typeof body.sidebar_name === "string" &&
+			body.sidebar_name.trim() !== "") ||
+		body.active_project_id !== undefined;
 
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
@@ -95,8 +96,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: error?.message ?? "Failed to update sidebar" }, { status: 500 });
 	}
 
-	// Broadcast list_updated to user channel
-	await broadcastListUpdatedToUser(user.user_id);
+	if (shouldBroadcastList) {
+		await broadcastListUpdatedToUser(user.user_id);
+	}
 
 	return Response.json(sidebar as Sidebar);
 }
