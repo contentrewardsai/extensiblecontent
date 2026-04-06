@@ -1,0 +1,66 @@
+diff --git a/docs/BACKEND.md b/docs/BACKEND.md
+index 02b2d5f..e0495e2 100644
+--- a/docs/BACKEND.md
++++ b/docs/BACKEND.md
+@@ -114,12 +114,13 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
+ 
+ Sidebars use `extension/sidebars-api.js`:
+ 
+-- `GET /api/extension/sidebars` – List connected sidebars
++- `GET /api/extension/sidebars` – List connected sidebars (response includes `connected` from `last_seen`, ~1h threshold)
+ - `POST /api/extension/sidebars/register` – Register/upsert sidebar
+-- `PATCH /api/extension/sidebars/:id` – Update sidebar name or project
++- `PATCH /api/extension/sidebars/:id` – Update sidebar name or project; empty body refreshes `last_seen` (heartbeat). **`POST`** the same path is accepted if a relay only allows POST.
++- `POST /api/extension/sidebars/heartbeat` – Refresh `last_seen` only: body `{ sidebar_id }` or `{ window_id }`, or MCP batch `{ backend_ids: string[] }` (Supabase UUIDs, max 64, deduped)
+ - `POST /api/extension/sidebars/disconnect` – Disconnect
+ 
+-**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
++**`window_id`:** The side panel registers with `${deviceId}_sidepanel` (stable device id from storage). The API upserts on `(user_id, window_id)` and refreshes `last_seen` on register and heartbeat. Legacy rows may use older `windowId_tabId` or numeric `_sidepanel` shapes.
+ 
+ ---
+ 
+diff --git a/extension/sidebars-api.js b/extension/sidebars-api.js
+index 9347a07..7b694b8 100644
+--- a/extension/sidebars-api.js
++++ b/extension/sidebars-api.js
+@@ -365,10 +365,17 @@
+         return;
+       } catch (_) {}
+     }
+-    // Fallback: update via REST (touch last_seen)
++    // Fallback: POST heartbeat (host); empty-body PATCH for very old APIs
+     try {
+-      await updateSidebar(sidebarId, {});
+-    } catch (_) {}
++      await apiFetch('/api/extension/sidebars/heartbeat', {
++        method: 'POST',
++        body: JSON.stringify({ sidebar_id: sidebarId }),
++      });
++    } catch (_) {
++      try {
++        await updateSidebar(sidebarId, {});
++      } catch (_) {}
++    }
+   }
+ 
+   /**
+diff --git a/mcp-server/tools/sidebar.js b/mcp-server/tools/sidebar.js
+index 8ce7ba0..56c08c0 100644
+--- a/mcp-server/tools/sidebar.js
++++ b/mcp-server/tools/sidebar.js
+@@ -270,11 +270,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+       _batchHeartbeatPending = true;
+       setTimeout(async () => {
+         _batchHeartbeatPending = false;
++        const backendIds = [];
+         for (const [, entry] of localSidebars) {
+-          if (isSidebarAlive(entry) && entry.backendId) {
+-            relayBackendFetch(ctx, `/api/extension/sidebars/${entry.backendId}`, 'PATCH', {}).catch(() => {});
+-          }
++          if (isSidebarAlive(entry) && entry.backendId) backendIds.push(entry.backendId);
+         }
++        if (backendIds.length === 0) return;
++        relayBackendFetch(ctx, '/api/extension/sidebars/heartbeat', 'POST', { backend_ids: backendIds }).catch(() => {});
+       }, 5000);
+     }
+     res.json({ ok: true });

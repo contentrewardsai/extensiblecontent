@@ -47,3 +47,19 @@ After deploy, confirm the following against the live API (replace `BASE` and use
 ## Extension client
 
 The Chrome extension should call `{siteOrigin}/api/extension/workflow-step-media` with the FormData fields above. **This repository may not contain** `extension/api.js`; whichever repo ships the extension must keep the path and field names in sync with [app/api/extension/workflow-step-media/route.ts](../app/api/extension/workflow-step-media/route.ts).
+
+## Sidebars (extension presence)
+
+Implemented under `app/api/extension/sidebars/`. The [ExtensibleContentExtension](https://github.com/contentrewardsai/ExtensibleContentExtension) `SidebarsApi` and MCP server call these routes.
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| GET | `/api/extension/sidebars` | List rows for the user; each item includes `connected` (true if `last_seen` within ~1 hour). |
+| POST | `/api/extension/sidebars/register` | Upsert on `(user_id, window_id)`; body `window_id`, `sidebar_name`, optional `active_project_id` (invalid UUID coerced to null). |
+| PATCH, POST | `/api/extension/sidebars/[id]` | Update name/project; always bumps `last_seen` (POST aliases PATCH for relays). |
+| POST | `/api/extension/sidebars/heartbeat` | Touch `last_seen` only: `{ sidebar_id }` or `{ window_id }`, or batch `{ backend_ids: [] }` (max 64 UUIDs) for the MCP hub. |
+| POST | `/api/extension/sidebars/disconnect` | Delete row; `{ sidebar_id }` or `{ window_id }`. |
+
+Details and limits: [EXTENSION_API_REQUIREMENTS.md](EXTENSION_API_REQUIREMENTS.md).
+
+**ExtensibleContentExtension:** matching client changes are in [docs/patches/extensible-content-extension-sidebar-heartbeat.patch](patches/extensible-content-extension-sidebar-heartbeat.patch). From a clone of that repo: `git apply /path/to/this-repo/docs/patches/extensible-content-extension-sidebar-heartbeat.patch` (or cherry-pick if you maintain a fork).
