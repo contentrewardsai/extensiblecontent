@@ -1,3 +1,4 @@
+import { connectedFromLastSeen } from "@/lib/extension-sidebar";
 import { requireExperienceContext } from "@/lib/experience-context";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
@@ -43,6 +44,7 @@ export default async function ActivityPage({ params }: { params: Promise<{ exper
 						<thead className="bg-gray-a3 border-b border-gray-a4">
 							<tr>
 								<th className="p-3 font-semibold text-gray-12">Name</th>
+								<th className="p-3 font-semibold text-gray-12">Status</th>
 								<th className="p-3 font-semibold text-gray-12">Last seen</th>
 								<th className="p-3 font-semibold text-gray-12">Active project</th>
 								<th className="p-3 font-semibold text-gray-12">Window</th>
@@ -52,6 +54,9 @@ export default async function ActivityPage({ params }: { params: Promise<{ exper
 							{(sidebars ?? []).map((s) => (
 								<tr key={s.id} className="border-b border-gray-a4 last:border-0">
 									<td className="p-3 text-gray-12">{s.sidebar_name}</td>
+									<td className="p-3 text-gray-11">
+										{connectedFromLastSeen(s.last_seen) ? "Connected" : "Offline"}
+									</td>
 									<td className="p-3 text-gray-11">{s.last_seen ? new Date(s.last_seen).toLocaleString() : "—"}</td>
 									<td className="p-3 text-gray-11">
 										{s.active_project_id ? (projectNames[s.active_project_id] ?? s.active_project_id) : "—"}

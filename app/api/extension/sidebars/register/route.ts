@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-import { coerceActiveProjectId } from "@/lib/extension-sidebar";
+import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
 
@@ -123,8 +123,7 @@ export async function POST(request: NextRequest) {
 			console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
 		}
 
-		// Include connected: true (just registered = active)
-		const response = { ...sidebar, connected: true };
+		const response = sidebarWithConnected(sidebar);
 		return Response.json({ sidebar: response });
 	} catch (err) {
 		return errorResponse(err);

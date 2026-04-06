@@ -26,3 +26,9 @@ export interface SidebarDisconnectBody {
 	sidebar_id?: string;
 	window_id?: string;
 }
+
+/** POST /api/extension/sidebars/heartbeat — refresh last_seen without changing name/project. */
+export interface SidebarHeartbeatBody {
+	sidebar_id?: string;
+	window_id?: string;
+}

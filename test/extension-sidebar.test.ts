@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
 	coerceActiveProjectId,
+	connectedFromLastSeen,
 	parseActiveProjectIdForUpdate,
 	sidebarWithConnected,
 	SIDEBAR_CONNECTED_THRESHOLD_MS,
@@ -58,5 +59,9 @@ const now = Date.now();
 assert.equal(sidebarWithConnected(row(now - 30 * 60 * 1000)).connected, true);
 assert.equal(sidebarWithConnected(row(now - 2 * 60 * 60 * 1000)).connected, false);
 assert.equal(sidebarWithConnected(row(now - SIDEBAR_CONNECTED_THRESHOLD_MS)).connected, false);
+
+assert.equal(connectedFromLastSeen(null), false);
+assert.equal(connectedFromLastSeen(""), false);
+assert.equal(connectedFromLastSeen("not a date"), false);
 
 console.log("unit-tests: extension-sidebar OK");

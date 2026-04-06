@@ -40,9 +40,14 @@ export function parseActiveProjectIdForUpdate(
 	return { kind: "set", id: t };
 }
 
+/** Use anywhere we have `last_seen` but not a full Sidebar row (e.g. dashboard queries). */
+export function connectedFromLastSeen(lastSeen: string | null | undefined): boolean {
+	if (lastSeen == null || lastSeen === "") return false;
+	const t = new Date(lastSeen).getTime();
+	if (Number.isNaN(t)) return false;
+	return Date.now() - t < SIDEBAR_CONNECTED_THRESHOLD_MS;
+}
+
 export function sidebarWithConnected(row: Sidebar): Sidebar {
-	const lastSeen = new Date(row.last_seen).getTime();
-	const connected =
-		!Number.isNaN(lastSeen) && Date.now() - lastSeen < SIDEBAR_CONNECTED_THRESHOLD_MS;
-	return { ...row, connected };
+	return { ...row, connected: connectedFromLastSeen(row.last_seen) };
 }
