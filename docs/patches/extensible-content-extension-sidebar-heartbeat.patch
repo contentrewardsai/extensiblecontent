@@ -1,5 +1,5 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..d1526f9 100644
+index 02b2d5f..c8240c3 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
 @@ -114,12 +114,17 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
@@ -17,7 +17,7 @@ index 02b2d5f..d1526f9 100644
 +- `POST /api/extension/sidebars/disconnect` – Disconnect; **exactly one** of `sidebar_id` (UUID) or `window_id` (**400** if both).
  
 -**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
-+**Local MCP** (`mcp-server`, `GET /api/sidebars`): With query `since`, `limit`, and/or `omit_connected`, proxies to `GET /api/extension/sidebars` on the host through the extension relay (same auth as other sidebar relay calls). If the relay is down or the proxy fails, returns the in-memory list for this machine only.
++**Local MCP** (`mcp-server`, `GET` / `HEAD` `/api/sidebars`): With query `since`, `limit`, and/or `omit_connected`, proxies to the host through the relay (`GET` or `HEAD` respectively). **`HEAD`** returns **`X-Result-Count`** from the host when the relay succeeds; otherwise **`X-Result-Count`** is the local in-memory registry size. **`SidebarsApi.probeSidebarsListCount(opts)`** uses this path when MCP is healthy.
 +
 +**MCP relay** (`mcp/mcp-relay.html`): `BACKEND_FETCH` uses **`ExtensionConfig.APP_ORIGIN`** (from `extension/config.js`, loaded before `mcp-relay.js`). Optional override: `chrome.storage.local.cfsBackendApiOrigin` (string, no trailing slash). Defaults to `https://www.extensiblecontent.com` if config is missing.
 +
@@ -26,7 +26,7 @@ index 02b2d5f..d1526f9 100644
  ---
  
 diff --git a/extension/sidebars-api.js b/extension/sidebars-api.js
-index 9347a07..436bb5b 100644
+index 9347a07..87a30c1 100644
 --- a/extension/sidebars-api.js
 +++ b/extension/sidebars-api.js
 @@ -234,21 +234,39 @@
@@ -83,7 +83,71 @@ index 9347a07..436bb5b 100644
      } catch (e) {
        // 404 = endpoint not implemented yet; return empty list
        if (e?.status === 404) return opts._debug ? { instances: [], _raw: null } : [];
-@@ -365,10 +383,17 @@
+@@ -285,6 +303,63 @@
+     return instances;
+   }
+ 
++  /**
++   * HEAD list probe: row count only (`X-Result-Count`), no JSON body. MCP `HEAD /api/sidebars` when available.
++   * @param {{ since?: string|number|Date, limit?: number, omit_connected?: boolean }} opts
++   * @returns {Promise<{ ok: true, count: number|null, via: 'mcp'|'direct' }>}
++   */
++  async function probeSidebarsListCount(opts = {}) {
++    const listQuery = buildSidebarsListQuery(opts);
++    const mcpOk = await isMcpAvailable();
++    if (mcpOk) {
++      try {
++        const cfg = await getMcpConfig();
++        const listTimeoutMs = listQuery ? 15000 : 5000;
++        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/sidebars${listQuery}`, {
++          method: 'HEAD',
++          headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {},
++          signal: AbortSignal.timeout(listTimeoutMs),
++        });
++        if (res.ok) {
++          const h = res.headers.get('X-Result-Count');
++          const n = h != null ? parseInt(String(h), 10) : NaN;
++          return { ok: true, count: Number.isFinite(n) ? n : null, via: 'mcp' };
++        }
++      } catch (_) {
++        /* direct */
++      }
++    }
++    const { token, error } = await getToken();
++    if (!token) {
++      const err = new Error(error || 'Not logged in');
++      err.code = 'NOT_LOGGED_IN';
++      throw err;
++    }
++    const url = `${APP_ORIGIN}/api/extension/sidebars${listQuery}`;
++    const res = await fetch(url, {
++      method: 'HEAD',
++      headers: { Authorization: `Bearer ${token}` },
++      signal: AbortSignal.timeout(listQuery ? 15000 : 8000),
++    });
++    if (res.status === 401) {
++      try {
++        chrome.runtime.sendMessage({ type: 'LOGOUT' }, () => {});
++      } catch (_) {}
++      const err = new Error('Session expired. Please log in again.');
++      err.code = 'UNAUTHORIZED';
++      err.status = 401;
++      throw err;
++    }
++    if (!res.ok) {
++      const err = new Error(res.statusText || `HTTP ${res.status}`);
++      err.status = res.status;
++      throw err;
++    }
++    const h = res.headers.get('X-Result-Count');
++    const n = h != null ? parseInt(String(h), 10) : NaN;
++    return { ok: true, count: Number.isFinite(n) ? n : null, via: 'direct' };
++  }
++
+   /**
+    * Update sidebar name or project.
+    * @param {string} id - sidebar id
+@@ -365,10 +440,17 @@
          return;
        } catch (_) {}
      }
@@ -104,11 +168,54 @@ index 9347a07..436bb5b 100644
    }
  
    /**
+@@ -408,6 +490,7 @@
+   global.SidebarsApi = {
+     registerSidebar,
+     listSidebars,
++    probeSidebarsListCount,
+     updateSidebar,
+     disconnectSidebar,
+     heartbeatSidebar,
 diff --git a/mcp-server/tools/sidebar.js b/mcp-server/tools/sidebar.js
-index 8ce7ba0..cab58bd 100644
+index 8ce7ba0..771f282 100644
 --- a/mcp-server/tools/sidebar.js
 +++ b/mcp-server/tools/sidebar.js
-@@ -222,8 +222,35 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+@@ -166,6 +166,34 @@ export function registerSidebarTools(server, ctx) {
+   );
+ }
+ 
++function truthyQueryParam(v) {
++  if (v == null) return false;
++  const t = String(v).trim().toLowerCase();
++  return t === '1' || t === 'true' || t === 'yes';
++}
++
++function wantsHostSidebarQuery(req) {
++  const since = req.query && req.query.since;
++  const limit = req.query && req.query.limit;
++  const omit = req.query && req.query.omit_connected;
++  return (
++    (since != null && String(since).trim() !== '') ||
++    (limit != null && String(limit).trim() !== '') ||
++    truthyQueryParam(omit)
++  );
++}
++
++function buildSidebarsProxyQueryString(req) {
++  const since = req.query && req.query.since;
++  const limit = req.query && req.query.limit;
++  const omit = req.query && req.query.omit_connected;
++  const qs = new URLSearchParams();
++  if (since != null && String(since).trim() !== '') qs.set('since', String(since));
++  if (limit != null && String(limit).trim() !== '') qs.set('limit', String(limit));
++  if (truthyQueryParam(omit)) qs.set('omit_connected', '1');
++  return qs.toString();
++}
++
+ /** Express routes for sidebar management (called by sidebars-api.js in the extension). */
+ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+   /* Register / upsert a sidebar */
+@@ -222,8 +250,21 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
      return res.json({ ok: true, sidebar: { id, ...entry } });
    });
  
@@ -116,25 +223,11 @@ index 8ce7ba0..cab58bd 100644
 -  app.get('/api/sidebars', authMiddleware, (_req, res) => {
 +  /* List sidebars — local machine, or proxy to host when query needs host semantics */
 +  app.get('/api/sidebars', authMiddleware, async (req, res) => {
-+    const since = req.query && req.query.since;
-+    const limit = req.query && req.query.limit;
-+    const omit = req.query && req.query.omit_connected;
-+    function truthyQuery(v) {
-+      if (v == null) return false;
-+      const t = String(v).trim().toLowerCase();
-+      return t === '1' || t === 'true' || t === 'yes';
-+    }
-+    const wantsHost =
-+      (since != null && String(since).trim() !== '') ||
-+      (limit != null && String(limit).trim() !== '') ||
-+      truthyQuery(omit);
++    const wantsHost = wantsHostSidebarQuery(req);
 +    if (wantsHost && ctx.isRelayConnected()) {
 +      try {
-+        const qs = new URLSearchParams();
-+        if (since != null && String(since).trim() !== '') qs.set('since', String(since));
-+        if (limit != null && String(limit).trim() !== '') qs.set('limit', String(limit));
-+        if (truthyQuery(omit)) qs.set('omit_connected', '1');
-+        const path = '/api/extension/sidebars?' + qs.toString();
++        const q = buildSidebarsProxyQueryString(req);
++        const path = '/api/extension/sidebars' + (q ? '?' + q : '');
 +        const relayRes = await relayBackendFetch(ctx, path, 'GET', null);
 +        if (relayRes && relayRes.ok && relayRes.data && Array.isArray(relayRes.data.sidebars)) {
 +          return res.json({ ok: true, sidebars: relayRes.data.sidebars });
@@ -146,7 +239,38 @@ index 8ce7ba0..cab58bd 100644
      const sidebars = [];
      for (const [id, entry] of localSidebars) {
        sidebars.push({
-@@ -270,11 +297,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+@@ -238,6 +279,30 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+     res.json({ ok: true, sidebars });
+   });
+ 
++  /* HEAD: host count via relay when query needs host; else local registry size (matches GET fallback) */
++  app.head('/api/sidebars', authMiddleware, async (req, res) => {
++    const wantsHost = wantsHostSidebarQuery(req);
++    if (wantsHost && ctx.isRelayConnected()) {
++      try {
++        const q = buildSidebarsProxyQueryString(req);
++        const path = '/api/extension/sidebars' + (q ? '?' + q : '');
++        const relayRes = await relayBackendFetch(ctx, path, 'HEAD', null);
++        if (relayRes && relayRes.ok && relayRes.status === 200) {
++          const raw = relayRes.resultCount;
++          const n = raw != null ? parseInt(String(raw), 10) : NaN;
++          if (Number.isFinite(n)) {
++            res.setHeader('X-Result-Count', String(n));
++          }
++          return res.status(200).end();
++        }
++      } catch (_) {
++        /* fall through */
++      }
++    }
++    res.setHeader('X-Result-Count', String(localSidebars.size));
++    return res.status(200).end();
++  });
++
+   /* Update sidebar */
+   app.post('/api/sidebars/:id', authMiddleware, async (req, res) => {
+     const { id } = req.params;
+@@ -270,11 +335,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
        _batchHeartbeatPending = true;
        setTimeout(async () => {
          _batchHeartbeatPending = false;
@@ -175,10 +299,10 @@ index 00bf023..3652b10 100644
  </body>
  </html>
 diff --git a/mcp/mcp-relay.js b/mcp/mcp-relay.js
-index 09af6fc..282445e 100644
+index 09af6fc..88610f1 100644
 --- a/mcp/mcp-relay.js
 +++ b/mcp/mcp-relay.js
-@@ -82,38 +82,47 @@
+@@ -82,38 +82,57 @@
      }
  
      if (reqType === 'BACKEND_FETCH') {
@@ -243,7 +367,17 @@ index 09af6fc..282445e 100644
 +            return resp.text().then(function (text) {
 +              var json = null;
 +              try { json = JSON.parse(text); } catch (_) {}
-+              sendWs({ id: id, response: { ok: resp.ok, status: resp.status, data: json, text: text } });
++              var rc = resp.headers && resp.headers.get ? resp.headers.get('X-Result-Count') : null;
++              sendWs({
++                id: id,
++                response: {
++                  ok: resp.ok,
++                  status: resp.status,
++                  data: json,
++                  text: text,
++                  resultCount: rc != null && String(rc).trim() !== '' ? String(rc).trim() : null,
++                },
++              });
 +            });
 +          }).catch(function (err) {
 +            sendWs({ id: id, response: { ok: false, error: err.message || 'Backend fetch failed' } });
