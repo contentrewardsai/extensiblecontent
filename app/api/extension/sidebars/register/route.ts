@@ -18,6 +18,13 @@ function getIpAddress(request: NextRequest): string | null {
 	return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
 }
 
+function isUniqueViolation(err: unknown): boolean {
+	const e = err as { code?: string; message?: string };
+	if (e?.code === "23505") return true;
+	const m = String(e?.message ?? "").toLowerCase();
+	return m.includes("unique") || m.includes("duplicate key");
+}
+
 function errorResponse(err: unknown, fallback = "Registration failed") {
 	const e = err as { message?: string; details?: string; code?: string };
 	const message =
@@ -80,9 +87,14 @@ export async function POST(request: NextRequest) {
 		}
 
 		let sidebar: Sidebar;
+		/** `null` = successful insert path (always broadcast); else prior row for heartbeat-only broadcast skip */
+		let priorForBroadcast: { sidebar_name: string; active_project_id: string | null } | null;
 
 		if (existing) {
-			// Update existing
+			priorForBroadcast = {
+				sidebar_name: existing.sidebar_name,
+				active_project_id: existing.active_project_id,
+			};
 			const { data: updated, error: updateError } = await supabase
 				.from("sidebars")
 				.update({
@@ -101,7 +113,6 @@ export async function POST(request: NextRequest) {
 			}
 			sidebar = updated as Sidebar;
 		} else {
-			// Insert new (no limit; one channel per user)
 			const { data: inserted, error: insertError } = await supabase
 				.from("sidebars")
 				.insert({
@@ -117,16 +128,50 @@ export async function POST(request: NextRequest) {
 				.single();
 
 			if (insertError || !inserted) {
-				return errorResponse(insertError);
+				if (!isUniqueViolation(insertError)) {
+					return errorResponse(insertError);
+				}
+				// Concurrent register: another request inserted the same (user_id, window_id)
+				const { data: raced, error: raceSelectError } = await supabase
+					.from("sidebars")
+					.select("id, sidebar_name, active_project_id")
+					.eq("user_id", user.user_id)
+					.eq("window_id", win.value)
+					.maybeSingle();
+				if (raceSelectError || !raced) {
+					return errorResponse(insertError);
+				}
+				priorForBroadcast = {
+					sidebar_name: raced.sidebar_name,
+					active_project_id: raced.active_project_id,
+				};
+				const { data: updated, error: updateError } = await supabase
+					.from("sidebars")
+					.update({
+						sidebar_name: name.value,
+						active_project_id: safeProjectId,
+						last_seen: now,
+						ip_address: ipAddress,
+						updated_at: now,
+					})
+					.eq("id", raced.id)
+					.select()
+					.single();
+				if (updateError || !updated) {
+					return errorResponse(updateError);
+				}
+				sidebar = updated as Sidebar;
+			} else {
+				priorForBroadcast = null;
+				sidebar = inserted as Sidebar;
 			}
-			sidebar = inserted as Sidebar;
 		}
 
 		// Notify other clients when the row set or visible fields change — not on pure last_seen/ip refresh.
 		const shouldBroadcast =
-			!existing ||
-			existing.sidebar_name !== name.value ||
-			(existing.active_project_id ?? null) !== (safeProjectId ?? null);
+			priorForBroadcast === null ||
+			priorForBroadcast.sidebar_name !== name.value ||
+			(priorForBroadcast.active_project_id ?? null) !== (safeProjectId ?? null);
 		if (shouldBroadcast) {
 			try {
 				await broadcastListUpdatedToUser(user.user_id);
