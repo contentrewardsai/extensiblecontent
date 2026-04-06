@@ -48,8 +48,11 @@ export async function POST(request: NextRequest) {
 
 	await supabase.from("sidebars").delete().eq("id", toDelete.id);
 
-	// Broadcast list_updated to user channel
-	await broadcastListUpdatedToUser(user.user_id);
+	try {
+		await broadcastListUpdatedToUser(user.user_id);
+	} catch (broadcastErr) {
+		console.error("[sidebars/disconnect] Broadcast failed (disconnect still succeeded):", broadcastErr);
+	}
 
 	return Response.json({ success: true });
 }
