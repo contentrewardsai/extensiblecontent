@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { sidebarWithConnected } from "@/lib/extension-sidebar";
-import { parseSidebarListQuery } from "@/lib/sidebar-list-query";
+import { type ParsedSidebarListQuery, parseSidebarListQuery } from "@/lib/sidebar-list-query";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -16,10 +16,33 @@ const LIST_SUCCESS_HEADERS = {
 	Vary: "Authorization",
 } as const;
 
+type ListQueryOk = Extract<ParsedSidebarListQuery, { ok: true }>;
+
+function applySidebarsFilters(
+	supabase: ReturnType<typeof getSupabase>,
+	userId: string,
+	listQ: ListQueryOk,
+	mode: "rows" | "count",
+) {
+	const base =
+		mode === "count"
+			? supabase.from("sidebars").select("*", { count: "exact", head: true })
+			: supabase.from("sidebars").select("*");
+	let q = base.eq("user_id", userId);
+	if (listQ.sinceIso) {
+		q = q.gte("last_seen", listQ.sinceIso);
+	}
+	q = q.order("last_seen", { ascending: false });
+	if (listQ.limit != null) {
+		q = q.limit(listQ.limit);
+	}
+	return q;
+}
+
 /**
- * Shared GET logic for sidebar list (GET and HEAD use the same checks and DB query).
+ * GET: full sidebar rows (with optional `connected` field).
  */
-export async function sidebarsListResponse(request: NextRequest): Promise<Response> {
+export async function sidebarsListGetResponse(request: NextRequest): Promise<Response> {
 	const user = await getExtensionUser(request);
 	if (!user) {
 		return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,15 +54,7 @@ export async function sidebarsListResponse(request: NextRequest): Promise<Respon
 	}
 
 	const supabase = getSupabase();
-	let q = supabase.from("sidebars").select("*").eq("user_id", user.user_id);
-	if (listQ.sinceIso) {
-		q = q.gte("last_seen", listQ.sinceIso);
-	}
-	q = q.order("last_seen", { ascending: false });
-	if (listQ.limit != null) {
-		q = q.limit(listQ.limit);
-	}
-	const { data: sidebars, error } = await q;
+	const { data: sidebars, error } = await applySidebarsFilters(supabase, user.user_id, listQ, "rows");
 
 	if (error) {
 		console.error("[sidebars] List error:", error);
@@ -53,11 +68,32 @@ export async function sidebarsListResponse(request: NextRequest): Promise<Respon
 	return Response.json({ sidebars: payloadRows }, { headers: LIST_SUCCESS_HEADERS });
 }
 
-export function headFromListResponse(res: Response): Response {
-	const h = new Headers();
-	const cache = res.headers.get("Cache-Control");
-	const vary = res.headers.get("Vary");
-	if (cache) h.set("Cache-Control", cache);
-	if (vary) h.set("Vary", vary);
-	return new Response(null, { status: res.status, headers: h });
+/**
+ * HEAD: same filters as GET; count-only DB round-trip; no body.
+ * `X-Result-Count` = number of rows that would be returned (respects `since` and `limit`).
+ */
+export async function sidebarsListHeadResponse(request: NextRequest): Promise<Response> {
+	const user = await getExtensionUser(request);
+	if (!user) {
+		return new Response(null, { status: 401 });
+	}
+
+	const listQ = parseSidebarListQuery(request.nextUrl);
+	if (!listQ.ok) {
+		return new Response(null, { status: 400 });
+	}
+
+	const supabase = getSupabase();
+	const { error, count } = await applySidebarsFilters(supabase, user.user_id, listQ, "count");
+
+	if (error) {
+		console.error("[sidebars] HEAD list error:", error);
+		return new Response(null, { status: 500 });
+	}
+
+	const headers = new Headers(LIST_SUCCESS_HEADERS);
+	if (count != null) {
+		headers.set("X-Result-Count", String(count));
+	}
+	return new Response(null, { status: 200, headers });
 }
