@@ -31,4 +31,9 @@ export interface SidebarDisconnectBody {
 export interface SidebarHeartbeatBody {
 	sidebar_id?: string;
 	window_id?: string;
+	/**
+	 * MCP hub: refresh many backend rows in one request (Supabase UUIDs only).
+	 * Mutually exclusive with sidebar_id / window_id for a single row.
+	 */
+	backend_ids?: string[];
 }

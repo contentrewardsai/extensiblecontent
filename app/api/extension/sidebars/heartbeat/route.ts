@@ -2,6 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { sidebarWithConnected } from "@/lib/extension-sidebar";
+import {
+	batchHeartbeatSidebars,
+	fetchSidebarsByIds,
+	normalizeBackendIdsForHeartbeat,
+	sidebarsWithConnectedInOrder,
+} from "@/lib/sidebar-heartbeat";
 import type { Sidebar, SidebarHeartbeatBody } from "@/lib/types/sidebars";
 
 function getSupabase() {
@@ -25,9 +31,32 @@ export async function POST(request: NextRequest) {
 			return Response.json({ error: "Invalid JSON" }, { status: 400 });
 		}
 
-		const { sidebar_id, window_id } = body;
+		const { sidebar_id, window_id, backend_ids } = body;
+
+		const supabase = getSupabase();
+
+		if (backend_ids !== undefined && backend_ids !== null) {
+			if (sidebar_id != null || window_id != null) {
+				return Response.json(
+					{ error: "backend_ids cannot be combined with sidebar_id or window_id" },
+					{ status: 400 },
+				);
+			}
+			const normalized = normalizeBackendIdsForHeartbeat(backend_ids);
+			if ("error" in normalized) {
+				return Response.json({ error: normalized.error }, { status: 400 });
+			}
+			const batch = await batchHeartbeatSidebars(supabase, user.user_id, normalized);
+			if ("error" in batch) {
+				return Response.json({ error: batch.error }, { status: batch.status });
+			}
+			const rows = await fetchSidebarsByIds(supabase, user.user_id, batch.ids);
+			const sidebars = sidebarsWithConnectedInOrder(batch.ids, rows);
+			return Response.json({ updated: batch.updated, sidebars });
+		}
+
 		if (!sidebar_id && !window_id) {
-			return Response.json({ error: "sidebar_id or window_id is required" }, { status: 400 });
+			return Response.json({ error: "sidebar_id, window_id, or backend_ids is required" }, { status: 400 });
 		}
 		if (sidebar_id && typeof sidebar_id !== "string") {
 			return Response.json({ error: "sidebar_id must be a string" }, { status: 400 });
@@ -36,7 +65,6 @@ export async function POST(request: NextRequest) {
 			return Response.json({ error: "window_id must be a string" }, { status: 400 });
 		}
 
-		const supabase = getSupabase();
 		const now = new Date().toISOString();
 
 		let query = supabase.from("sidebars").select("id").eq("user_id", user.user_id);
