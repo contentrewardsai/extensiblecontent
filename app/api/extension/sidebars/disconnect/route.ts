@@ -34,6 +34,19 @@ export async function POST(request: NextRequest) {
 	if (window_id && typeof window_id !== "string") {
 		return Response.json({ error: "window_id must be a string" }, { status: 400 });
 	}
+	if (
+		sidebar_id &&
+		typeof sidebar_id === "string" &&
+		sidebar_id.trim() &&
+		window_id &&
+		typeof window_id === "string" &&
+		window_id.trim()
+	) {
+		return Response.json(
+			{ error: "Provide only one of sidebar_id or window_id, not both" },
+			{ status: 400 },
+		);
+	}
 
 	const supabase = getSupabase();
 

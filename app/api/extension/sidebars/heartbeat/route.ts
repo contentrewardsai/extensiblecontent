@@ -52,7 +52,9 @@ export async function POST(request: NextRequest) {
 			}
 			const rows = await fetchSidebarsByIds(supabase, user.user_id, batch.ids);
 			const sidebars = sidebarsWithConnectedInOrder(batch.ids, rows);
-			return Response.json({ updated: batch.updated, sidebars });
+			const requested = normalized.length;
+			const skipped = requested - batch.updated;
+			return Response.json({ updated: batch.updated, requested, skipped, sidebars });
 		}
 
 		if (!sidebar_id && !window_id) {
@@ -63,6 +65,19 @@ export async function POST(request: NextRequest) {
 		}
 		if (window_id && typeof window_id !== "string") {
 			return Response.json({ error: "window_id must be a string" }, { status: 400 });
+		}
+		if (
+			sidebar_id &&
+			typeof sidebar_id === "string" &&
+			sidebar_id.trim() &&
+			window_id &&
+			typeof window_id === "string" &&
+			window_id.trim()
+		) {
+			return Response.json(
+				{ error: "Provide only one of sidebar_id or window_id, not both" },
+				{ status: 400 },
+			);
 		}
 
 		const now = new Date().toISOString();
