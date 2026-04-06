@@ -62,4 +62,4 @@ Implemented under `app/api/extension/sidebars/`. The [ExtensibleContentExtension
 
 Details and limits: [EXTENSION_API_REQUIREMENTS.md](EXTENSION_API_REQUIREMENTS.md).
 
-**ExtensibleContentExtension:** matching client changes are in [docs/patches/extensible-content-extension-sidebar-heartbeat.patch](patches/extensible-content-extension-sidebar-heartbeat.patch). From a clone of that repo: `git apply /path/to/this-repo/docs/patches/extensible-content-extension-sidebar-heartbeat.patch` (or cherry-pick if you maintain a fork).
+**ExtensibleContentExtension:** `SidebarsApi.listSidebars({ since, limit })` passes `since` / `limit` to the host; with those options MCP is skipped (local hub has no filtered list). Full patch: [docs/patches/extensible-content-extension-sidebar-heartbeat.patch](patches/extensible-content-extension-sidebar-heartbeat.patch). From a clone of that repo: `git apply /path/to/this-repo/docs/patches/extensible-content-extension-sidebar-heartbeat.patch` (or cherry-pick if you maintain a fork).

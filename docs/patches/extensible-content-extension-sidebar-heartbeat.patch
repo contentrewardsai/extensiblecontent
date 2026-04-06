@@ -22,10 +22,57 @@ index 02b2d5f..dc7bc41 100644
  ---
  
 diff --git a/extension/sidebars-api.js b/extension/sidebars-api.js
-index 9347a07..7b694b8 100644
+index 9347a07..fd22bc0 100644
 --- a/extension/sidebars-api.js
 +++ b/extension/sidebars-api.js
-@@ -365,10 +365,17 @@
+@@ -234,15 +234,34 @@
+     }
+   }
+ 
++  /** Build query string for GET /api/extension/sidebars (since / limit). */
++  function buildSidebarsListQuery(opts) {
++    const params = new URLSearchParams();
++    if (opts.since != null && opts.since !== '') {
++      const d = new Date(opts.since);
++      if (!Number.isNaN(d.getTime())) params.set('since', d.toISOString());
++    }
++    if (opts.limit != null && opts.limit !== '') {
++      const n = Number(opts.limit);
++      if (Number.isFinite(n) && n >= 1 && n <= 200) params.set('limit', String(Math.floor(n)));
++    }
++    const q = params.toString();
++    return q ? '?' + q : '';
++  }
++
+   /**
+    * List sidebars for the current user.
+    * Routes through MCP if available (cached), otherwise direct to backend.
+-   * @param {{ _debug?: boolean }} opts
++   * When opts.since or opts.limit is set, always uses the host (MCP local list cannot filter).
++   * @param {{ _debug?: boolean, since?: string|number|Date, limit?: number }} opts
+    * @returns {Promise<Array|{instances:Array,_raw:object}>}
+    */
+   async function listSidebars(opts = {}) {
+-    // MCP route
+-    const mcpOk = await isMcpAvailable();
++    const listQuery = buildSidebarsListQuery(opts);
++    const useHostList = listQuery.length > 0;
++
++    // MCP route (full local list only — no since/limit)
++    const mcpOk = !useHostList && (await isMcpAvailable());
+     if (mcpOk) {
+       try {
+         const cfg = await getMcpConfig();
+@@ -264,7 +283,7 @@
+     // Direct to backend
+     let res;
+     try {
+-      res = await apiFetch('/api/extension/sidebars');
++      res = await apiFetch('/api/extension/sidebars' + listQuery);
+     } catch (e) {
+       // 404 = endpoint not implemented yet; return empty list
+       if (e?.status === 404) return opts._debug ? { instances: [], _raw: null } : [];
+@@ -365,10 +384,17 @@
          return;
        } catch (_) {}
      }
