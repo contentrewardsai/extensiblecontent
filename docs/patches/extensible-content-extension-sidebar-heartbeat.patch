@@ -1,8 +1,8 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..dc7bc41 100644
+index 02b2d5f..730ebeb 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
-@@ -114,12 +114,13 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
+@@ -114,12 +114,15 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
  
  Sidebars use `extension/sidebars-api.js`:
  
@@ -17,15 +17,17 @@ index 02b2d5f..dc7bc41 100644
 +- `POST /api/extension/sidebars/disconnect` – Disconnect; **exactly one** of `sidebar_id` (UUID) or `window_id` (**400** if both).
  
 -**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
++**Local MCP** (`mcp-server`, `GET /api/sidebars`): With query `since` and/or `limit`, proxies to `GET /api/extension/sidebars` on the host through the extension relay (same auth as other sidebar relay calls). If the relay is down or the proxy fails, returns the in-memory list for this machine only.
++
 +**`window_id`:** The side panel registers with `${deviceId}_sidepanel` (stable device id from storage). The API upserts on `(user_id, window_id)` and refreshes `last_seen` on register and heartbeat. Legacy rows may use older `windowId_tabId` or numeric `_sidepanel` shapes.
  
  ---
  
 diff --git a/extension/sidebars-api.js b/extension/sidebars-api.js
-index 9347a07..fd22bc0 100644
+index 9347a07..ce75dab 100644
 --- a/extension/sidebars-api.js
 +++ b/extension/sidebars-api.js
-@@ -234,15 +234,34 @@
+@@ -234,21 +234,38 @@
      }
    }
  
@@ -46,24 +48,30 @@ index 9347a07..fd22bc0 100644
 +
    /**
     * List sidebars for the current user.
-    * Routes through MCP if available (cached), otherwise direct to backend.
+-   * Routes through MCP if available (cached), otherwise direct to backend.
 -   * @param {{ _debug?: boolean }} opts
-+   * When opts.since or opts.limit is set, always uses the host (MCP local list cannot filter).
++   * Routes through MCP if available (relay proxies since/limit to the host when set).
 +   * @param {{ _debug?: boolean, since?: string|number|Date, limit?: number }} opts
     * @returns {Promise<Array|{instances:Array,_raw:object}>}
     */
    async function listSidebars(opts = {}) {
 -    // MCP route
--    const mcpOk = await isMcpAvailable();
 +    const listQuery = buildSidebarsListQuery(opts);
-+    const useHostList = listQuery.length > 0;
 +
-+    // MCP route (full local list only — no since/limit)
-+    const mcpOk = !useHostList && (await isMcpAvailable());
+     const mcpOk = await isMcpAvailable();
      if (mcpOk) {
        try {
          const cfg = await getMcpConfig();
-@@ -264,7 +283,7 @@
+-        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/sidebars`, {
++        const listTimeoutMs = listQuery ? 15000 : 5000;
++        const res = await fetch(`http://127.0.0.1:${cfg.port}/api/sidebars${listQuery}`, {
+           headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {},
+-          signal: AbortSignal.timeout(5000),
++          signal: AbortSignal.timeout(listTimeoutMs),
+         });
+         if (res.ok) {
+           const json = await res.json();
+@@ -264,7 +281,7 @@
      // Direct to backend
      let res;
      try {
@@ -72,7 +80,7 @@ index 9347a07..fd22bc0 100644
      } catch (e) {
        // 404 = endpoint not implemented yet; return empty list
        if (e?.status === 404) return opts._debug ? { instances: [], _raw: null } : [];
-@@ -365,10 +384,17 @@
+@@ -365,10 +382,17 @@
          return;
        } catch (_) {}
      }
@@ -94,10 +102,38 @@ index 9347a07..fd22bc0 100644
  
    /**
 diff --git a/mcp-server/tools/sidebar.js b/mcp-server/tools/sidebar.js
-index 8ce7ba0..56c08c0 100644
+index 8ce7ba0..dcc8115 100644
 --- a/mcp-server/tools/sidebar.js
 +++ b/mcp-server/tools/sidebar.js
-@@ -270,11 +270,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+@@ -222,8 +222,25 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
+     return res.json({ ok: true, sidebar: { id, ...entry } });
+   });
+ 
+-  /* List sidebars */
+-  app.get('/api/sidebars', authMiddleware, (_req, res) => {
++  /* List sidebars — local machine, or proxy to host when since/limit (global account filter) */
++  app.get('/api/sidebars', authMiddleware, async (req, res) => {
++    const since = req.query && req.query.since;
++    const limit = req.query && req.query.limit;
++    const wantsFiltered = (since != null && String(since).trim() !== '') || (limit != null && String(limit).trim() !== '');
++    if (wantsFiltered && ctx.isRelayConnected()) {
++      try {
++        const qs = new URLSearchParams();
++        if (since != null && String(since).trim() !== '') qs.set('since', String(since));
++        if (limit != null && String(limit).trim() !== '') qs.set('limit', String(limit));
++        const path = '/api/extension/sidebars?' + qs.toString();
++        const relayRes = await relayBackendFetch(ctx, path, 'GET', null);
++        if (relayRes && relayRes.ok && relayRes.data && Array.isArray(relayRes.data.sidebars)) {
++          return res.json({ ok: true, sidebars: relayRes.data.sidebars });
++        }
++      } catch (_) {
++        /* fall through to local list */
++      }
++    }
+     const sidebars = [];
+     for (const [id, entry] of localSidebars) {
+       sidebars.push({
+@@ -270,11 +287,12 @@ export function registerSidebarRoutes(app, authMiddleware, ctx) {
        _batchHeartbeatPending = true;
        setTimeout(async () => {
          _batchHeartbeatPending = false;
