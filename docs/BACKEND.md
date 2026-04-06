@@ -54,7 +54,7 @@ Implemented under `app/api/extension/sidebars/`. The [ExtensibleContentExtension
 
 | Method | Path | Purpose |
 |--------|------|--------|
-| GET | `/api/extension/sidebars` | List rows for the user; each item includes `connected` (true if `last_seen` within ~1 hour). Optional query: `since` (ISO 8601) — only rows with `last_seen >= since`; `limit` (1–200) — cap rows (still ordered by `last_seen` desc). |
+| GET | `/api/extension/sidebars` | List rows for the user; each item includes `connected` (true if `last_seen` within ~1 hour). Optional query: `since` (ISO 8601) — only rows with `last_seen >= since`; `limit` (1–200) — cap rows (still ordered by `last_seen` desc). Response `Cache-Control: private, no-store`. |
 | POST | `/api/extension/sidebars/register` | Upsert on `(user_id, window_id)`; `window_id` max 512 chars, `sidebar_name` max 256; optional `active_project_id` must be a project owned by the user (**404** if UUID valid but not yours; invalid UUID coerced to null). |
 | GET, PATCH, POST | `/api/extension/sidebars/[id]` | `[id]` must be a UUID. Update name/project; non-null `active_project_id` must belong to user (**404** otherwise). Always bumps `last_seen` (POST aliases PATCH for relays). |
 | POST | `/api/extension/sidebars/heartbeat` | Touch `last_seen` only: exactly one of `sidebar_id` or `window_id`, or batch body with `backend_ids` only (max 64 UUIDs). Batch JSON: `{ updated, requested, skipped, sidebars }` (`skipped` = ids not owned / unknown). |

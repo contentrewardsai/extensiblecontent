@@ -1,8 +1,8 @@
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index 02b2d5f..730ebeb 100644
+index 02b2d5f..245acd4 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
-@@ -114,12 +114,15 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
+@@ -114,12 +114,17 @@ Before uploading, the sidebar calls **`GET /api/extension/workflows/:id`**; if t
  
  Sidebars use `extension/sidebars-api.js`:
  
@@ -18,6 +18,8 @@ index 02b2d5f..730ebeb 100644
  
 -**`window_id`:** The extension registers with `${ChromeWindowId}_sidepanel` (stable for that browser window, independent of the active tab). The API should upsert on `(user_id, window_id)` and refresh `last_seen_at` on each register. Purge or hide rows that are stale long-term; legacy rows may use older `windowId_tabId` shapes.
 +**Local MCP** (`mcp-server`, `GET /api/sidebars`): With query `since` and/or `limit`, proxies to `GET /api/extension/sidebars` on the host through the extension relay (same auth as other sidebar relay calls). If the relay is down or the proxy fails, returns the in-memory list for this machine only.
++
++**MCP relay** (`mcp/mcp-relay.html`): `BACKEND_FETCH` uses **`ExtensionConfig.APP_ORIGIN`** (from `extension/config.js`, loaded before `mcp-relay.js`). Optional override: `chrome.storage.local.cfsBackendApiOrigin` (string, no trailing slash). Defaults to `https://www.extensiblecontent.com` if config is missing.
 +
 +**`window_id`:** The side panel registers with `${deviceId}_sidepanel` (stable device id from storage). The API upserts on `(user_id, window_id)` and refreshes `last_seen` on register and heartbeat. Legacy rows may use older `windowId_tabId` or numeric `_sidepanel` shapes.
  
@@ -149,3 +151,94 @@ index 8ce7ba0..dcc8115 100644
        }, 5000);
      }
      res.json({ ok: true });
+diff --git a/mcp/mcp-relay.html b/mcp/mcp-relay.html
+index 00bf023..3652b10 100644
+--- a/mcp/mcp-relay.html
++++ b/mcp/mcp-relay.html
+@@ -28,6 +28,7 @@
+   <p class="hint">This page bridges the MCP server to the Chrome extension. Keep it open while using MCP tools.</p>
+   <div class="log" id="log"></div>
+ 
++  <script src="../extension/config.js"></script>
+   <script src="mcp-relay.js"></script>
+ </body>
+ </html>
+diff --git a/mcp/mcp-relay.js b/mcp/mcp-relay.js
+index 09af6fc..282445e 100644
+--- a/mcp/mcp-relay.js
++++ b/mcp/mcp-relay.js
+@@ -82,38 +82,47 @@
+     }
+ 
+     if (reqType === 'BACKEND_FETCH') {
+-      /* Proxy an authenticated fetch to extensiblecontent.com through the extension's auth context. */
++      /* Proxy an authenticated fetch to the app API (same origin as ExtensionConfig / sidepanel). */
+       var bePath = payload.path || '';
+       var beMethod = (payload.method || 'GET').toUpperCase();
+       var beBody = payload.body || null;
+-      chrome.runtime.sendMessage({ type: 'GET_TOKEN' }, function (tokenRes) {
+-        var token = tokenRes && (tokenRes.access_token || tokenRes.token);
+-        if (!token) {
+-          sendWs({ id: id, response: { ok: false, error: 'Not logged in' } });
+-          return;
+-        }
+-        var origin = 'https://www.extensiblecontent.com';
+-        try {
+-          if (typeof chrome !== 'undefined' && chrome.storage) {
+-            /* Try to get APP_ORIGIN from config, but fall back to default */
++      chrome.storage.local.get(['cfsBackendApiOrigin'], function (stored) {
++        chrome.runtime.sendMessage({ type: 'GET_TOKEN' }, function (tokenRes) {
++          var token = tokenRes && (tokenRes.access_token || tokenRes.token);
++          if (!token) {
++            sendWs({ id: id, response: { ok: false, error: 'Not logged in' } });
++            return;
+           }
+-        } catch (_) {}
+-        var fetchUrl = origin + (bePath.startsWith('/') ? bePath : '/' + bePath);
+-        var fetchOpts = {
+-          method: beMethod,
+-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+-        };
+-        if (beBody && beMethod !== 'GET' && beMethod !== 'HEAD') {
+-          fetchOpts.body = typeof beBody === 'string' ? beBody : JSON.stringify(beBody);
+-        }
+-        fetch(fetchUrl, fetchOpts).then(function (resp) {
+-          return resp.text().then(function (text) {
+-            var json = null;
+-            try { json = JSON.parse(text); } catch (_) {}
+-            sendWs({ id: id, response: { ok: resp.ok, status: resp.status, data: json, text: text } });
++          var origin = 'https://www.extensiblecontent.com';
++          try {
++            if (typeof ExtensionConfig !== 'undefined' && ExtensionConfig && ExtensionConfig.APP_ORIGIN) {
++              origin = String(ExtensionConfig.APP_ORIGIN).replace(/\/$/, '');
++            }
++          } catch (_) {}
++          try {
++            var override = stored && stored.cfsBackendApiOrigin;
++            if (override && typeof override === 'string') {
++              var t = override.trim().replace(/\/$/, '');
++              if (t) origin = t;
++            }
++          } catch (_) {}
++          var fetchUrl = origin + (bePath.startsWith('/') ? bePath : '/' + bePath);
++          var fetchOpts = {
++            method: beMethod,
++            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
++          };
++          if (beBody && beMethod !== 'GET' && beMethod !== 'HEAD') {
++            fetchOpts.body = typeof beBody === 'string' ? beBody : JSON.stringify(beBody);
++          }
++          fetch(fetchUrl, fetchOpts).then(function (resp) {
++            return resp.text().then(function (text) {
++              var json = null;
++              try { json = JSON.parse(text); } catch (_) {}
++              sendWs({ id: id, response: { ok: resp.ok, status: resp.status, data: json, text: text } });
++            });
++          }).catch(function (err) {
++            sendWs({ id: id, response: { ok: false, error: err.message || 'Backend fetch failed' } });
+           });
+-        }).catch(function (err) {
+-          sendWs({ id: id, response: { ok: false, error: err.message || 'Backend fetch failed' } });
+         });
+       });
+       return;

@@ -40,7 +40,14 @@ export async function GET(request: NextRequest) {
 		}
 
 		const withConnectedFlag = (sidebars ?? []).map(sidebarWithConnected);
-		return Response.json({ sidebars: withConnectedFlag });
+		return Response.json(
+			{ sidebars: withConnectedFlag },
+			{
+				headers: {
+					"Cache-Control": "private, no-store",
+				},
+			},
+		);
 	} catch (err) {
 		console.error("[sidebars] Unexpected error:", err);
 		return Response.json({ error: "Failed to list sidebars" }, { status: 500 });
