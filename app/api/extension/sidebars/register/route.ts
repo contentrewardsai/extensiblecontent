@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
@@ -6,14 +5,8 @@ import { normalizeRegisterSidebarName, normalizeRegisterWindowId } from "@/lib/s
 import { isProjectOwnedByUser } from "@/lib/sidebar-project";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 function getIpAddress(request: NextRequest): string | null {
 	return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
@@ -58,7 +51,7 @@ export async function POST(request: NextRequest) {
 
 		const safeProjectId = coerceActiveProjectId(active_project_id);
 
-		const supabase = getSupabase();
+		const supabase = getExtensionServiceSupabase();
 		if (safeProjectId) {
 			const owned = await isProjectOwnedByUser(supabase, user.user_id, safeProjectId);
 			if (!owned) {

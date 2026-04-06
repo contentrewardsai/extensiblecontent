@@ -1,15 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { sidebarWithConnected } from "@/lib/extension-sidebar";
 import { type ParsedSidebarListQuery, parseSidebarListQuery } from "@/lib/sidebar-list-query";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 
 const LIST_SUCCESS_HEADERS = {
 	"Cache-Control": "private, no-store",
@@ -19,7 +12,7 @@ const LIST_SUCCESS_HEADERS = {
 type ListQueryOk = Extract<ParsedSidebarListQuery, { ok: true }>;
 
 function applySidebarsFilters(
-	supabase: ReturnType<typeof getSupabase>,
+	supabase: ReturnType<typeof getExtensionServiceSupabase>,
 	userId: string,
 	listQ: ListQueryOk,
 	mode: "rows" | "count",
@@ -55,7 +48,7 @@ export async function sidebarsListGetResponse(request: NextRequest): Promise<Res
 		return Response.json({ error: listQ.error }, { status: 400 });
 	}
 
-	const supabase = getSupabase();
+	const supabase = getExtensionServiceSupabase();
 	const { data: sidebars, error } = await applySidebarsFilters(supabase, user.user_id, listQ, "rows");
 
 	if (error) {
@@ -85,7 +78,7 @@ export async function sidebarsListHeadResponse(request: NextRequest): Promise<Re
 		return new Response(null, { status: 400 });
 	}
 
-	const supabase = getSupabase();
+	const supabase = getExtensionServiceSupabase();
 	const { error, count } = await applySidebarsFilters(supabase, user.user_id, listQ, "count");
 
 	if (error) {

@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { sidebarWithConnected } from "@/lib/extension-sidebar";
@@ -10,13 +9,7 @@ import {
 } from "@/lib/sidebar-heartbeat";
 import { parseExclusiveSidebarLookup } from "@/lib/sidebar-lookup-parse";
 import type { Sidebar, SidebarHeartbeatBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 
 export async function POST(request: NextRequest) {
 	try {
@@ -34,7 +27,7 @@ export async function POST(request: NextRequest) {
 
 		const { sidebar_id, window_id, backend_ids } = body;
 
-		const supabase = getSupabase();
+		const supabase = getExtensionServiceSupabase();
 
 		if (backend_ids !== undefined && backend_ids !== null) {
 			const sidNoise = typeof sidebar_id === "string" && sidebar_id.trim().length > 0;

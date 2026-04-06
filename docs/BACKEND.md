@@ -50,7 +50,7 @@ The Chrome extension should call `{siteOrigin}/api/extension/workflow-step-media
 
 ## Sidebars (extension presence)
 
-Implemented under `app/api/extension/sidebars/`. The [ExtensibleContentExtension](https://github.com/contentrewardsai/ExtensibleContentExtension) `SidebarsApi` and MCP server call these routes.
+Implemented under `app/api/extension/sidebars/` using **`getExtensionServiceSupabase()`** (`lib/supabase-extension-service.ts`) for a single cached service-role client. The [ExtensibleContentExtension](https://github.com/contentrewardsai/ExtensibleContentExtension) `SidebarsApi` and MCP server call these routes.
 
 | Method | Path | Purpose |
 |--------|------|--------|

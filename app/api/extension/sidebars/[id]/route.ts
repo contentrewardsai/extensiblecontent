@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import {
@@ -8,14 +7,8 @@ import {
 import { normalizeRegisterSidebarName, parseSidebarRowUuid } from "@/lib/sidebar-lookup-parse";
 import { isProjectOwnedByUser } from "@/lib/sidebar-project";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const user = await getExtensionUser(request);
@@ -25,7 +18,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 	const idParsed = parseSidebarRowUuid(rawId);
 	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
 	const id = idParsed.id;
-	const supabase = getSupabase();
+	const supabase = getExtensionServiceSupabase();
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
 		.select("*")
@@ -53,7 +46,7 @@ async function handleSidebarUpdate(
 	const idParsed = parseSidebarRowUuid(rawId);
 	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
 	const id = idParsed.id;
-	const supabase = getSupabase();
+	const supabase = getExtensionServiceSupabase();
 
 	const { data: existing } = await supabase
 		.from("sidebars")
