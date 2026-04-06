@@ -10,6 +10,18 @@ export type ParsedSidebarLookup =
 const SIDEBAR_NAME_MAX = 256;
 const WINDOW_ID_MAX = 512;
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Supabase `sidebars.id` is uuid; reject garbage before querying. */
+export function parseSidebarRowUuid(raw: string): { ok: true; id: string } | { ok: false; error: string } {
+	const t = raw.trim();
+	if (!t) return { ok: false, error: "sidebar id must be a non-empty string" };
+	if (!UUID_REGEX.test(t)) {
+		return { ok: false, error: "sidebar id must be a valid UUID" };
+	}
+	return { ok: true, id: t };
+}
+
 export function parseExclusiveSidebarLookup(body: {
 	sidebar_id?: unknown;
 	window_id?: unknown;
@@ -39,7 +51,11 @@ export function parseExclusiveSidebarLookup(body: {
 			error: "Provide only one of sidebar_id or window_id, not both",
 		};
 	}
-	if (hasSid) return { ok: true, sidebar_id: sidStr };
+	if (hasSid) {
+		const uuid = parseSidebarRowUuid(sidStr);
+		if (!uuid.ok) return { ok: false, status: 400, error: uuid.error };
+		return { ok: true, sidebar_id: uuid.id };
+	}
 	return { ok: true, window_id: widStr };
 }
 

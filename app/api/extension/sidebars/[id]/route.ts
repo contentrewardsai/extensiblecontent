@@ -5,7 +5,7 @@ import {
 	parseActiveProjectIdForUpdate,
 	sidebarWithConnected,
 } from "@/lib/extension-sidebar";
-import { normalizeRegisterSidebarName } from "@/lib/sidebar-lookup-parse";
+import { normalizeRegisterSidebarName, parseSidebarRowUuid } from "@/lib/sidebar-lookup-parse";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
 
@@ -20,7 +20,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 	const user = await getExtensionUser(request);
 	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-	const { id } = await params;
+	const { id: rawId } = await params;
+	const idParsed = parseSidebarRowUuid(rawId);
+	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
+	const id = idParsed.id;
 	const supabase = getSupabase();
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
@@ -45,7 +48,10 @@ async function handleSidebarUpdate(
 		return Response.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
-	const { id } = await params;
+	const { id: rawId } = await params;
+	const idParsed = parseSidebarRowUuid(rawId);
+	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
+	const id = idParsed.id;
 	const supabase = getSupabase();
 
 	const { data: existing } = await supabase
