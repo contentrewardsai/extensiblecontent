@@ -128,7 +128,11 @@ async function handleSidebarUpdate(
 	}
 
 	if (shouldBroadcastList) {
-		await broadcastListUpdatedToUser(user.user_id);
+		try {
+			await broadcastListUpdatedToUser(user.user_id);
+		} catch (broadcastErr) {
+			console.error("[sidebars] Broadcast failed (update still succeeded):", broadcastErr);
+		}
 	}
 
 	return Response.json(sidebarWithConnected(sidebar as Sidebar));

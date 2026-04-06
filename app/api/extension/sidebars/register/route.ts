@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 		// Check existing row for upsert (ignore PGRST116 "no rows" - that's expected for insert)
 		const { data: existing, error: selectError } = await supabase
 			.from("sidebars")
-			.select("id")
+			.select("id, sidebar_name, active_project_id")
 			.eq("user_id", user.user_id)
 			.eq("window_id", win.value)
 			.maybeSingle();
@@ -122,11 +122,17 @@ export async function POST(request: NextRequest) {
 			sidebar = inserted as Sidebar;
 		}
 
-		// Broadcast list_updated to user channel (non-fatal; don't fail registration)
-		try {
-			await broadcastListUpdatedToUser(user.user_id);
-		} catch (broadcastErr) {
-			console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
+		// Notify other clients when the row set or visible fields change — not on pure last_seen/ip refresh.
+		const shouldBroadcast =
+			!existing ||
+			existing.sidebar_name !== name.value ||
+			(existing.active_project_id ?? null) !== (safeProjectId ?? null);
+		if (shouldBroadcast) {
+			try {
+				await broadcastListUpdatedToUser(user.user_id);
+			} catch (broadcastErr) {
+				console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
+			}
 		}
 
 		const response = sidebarWithConnected(sidebar);
