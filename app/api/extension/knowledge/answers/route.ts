@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import type { KnowledgeAnswer, KnowledgeAnswerSubmitBody } from "@/lib/types/knowledge";
 import { userCanAccessWorkflow } from "@/lib/workflow-user-access";
 
@@ -115,7 +116,7 @@ export async function POST(request: NextRequest) {
 	const { data: row, error } = await supabase.from("knowledge_answers").insert(insertRow).select().single();
 
 	if (error) {
-		if (error.code === "23505" || error.message.includes("unique")) {
+		if (isPostgresUniqueViolation(error)) {
 			return Response.json({ error: "This workflow is already linked to this question" }, { status: 409 });
 		}
 		if (error.message.includes("workflow must be published") || error.message.includes("knowledge_answers_workflow_or_text_chk")) {
