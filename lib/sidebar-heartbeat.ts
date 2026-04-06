@@ -56,7 +56,8 @@ export async function batchHeartbeatSidebars(
 	const ownedSet = new Set((owned ?? []).map((r) => r.id as string));
 	const ownedIds = ids.filter((id) => ownedSet.has(id));
 	if (ownedIds.length === 0) {
-		return { error: "No matching sidebars found", status: 404 };
+		// 200 + updated:0 at the route — relays must not treat "all unknown" ids as an error.
+		return { updated: 0, ids: [] };
 	}
 
 	const { error: updateError } = await supabase
