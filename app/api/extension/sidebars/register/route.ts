@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
 import { normalizeRegisterSidebarName, normalizeRegisterWindowId } from "@/lib/sidebar-lookup-parse";
+import { isProjectOwnedByUser } from "@/lib/sidebar-project";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
 
@@ -57,6 +58,12 @@ export async function POST(request: NextRequest) {
 		const safeProjectId = coerceActiveProjectId(active_project_id);
 
 		const supabase = getSupabase();
+		if (safeProjectId) {
+			const owned = await isProjectOwnedByUser(supabase, user.user_id, safeProjectId);
+			if (!owned) {
+				return Response.json({ error: "Project not found" }, { status: 404 });
+			}
+		}
 		const ipAddress = getIpAddress(request);
 		const now = new Date().toISOString();
 

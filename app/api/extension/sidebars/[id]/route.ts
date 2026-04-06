@@ -6,6 +6,7 @@ import {
 	sidebarWithConnected,
 } from "@/lib/extension-sidebar";
 import { normalizeRegisterSidebarName, parseSidebarRowUuid } from "@/lib/sidebar-lookup-parse";
+import { isProjectOwnedByUser } from "@/lib/sidebar-project";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
 
@@ -97,6 +98,12 @@ async function handleSidebarUpdate(
 			return Response.json({ error: parsed.message }, { status: 400 });
 		}
 		if (parsed.kind === "set") {
+			if (parsed.id !== null) {
+				const owned = await isProjectOwnedByUser(supabase, user.user_id, parsed.id);
+				if (!owned) {
+					return Response.json({ error: "Project not found" }, { status: 404 });
+				}
+			}
 			updates.active_project_id = parsed.id;
 			projectIdChanged = true;
 		}
