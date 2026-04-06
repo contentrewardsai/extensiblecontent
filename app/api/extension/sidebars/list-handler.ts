@@ -30,7 +30,9 @@ function applySidebarsFilters(
 			: supabase.from("sidebars").select("*");
 	let q = base.eq("user_id", userId);
 	if (listQ.sinceIso) {
-		q = q.gte("last_seen", listQ.sinceIso);
+		// Strictly after watermark so incremental HEAD counts can be 0 when nothing changed
+		// (gte(max_seen) would always include at least the row that produced the watermark).
+		q = q.gt("last_seen", listQ.sinceIso);
 	}
 	q = q.order("last_seen", { ascending: false });
 	if (listQ.limit != null) {
