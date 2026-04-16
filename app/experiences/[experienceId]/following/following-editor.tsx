@@ -1,7 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+	useTransition,
+	type ReactNode,
+	type SyntheticEvent,
+} from "react";
 import type { Following, FollowingInsert, FollowingUpdate } from "@/lib/types/following";
 import { BirthdaySelect } from "./birthday-select";
 import {
@@ -212,17 +220,37 @@ function CollapsedBrandStack({
 	const cap = 8;
 	const shown = valid.slice(0, cap);
 	const overflow = valid.length - shown.length;
+	const stop = (e: SyntheticEvent) => {
+		e.stopPropagation();
+	};
 	return (
 		<div className="flex items-center gap-1 flex-wrap">
 			{shown.map((a, i) => {
 				const meta = slugById.get(a.platform_id);
-				return (
+				const url = a.url?.trim() || platformProfileUrl(meta?.slug, a.handle) || "";
+				const tile = (
 					<PlatformBrandIcon
-						key={`${a.platform_id}-${i}`}
 						slug={meta?.slug}
 						name={meta?.name}
 						size="md"
 					/>
+				);
+				if (!url) {
+					return <span key={`${a.platform_id}-${i}`}>{tile}</span>;
+				}
+				return (
+					<a
+						key={`${a.platform_id}-${i}`}
+						href={url}
+						target="_blank"
+						rel="noreferrer"
+						onClick={stop}
+						onMouseDown={stop}
+						className="inline-flex hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-8 rounded-md"
+						aria-label={meta?.name ? `Open ${meta.name} profile` : "Open profile"}
+					>
+						{tile}
+					</a>
 				);
 			})}
 			{overflow > 0 ? (
