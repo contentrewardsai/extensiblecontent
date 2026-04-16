@@ -209,9 +209,12 @@ function CollapsedBrandStack({
 	}, [platforms]);
 	const valid = accounts.filter((a) => UUID_RE.test(a.platform_id.trim()));
 	if (valid.length === 0) return null;
+	const cap = 8;
+	const shown = valid.slice(0, cap);
+	const overflow = valid.length - shown.length;
 	return (
 		<div className="flex items-center gap-1 flex-wrap">
-			{valid.map((a, i) => {
+			{shown.map((a, i) => {
 				const meta = slugById.get(a.platform_id);
 				return (
 					<PlatformBrandIcon
@@ -222,6 +225,11 @@ function CollapsedBrandStack({
 					/>
 				);
 			})}
+			{overflow > 0 ? (
+				<span className="h-7 min-w-7 px-1 rounded-md inline-grid place-items-center bg-gray-a5 text-2 font-semibold text-gray-12">
+					+{overflow}
+				</span>
+			) : null}
 		</div>
 	);
 }

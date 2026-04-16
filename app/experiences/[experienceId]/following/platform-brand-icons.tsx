@@ -90,7 +90,7 @@ export function PlatformBrandIcon({
 } & Omit<SVGProps<HTMLDivElement>, "children">) {
 	const key = normalizeSlug(slug);
 	const glyph = GLYPHS[key];
-	const style = TILE_STYLES[key] ?? { background: "var(--gray-a5)", color: "var(--gray-12)" };
+	const style = TILE_STYLES[key] ?? { background: "#6b7280", color: "#ffffff" };
 	const dims = SIZE_MAP[size];
 	const label = name || slug || "platform";
 	const initial = (name ?? slug ?? "?").trim().charAt(0).toUpperCase() || "?";
