@@ -72,24 +72,18 @@ This document describes the backend integration for ShotStack (video rendering) 
 ### Posting Methods
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /api/extension/upload-post-key | **Method A**: Return API key for extension direct posting (rotate key every few days) |
-| POST | /api/extension/upload-post/proxy | **Method B**: Proxy multipart upload. Add `account_id` and `endpoint` (photos\|video) to form |
+| POST | /api/extension/upload-post/proxy | Proxy multipart upload. Add `account_id` and `endpoint` (photos\|video) to form |
+| POST | /api/extension/social-post/upload | Proxy JSON upload (video/photo/text) through backend |
 
 ---
 
 ## Posting Flow
 
-### Method A: Extension Direct Posting
-1. Extension calls `GET /api/extension/upload-post-key` with Bearer token
-2. Backend returns `UPLOAD_POST_EXTENSION_KEY` (or `UPLOAD_POST_API_KEY`)
-3. Extension uses key to call Upload-Post API directly with `user` = account's `upload_post_username`
-4. **Risk**: Key is in extension; rotate `UPLOAD_POST_EXTENSION_KEY` every few days
-
-### Method B: Cloud Proxy
-1. Extension builds FormData like Upload-Post API (photos[], platform[], title, etc.)
-2. Adds `account_id` (our upload_post_accounts.id) and `endpoint` (photos | video)
-3. POSTs to `POST /api/extension/upload-post/proxy`
-4. Backend verifies ownership, injects `user` = upload_post_username, forwards to Upload-Post
+### Cloud Proxy
+1. Extension builds a JSON payload with `postType`, `platform`, `title`, `description`, `profile_username`, and media URLs
+2. POSTs to `POST /api/extension/social-post/upload`
+3. Backend resolves account ownership, injects the master API key, forwards to Upload-Post
+4. The API key never leaves the server
 
 ---
 
@@ -120,6 +114,5 @@ Look up user by `whop_user_id` from payment metadata.
 | SHOTSTACK_STAGING_API_KEY | Sandbox key (watermarked) |
 | SHOTSTACK_API_KEY | Production key |
 | UPLOAD_POST_API_KEY | Main key for managed accounts & proxy |
-| UPLOAD_POST_EXTENSION_KEY | Optional: key for extension (rotate frequently) |
 | NEXT_PUBLIC_APP_ORIGIN | Base URL for JWT redirect |
 | CRON_SECRET | For Vercel cron (upload-post JWT refresh); set in Vercel dashboard |
