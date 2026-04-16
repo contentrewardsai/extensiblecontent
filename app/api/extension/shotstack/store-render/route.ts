@@ -2,7 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 
-const BUCKET = "shotstack-output";
+const BUCKET_PUBLIC = "post-media";
+const BUCKET_PRIVATE = "post-media-private";
+const SIGNED_URL_EXPIRY = 3600;
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,7 +16,9 @@ function getSupabase() {
 /**
  * POST: Download a ShotStack CDN render output and persist to Supabase Storage.
  * Called after a successful render to preserve the output before CDN URLs expire (24h).
- * Body: { renderId, url, environment, format?, durationSeconds? }
+ * Stored at {userId}/{projectId}/generations/{templateId}/{timestamp}_{renderId}.{format}
+ * inside the shared post-media bucket.
+ * Body: { renderId, url, project_id, template_id, environment?, format?, durationSeconds?, private? }
  */
 export async function POST(request: NextRequest) {
 	const user = await getExtensionUser(request);
@@ -23,9 +27,12 @@ export async function POST(request: NextRequest) {
 	let body: {
 		renderId: string;
 		url: string;
+		project_id: string;
+		template_id: string;
 		environment?: string;
 		format?: string;
 		durationSeconds?: number;
+		private?: boolean;
 	};
 	try {
 		body = await request.json();
@@ -33,9 +40,17 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { renderId, url, format } = body;
+	const { renderId, url, project_id, template_id, format } = body;
+	const isPrivate = body.private === true;
+	const bucket = isPrivate ? BUCKET_PRIVATE : BUCKET_PUBLIC;
 	if (!renderId || !url) {
 		return Response.json({ error: "renderId and url are required" }, { status: 400 });
+	}
+	if (!project_id) {
+		return Response.json({ error: "project_id is required" }, { status: 400 });
+	}
+	if (!template_id) {
+		return Response.json({ error: "template_id is required" }, { status: 400 });
 	}
 
 	const supabase = getSupabase();
@@ -68,10 +83,11 @@ export async function POST(request: NextRequest) {
 	}
 
 	const ext = format || "mp4";
-	const filePath = `${user.user_id}/${renderId}.${ext}`;
+	const timestamp = Date.now();
+	const filePath = `${user.user_id}/${project_id}/generations/${template_id}/${timestamp}_${renderId}.${ext}`;
 
 	const { error: uploadError } = await supabase.storage
-		.from(BUCKET)
+		.from(bucket)
 		.upload(filePath, fileBuffer, {
 			contentType,
 			upsert: true,
@@ -81,8 +97,16 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: uploadError.message }, { status: 500 });
 	}
 
-	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-	const fileUrl = `${supabaseUrl}/storage/v1/object/public/${BUCKET}/${filePath}`;
+	let fileUrl: string;
+	if (isPrivate) {
+		const { data: signed } = await supabase.storage
+			.from(bucket)
+			.createSignedUrl(filePath, SIGNED_URL_EXPIRY);
+		fileUrl = signed?.signedUrl ?? "";
+	} else {
+		const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+		fileUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}`;
+	}
 
 	// Update the render record with the permanent Supabase URL
 	await supabase
@@ -97,6 +121,9 @@ export async function POST(request: NextRequest) {
 	return Response.json({
 		ok: true,
 		file_url: fileUrl,
-		file_id: filePath,
+		file_path: filePath.slice(user.user_id.length + 1),
+		project_id,
+		template_id,
+		private: isPrivate,
 	});
 }

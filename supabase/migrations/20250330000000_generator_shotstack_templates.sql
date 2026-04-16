@@ -1,20 +1,4 @@
--- Cloud-synced templates for Content Generator and ShotStack (extension + web)
-
-create table if not exists public.generator_templates (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.users(id) on delete cascade,
-  name text not null,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-alter table public.generator_templates enable row level security;
-
-create index if not exists generator_templates_user_updated_idx
-  on public.generator_templates (user_id, updated_at desc);
-
-comment on table public.generator_templates is 'Content Generator templates synced from extension / web';
+-- Cloud-synced templates for ShotStack (extension + web)
 
 create table if not exists public.shotstack_templates (
   id uuid primary key default gen_random_uuid(),

@@ -7,7 +7,6 @@ const LINKS = [
 	{ segment: "activity", label: "Activity" },
 	{ segment: "following", label: "Following" },
 	{ segment: "uploads", label: "Uploads" },
-	{ segment: "templates", label: "Templates" },
 	{ segment: "shotstack", label: "ShotStack" },
 	{ segment: "upload-post", label: "Upload Post" },
 ] as const;

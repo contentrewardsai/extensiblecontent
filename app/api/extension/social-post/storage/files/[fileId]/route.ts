@@ -2,7 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 
-const BUCKET = "post-media";
+const BUCKET_PUBLIC = "post-media";
+const BUCKET_PRIVATE = "post-media-private";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,6 +15,7 @@ function getSupabase() {
 /**
  * DELETE: Delete an uploaded file from user's storage.
  * Supports nested paths via ?path= query param (e.g. {projectId}/posts/videos/{fileId}).
+ * Use ?private=true to delete from the private bucket.
  * Falls back to fileId route param for backward compatibility with flat storage.
  */
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ fileId: string }> }) {
@@ -22,12 +24,14 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
 	const { fileId } = await params;
 	const relativePath = request.nextUrl.searchParams.get("path") || fileId;
+	const isPrivate = request.nextUrl.searchParams.get("private") === "true";
+	const bucket = isPrivate ? BUCKET_PRIVATE : BUCKET_PUBLIC;
 	const supabase = getSupabase();
 
 	const filePath = `${user.user_id}/${relativePath}`;
 
 	const { error } = await supabase.storage
-		.from(BUCKET)
+		.from(bucket)
 		.remove([filePath]);
 
 	if (error) {

@@ -8,58 +8,6 @@ import { queueShotStackRender } from "@/lib/shotstack-queue";
 import { forwardUploadPostMultipart } from "@/lib/upload-post-forward";
 import { getOrRefreshUploadPostConnectUrl } from "@/lib/upload-post-connect";
 
-export async function createGeneratorTemplate(formData: FormData) {
-	const experienceId = String(formData.get("experienceId") ?? "");
-	const name = String(formData.get("name") ?? "").trim();
-	const payloadRaw = String(formData.get("payload") ?? "").trim();
-
-	if (!experienceId || !name) {
-		redirect(`/experiences/${experienceId}/templates?err=missing_name`);
-	}
-
-	const { internalUserId } = await requireExperienceActionUser(experienceId);
-
-	let payload: Record<string, unknown> = {};
-	if (payloadRaw) {
-		try {
-			const parsed = JSON.parse(payloadRaw) as unknown;
-			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				redirect(`/experiences/${experienceId}/templates?err=bad_json`);
-			}
-			payload = parsed as Record<string, unknown>;
-		} catch {
-			redirect(`/experiences/${experienceId}/templates?err=bad_json`);
-		}
-	}
-
-	const supabase = getServiceSupabase();
-	const now = new Date().toISOString();
-	const { error } = await supabase.from("generator_templates").insert({
-		user_id: internalUserId,
-		name,
-		payload,
-		updated_at: now,
-	});
-
-	if (error) {
-		redirect(`/experiences/${experienceId}/templates?err=save_failed`);
-	}
-
-	revalidatePath(`/experiences/${experienceId}/templates`);
-	redirect(`/experiences/${experienceId}/templates`);
-}
-
-export async function deleteGeneratorTemplate(formData: FormData) {
-	const experienceId = String(formData.get("experienceId") ?? "");
-	const templateId = String(formData.get("templateId") ?? "");
-	if (!experienceId || !templateId) return;
-
-	const { internalUserId } = await requireExperienceActionUser(experienceId);
-	const supabase = getServiceSupabase();
-	await supabase.from("generator_templates").delete().eq("id", templateId).eq("user_id", internalUserId);
-	revalidatePath(`/experiences/${experienceId}/templates`);
-}
-
 export async function createShotstackTemplate(formData: FormData) {
 	const experienceId = String(formData.get("experienceId") ?? "");
 	const name = String(formData.get("name") ?? "").trim();
