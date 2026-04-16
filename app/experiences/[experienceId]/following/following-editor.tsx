@@ -18,7 +18,7 @@ import {
 	experienceUpdateFollowing,
 } from "./following-actions";
 import { IconChevron, IconTrash } from "./following-icons";
-import { PlatformBrandIcon, platformProfileUrl } from "./platform-brand-icons";
+import { hasBrandTile, PlatformBrandIcon, platformProfileUrl } from "./platform-brand-icons";
 
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -217,9 +217,14 @@ function CollapsedBrandStack({
 	}, [platforms]);
 	const valid = accounts.filter((a) => UUID_RE.test(a.platform_id.trim()));
 	if (valid.length === 0) return null;
+	const sorted = [...valid].sort((a, b) => {
+		const aBrand = hasBrandTile(slugById.get(a.platform_id)?.slug) ? 0 : 1;
+		const bBrand = hasBrandTile(slugById.get(b.platform_id)?.slug) ? 0 : 1;
+		return aBrand - bBrand;
+	});
 	const cap = 8;
-	const shown = valid.slice(0, cap);
-	const overflow = valid.length - shown.length;
+	const shown = sorted.slice(0, cap);
+	const overflow = sorted.length - shown.length;
 	const stop = (e: SyntheticEvent) => {
 		e.stopPropagation();
 	};

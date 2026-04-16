@@ -87,6 +87,11 @@ function normalizeSlug(slug: string | undefined | null): string {
 	return (slug ?? "").trim().toLowerCase();
 }
 
+export function hasBrandTile(slug: string | undefined | null): boolean {
+	const key = normalizeSlug(slug);
+	return key in TILE_STYLES && key !== "other";
+}
+
 export function PlatformBrandIcon({
 	slug,
 	name,
