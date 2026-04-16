@@ -1,15 +1,9 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { parseExclusiveSidebarLookup } from "@/lib/sidebar-lookup-parse";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 import type { SidebarDisconnectBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 export async function POST(request: NextRequest) {
 	const user = await getExtensionUser(request);
@@ -24,24 +18,18 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { sidebar_id, window_id } = body;
-	if (!sidebar_id && !window_id) {
-		return Response.json({ error: "sidebar_id or window_id is required" }, { status: 400 });
-	}
-	if (sidebar_id && typeof sidebar_id !== "string") {
-		return Response.json({ error: "sidebar_id must be a string" }, { status: 400 });
-	}
-	if (window_id && typeof window_id !== "string") {
-		return Response.json({ error: "window_id must be a string" }, { status: 400 });
+	const parsed = parseExclusiveSidebarLookup(body);
+	if (!parsed.ok) {
+		return Response.json({ error: parsed.error }, { status: parsed.status });
 	}
 
-	const supabase = getSupabase();
+	const supabase = getExtensionServiceSupabase();
 
 	let query = supabase.from("sidebars").select("id").eq("user_id", user.user_id);
-	if (sidebar_id) {
-		query = query.eq("id", sidebar_id);
+	if ("sidebar_id" in parsed) {
+		query = query.eq("id", parsed.sidebar_id);
 	} else {
-		query = query.eq("window_id", window_id!);
+		query = query.eq("window_id", parsed.window_id);
 	}
 
 	const { data: toDelete } = await query.maybeSingle();
@@ -53,8 +41,11 @@ export async function POST(request: NextRequest) {
 
 	await supabase.from("sidebars").delete().eq("id", toDelete.id);
 
-	// Broadcast list_updated to user channel
-	await broadcastListUpdatedToUser(user.user_id);
+	try {
+		await broadcastListUpdatedToUser(user.user_id);
+	} catch (broadcastErr) {
+		console.error("[sidebars/disconnect] Broadcast failed (disconnect still succeeded):", broadcastErr);
+	}
 
 	return Response.json({ success: true });
 }

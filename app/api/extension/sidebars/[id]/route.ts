@@ -1,22 +1,24 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import {
+	parseActiveProjectIdForUpdate,
+	sidebarWithConnected,
+} from "@/lib/extension-sidebar";
+import { normalizeRegisterSidebarName, parseSidebarRowUuid } from "@/lib/sidebar-lookup-parse";
+import { isProjectOwnedByUser } from "@/lib/sidebar-project";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 import type { Sidebar, SidebarUpdateBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const user = await getExtensionUser(request);
 	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-	const { id } = await params;
-	const supabase = getSupabase();
+	const { id: rawId } = await params;
+	const idParsed = parseSidebarRowUuid(rawId);
+	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
+	const id = idParsed.id;
+	const supabase = getExtensionServiceSupabase();
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
 		.select("*")
@@ -28,17 +30,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 		return Response.json({ error: "Sidebar not found" }, { status: 404 });
 	}
 
-	return Response.json(sidebar as Sidebar);
+	return Response.json(sidebarWithConnected(sidebar as Sidebar));
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handleSidebarUpdate(
+	request: NextRequest,
+	params: Promise<{ id: string }>,
+): Promise<Response> {
 	const user = await getExtensionUser(request);
 	if (!user) {
 		return Response.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
-	const { id } = await params;
-	const supabase = getSupabase();
+	const { id: rawId } = await params;
+	const idParsed = parseSidebarRowUuid(rawId);
+	if (!idParsed.ok) return Response.json({ error: idParsed.error }, { status: 400 });
+	const id = idParsed.id;
+	const supabase = getExtensionServiceSupabase();
 
 	const { data: existing } = await supabase
 		.from("sidebars")
@@ -56,33 +64,50 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		const raw = await request.json();
 		if (raw && typeof raw === "object") body = raw as SidebarUpdateBody;
 	} catch {
-		// Empty or invalid body - treat as no-op, will only update updated_at if no fields
+		// Empty or invalid body — still refresh last_seen (heartbeat via PATCH with no body)
 	}
 
-	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+	const now = new Date().toISOString();
+	const updates: Record<string, unknown> = {
+		updated_at: now,
+		last_seen: now,
+	};
+
 	if (body.sidebar_name !== undefined) {
 		if (typeof body.sidebar_name !== "string") {
 			return Response.json({ error: "sidebar_name must be a string" }, { status: 400 });
 		}
 		// Empty string = skip update (keep existing name)
 		if (body.sidebar_name.trim()) {
-			updates.sidebar_name = body.sidebar_name.trim();
+			const n = normalizeRegisterSidebarName(body.sidebar_name);
+			if (!n.ok) return Response.json({ error: n.error }, { status: 400 });
+			updates.sidebar_name = n.value;
 		}
 	}
+	let projectIdChanged = false;
 	if (body.active_project_id !== undefined) {
-		updates.active_project_id = body.active_project_id ?? null;
+		const parsed = parseActiveProjectIdForUpdate(body.active_project_id);
+		if (parsed.kind === "error") {
+			return Response.json({ error: parsed.message }, { status: 400 });
+		}
+		if (parsed.kind === "set") {
+			if (parsed.id !== null) {
+				const owned = await isProjectOwnedByUser(supabase, user.user_id, parsed.id);
+				if (!owned) {
+					return Response.json({ error: "Project not found" }, { status: 404 });
+				}
+			}
+			updates.active_project_id = parsed.id;
+			projectIdChanged = true;
+		}
 	}
 
-	// No fields to update - return current sidebar
-	if (Object.keys(updates).length <= 1) {
-		const { data: current } = await supabase
-			.from("sidebars")
-			.select("*")
-			.eq("id", id)
-			.eq("user_id", user.user_id)
-			.single();
-		if (current) return Response.json(current as Sidebar);
-	}
+	/** Heartbeat-only PATCH (ExtensibleContentExtension fallback when MCP is off) must touch last_seen. */
+	const nameChanged =
+		body.sidebar_name !== undefined &&
+		typeof body.sidebar_name === "string" &&
+		body.sidebar_name.trim() !== "";
+	const shouldBroadcastList = nameChanged || projectIdChanged;
 
 	const { data: sidebar, error } = await supabase
 		.from("sidebars")
@@ -95,8 +120,25 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: error?.message ?? "Failed to update sidebar" }, { status: 500 });
 	}
 
-	// Broadcast list_updated to user channel
-	await broadcastListUpdatedToUser(user.user_id);
+	if (shouldBroadcastList) {
+		try {
+			await broadcastListUpdatedToUser(user.user_id);
+		} catch (broadcastErr) {
+			console.error("[sidebars] Broadcast failed (update still succeeded):", broadcastErr);
+		}
+	}
 
-	return Response.json(sidebar as Sidebar);
+	return Response.json(sidebarWithConnected(sidebar as Sidebar));
+}
+
+/** Extension uses PATCH; MCP relay may use POST. */
+export async function PATCH(
+	request: NextRequest,
+	ctx: { params: Promise<{ id: string }> },
+) {
+	return handleSidebarUpdate(request, ctx.params);
+}
+
+export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+	return handleSidebarUpdate(request, ctx.params);
 }

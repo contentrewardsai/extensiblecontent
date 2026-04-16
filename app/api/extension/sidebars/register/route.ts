@@ -1,15 +1,12 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { coerceActiveProjectId, sidebarWithConnected } from "@/lib/extension-sidebar";
+import { normalizeRegisterSidebarName, normalizeRegisterWindowId } from "@/lib/sidebar-lookup-parse";
+import { isProjectOwnedByUser } from "@/lib/sidebar-project";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { broadcastListUpdatedToUser } from "@/lib/realtime-broadcast";
+import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
 import type { Sidebar, SidebarRegisterBody } from "@/lib/types/sidebars";
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 function getIpAddress(request: NextRequest): string | null {
 	return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? request.headers.get("x-real-ip");
@@ -47,31 +44,29 @@ export async function POST(request: NextRequest) {
 		}
 
 		const { window_id, sidebar_name, active_project_id } = body;
-		if (!window_id || typeof window_id !== "string" || !window_id.trim()) {
-			return Response.json({ error: "window_id is required" }, { status: 400 });
-		}
-		if (!sidebar_name || typeof sidebar_name !== "string" || !sidebar_name.trim()) {
-			return Response.json({ error: "sidebar_name is required" }, { status: 400 });
-		}
+		const win = normalizeRegisterWindowId(window_id);
+		if (!win.ok) return Response.json({ error: win.error }, { status: 400 });
+		const name = normalizeRegisterSidebarName(sidebar_name);
+		if (!name.ok) return Response.json({ error: name.error }, { status: 400 });
 
-		const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-		const safeProjectId =
-			active_project_id &&
-			typeof active_project_id === "string" &&
-			UUID_REGEX.test(active_project_id.trim())
-				? active_project_id.trim()
-				: null;
+		const safeProjectId = coerceActiveProjectId(active_project_id);
 
-		const supabase = getSupabase();
+		const supabase = getExtensionServiceSupabase();
+		if (safeProjectId) {
+			const owned = await isProjectOwnedByUser(supabase, user.user_id, safeProjectId);
+			if (!owned) {
+				return Response.json({ error: "Project not found" }, { status: 404 });
+			}
+		}
 		const ipAddress = getIpAddress(request);
 		const now = new Date().toISOString();
 
 		// Check existing row for upsert (ignore PGRST116 "no rows" - that's expected for insert)
 		const { data: existing, error: selectError } = await supabase
 			.from("sidebars")
-			.select("id")
+			.select("id, sidebar_name, active_project_id")
 			.eq("user_id", user.user_id)
-			.eq("window_id", window_id.trim())
+			.eq("window_id", win.value)
 			.maybeSingle();
 
 		if (selectError) {
@@ -79,13 +74,18 @@ export async function POST(request: NextRequest) {
 		}
 
 		let sidebar: Sidebar;
+		/** `null` = successful insert path (always broadcast); else prior row for heartbeat-only broadcast skip */
+		let priorForBroadcast: { sidebar_name: string; active_project_id: string | null } | null;
 
 		if (existing) {
-			// Update existing
+			priorForBroadcast = {
+				sidebar_name: existing.sidebar_name,
+				active_project_id: existing.active_project_id,
+			};
 			const { data: updated, error: updateError } = await supabase
 				.from("sidebars")
 				.update({
-					sidebar_name: sidebar_name.trim(),
+					sidebar_name: name.value,
 					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,
@@ -100,13 +100,12 @@ export async function POST(request: NextRequest) {
 			}
 			sidebar = updated as Sidebar;
 		} else {
-			// Insert new (no limit; one channel per user)
 			const { data: inserted, error: insertError } = await supabase
 				.from("sidebars")
 				.insert({
 					user_id: user.user_id,
-					window_id: window_id.trim(),
-					sidebar_name: sidebar_name.trim(),
+					window_id: win.value,
+					sidebar_name: name.value,
 					active_project_id: safeProjectId,
 					last_seen: now,
 					ip_address: ipAddress,
@@ -116,20 +115,59 @@ export async function POST(request: NextRequest) {
 				.single();
 
 			if (insertError || !inserted) {
-				return errorResponse(insertError);
+				if (!isPostgresUniqueViolation(insertError)) {
+					return errorResponse(insertError);
+				}
+				// Concurrent register: another request inserted the same (user_id, window_id)
+				const { data: raced, error: raceSelectError } = await supabase
+					.from("sidebars")
+					.select("id, sidebar_name, active_project_id")
+					.eq("user_id", user.user_id)
+					.eq("window_id", win.value)
+					.maybeSingle();
+				if (raceSelectError || !raced) {
+					return errorResponse(insertError);
+				}
+				priorForBroadcast = {
+					sidebar_name: raced.sidebar_name,
+					active_project_id: raced.active_project_id,
+				};
+				const { data: updated, error: updateError } = await supabase
+					.from("sidebars")
+					.update({
+						sidebar_name: name.value,
+						active_project_id: safeProjectId,
+						last_seen: now,
+						ip_address: ipAddress,
+						updated_at: now,
+					})
+					.eq("id", raced.id)
+					.select()
+					.single();
+				if (updateError || !updated) {
+					return errorResponse(updateError);
+				}
+				sidebar = updated as Sidebar;
+			} else {
+				priorForBroadcast = null;
+				sidebar = inserted as Sidebar;
 			}
-			sidebar = inserted as Sidebar;
 		}
 
-		// Broadcast list_updated to user channel (non-fatal; don't fail registration)
-		try {
-			await broadcastListUpdatedToUser(user.user_id);
-		} catch (broadcastErr) {
-			console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
+		// Notify other clients when the row set or visible fields change — not on pure last_seen/ip refresh.
+		const shouldBroadcast =
+			priorForBroadcast === null ||
+			priorForBroadcast.sidebar_name !== name.value ||
+			(priorForBroadcast.active_project_id ?? null) !== (safeProjectId ?? null);
+		if (shouldBroadcast) {
+			try {
+				await broadcastListUpdatedToUser(user.user_id);
+			} catch (broadcastErr) {
+				console.error("[sidebars/register] Broadcast failed (registration still succeeded):", broadcastErr);
+			}
 		}
 
-		// Include connected: true (just registered = active)
-		const response = { ...sidebar, connected: true };
+		const response = sidebarWithConnected(sidebar);
 		return Response.json({ sidebar: response });
 	} catch (err) {
 		return errorResponse(err);

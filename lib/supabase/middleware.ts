@@ -3,8 +3,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const EXTENSION_CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
-	"Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+	"Access-Control-Allow-Methods": "GET, HEAD, POST, PATCH, DELETE, OPTIONS",
 	"Access-Control-Allow-Headers": "Content-Type, Authorization",
+	/** HEAD /api/extension/sidebars exposes row count for polling without a body */
+	"Access-Control-Expose-Headers": "X-Result-Count",
 };
 
 export async function updateSession(request: NextRequest) {
