@@ -39,11 +39,12 @@ export interface PlanTier {
 	 */
 	maxStorageBytes: number;
 	/**
-	 * Public Whop product page URL. Used as a fallback "buy" link when the
-	 * Whop SDK is unable to resolve the per-plan `purchase_url` (e.g. when
-	 * `WHOP_COMPANY_ID` is missing or the API key lacks the
-	 * `plan:read` scope and returns 403). The product page lets the user
-	 * pick the plan + complete checkout.
+	 * Direct Whop-hosted checkout URL (`https://whop.com/checkout/plan_…`)
+	 * for this tier's default monthly plan. Used as a fallback "buy" link
+	 * when the Whop SDK is unable to resolve the per-plan `purchase_url`
+	 * dynamically (e.g. when `WHOP_COMPANY_ID` is missing or the API key
+	 * lacks the `plan:read` scope and returns 403). The user lands
+	 * straight on Whop's checkout page with the right plan pre-selected.
 	 */
 	productUrl: string;
 	/**
@@ -80,7 +81,7 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 30,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 10 * GB,
-		productUrl: "https://whop.com/content-rewards-ai/extensible-content-06/",
+		productUrl: "https://whop.com/checkout/plan_pb0EZHlOAE9oB",
 		priceLabel: "$10 / month",
 	},
 	{
@@ -98,7 +99,7 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 150,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 40 * GB,
-		productUrl: "https://whop.com/content-rewards-ai/extensible-content-10-profiles/",
+		productUrl: "https://whop.com/checkout/plan_QzLWj1xHWgSFx",
 		priceLabel: "$40 / month",
 	},
 	{
@@ -116,7 +117,7 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 375,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 100 * GB,
-		productUrl: "https://whop.com/content-rewards-ai/extensible-content-25-profiles/",
+		productUrl: "https://whop.com/checkout/plan_bRJeYMEMUFGDI",
 		priceLabel: "$100 / month",
 	},
 ] as const;
