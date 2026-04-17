@@ -58,6 +58,13 @@ const PLATFORMS: ReadonlyArray<{ name: string; icon: LucideIcon; type: "vertical
 const FABRIC_CDN = "https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js";
 const TOKEN_STORAGE_KEY = "whop_plan_token";
 const PKCE_STORAGE_KEY = "whop_plan_oauth_pkce";
+// Path where we resume after Whop bounces back. Whop validates
+// `redirect_uri` against an allow-list, so we route through ONE fixed
+// URL (registered in the Whop dashboard) regardless of which plan slug
+// initiated the flow. The actual return target is stashed in
+// sessionStorage under RETURN_PATH_KEY and read by /plan/oauth/callback.
+const OAUTH_CALLBACK_PATH = "/plan/oauth/callback";
+const RETURN_PATH_KEY = "whop_plan_oauth_return";
 
 // ---------------------------------------------------------------------------
 // Token helpers (Whop OAuth — same flow as /extension/login but inline)
@@ -199,13 +206,18 @@ export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 			setAuthStatus("error");
 			return;
 		}
-		const redirectUri = `${window.location.origin}/plan/${planId}`;
+		// Single fixed callback URL — must be registered in the Whop
+		// dashboard. The plan slug is preserved via sessionStorage rather
+		// than being baked into the redirect URI so we don't need one
+		// allow-list entry per plan.
+		const redirectUri = `${window.location.origin}${OAUTH_CALLBACK_PATH}`;
 		const pkce = {
 			codeVerifier: randomString(32),
 			state: randomString(16),
 			nonce: randomString(16),
 		};
 		sessionStorage.setItem(PKCE_STORAGE_KEY, JSON.stringify(pkce));
+		sessionStorage.setItem(RETURN_PATH_KEY, `/plan/${planId}`);
 		const params = new URLSearchParams({
 			response_type: "code",
 			client_id: clientId,
@@ -219,68 +231,6 @@ export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 		params.set("a", "contentrewardsai");
 		window.location.href = `https://api.whop.com/oauth/authorize?${params}`;
 	}, [planId]);
-
-	const handleOAuthCallback = useCallback(async () => {
-		const params = new URLSearchParams(window.location.search);
-		const code = params.get("code");
-		const returnedState = params.get("state");
-		const oauthError = params.get("error");
-		if (oauthError) {
-			setAuthError(`${oauthError} – ${params.get("error_description") || ""}`);
-			setAuthStatus("error");
-			return;
-		}
-		if (!code || !returnedState) return;
-
-		setAuthStatus("loading");
-		const storedRaw = sessionStorage.getItem(PKCE_STORAGE_KEY);
-		sessionStorage.removeItem(PKCE_STORAGE_KEY);
-		const stored = storedRaw ? (JSON.parse(storedRaw) as { codeVerifier: string; state: string }) : null;
-		if (!stored || returnedState !== stored.state) {
-			setAuthError("Invalid OAuth state — please try again");
-			setAuthStatus("error");
-			return;
-		}
-		try {
-			const redirectUri = `${window.location.origin}/plan/${planId}`;
-			const res = await fetch("/api/extension/auth", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ code, code_verifier: stored.codeVerifier, redirect_uri: redirectUri }),
-			});
-			if (!res.ok) {
-				const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-				throw new Error(errBody.error || `HTTP ${res.status}`);
-			}
-			const data = (await res.json()) as {
-				access_token: string;
-				refresh_token: string;
-				expires_in: number;
-				user: { id: string; email?: string };
-			};
-			const t: StoredToken = {
-				access_token: data.access_token,
-				refresh_token: data.refresh_token,
-				expires_in: data.expires_in,
-				obtained_at: Date.now(),
-			};
-			persistToken(t);
-			setToken(t);
-			setViewerEmail(data.user.email ?? null);
-			setAuthStatus("idle");
-			window.history.replaceState({}, "", `/plan/${planId}`);
-		} catch (err) {
-			setAuthError(err instanceof Error ? err.message : "Sign-in failed");
-			setAuthStatus("error");
-		}
-	}, [planId]);
-
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		if (new URLSearchParams(window.location.search).get("code")) {
-			handleOAuthCallback();
-		}
-	}, [handleOAuthCallback]);
 
 	const logout = useCallback(() => {
 		persistToken(null);

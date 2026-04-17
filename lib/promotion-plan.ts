@@ -39,7 +39,16 @@ export const COMMENT_KINDS = ["plan", "post", "ad"] as const;
 export type CommentKind = (typeof COMMENT_KINDS)[number];
 
 /** Reserved at the top level of `app/plan/` so we never let a plan claim them. */
-const RESERVED_PLAN_IDS = new Set(["new", "create", "admin", "api", "_next", "favicon"]);
+const RESERVED_PLAN_IDS = new Set([
+	"new",
+	"create",
+	"admin",
+	"api",
+	"_next",
+	"favicon",
+	// Sibling route under /plan — see app/plan/oauth/callback/page.tsx.
+	"oauth",
+]);
 
 export type PlanIdParseResult =
 	| { ok: true; id: string }
