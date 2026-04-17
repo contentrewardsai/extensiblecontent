@@ -2,8 +2,8 @@ import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { listAccessibleProjects } from "@/lib/project-access";
 import {
+	getOwnerMaxStorageBytes,
 	getProjectStorageStats,
-	OWNER_DEFAULT_MAX_BYTES,
 	POST_MEDIA_BUCKETS,
 } from "@/lib/project-quota";
 import { getServiceSupabase } from "@/lib/supabase-service";
@@ -23,10 +23,13 @@ export async function GET(request: NextRequest) {
 
 	const supabase = getServiceSupabase();
 
-	const { data: ownerStatsRows, error: ownerErr } = await supabase.rpc("get_user_storage_stats", {
-		p_user_prefix: `${user.user_id}/`,
-		p_bucket_ids: POST_MEDIA_BUCKETS as unknown as string[],
-	});
+	const [{ data: ownerStatsRows, error: ownerErr }, ownerMaxBytes] = await Promise.all([
+		supabase.rpc("get_user_storage_stats", {
+			p_user_prefix: `${user.user_id}/`,
+			p_bucket_ids: POST_MEDIA_BUCKETS as unknown as string[],
+		}),
+		getOwnerMaxStorageBytes(supabase, user.user_id),
+	]);
 	if (ownerErr) {
 		return Response.json({ error: ownerErr.message }, { status: 500 });
 	}
@@ -80,8 +83,8 @@ export async function GET(request: NextRequest) {
 		// `max_bytes` and `limit_bytes` are aliases. The extension reads
 		// `limit_bytes` / `limitBytes` (background/service-worker.js GET_STORAGE_INFO);
 		// older internal callers read `max_bytes`. Keep both so neither breaks.
-		max_bytes: OWNER_DEFAULT_MAX_BYTES,
-		limit_bytes: OWNER_DEFAULT_MAX_BYTES,
+		max_bytes: ownerMaxBytes,
+		limit_bytes: ownerMaxBytes,
 		file_count: fileCount,
 		public_count: publicCount,
 		private_count: privateCount,

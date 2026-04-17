@@ -8,7 +8,7 @@ const PAGE_SIZE = 100;
 const KIND_LABELS: Record<string, string> = {
 	grant: "Subscription credit",
 	debit: "Render",
-	expiry: "Expired",
+	expiry: "Expired (rolled off)",
 	adjustment: "Adjustment",
 };
 
@@ -75,8 +75,10 @@ export default async function ShotstackBillingPage({
 			<div>
 				<h2 className="text-6 font-bold text-gray-12">ShotStack billing</h2>
 				<p className="text-3 text-gray-10 mt-1 max-w-2xl">
-					Every credit grant and render debit, newest first. Credits granted by a subscription stay spendable for{" "}
-					<strong>3 months</strong>; anything left over after that is offset by an automatic “Expired” entry.
+					Every credit grant and render debit, newest first. Credits granted by a subscription stay spendable
+					for <strong>3 months</strong> (the rollover window); whatever's left after that is automatically
+					offset by an <em>Expired (rolled off)</em> entry that links back to the original grant, so you can
+					always see exactly how your balance was spent or rolled off.
 				</p>
 				<p className="text-2 text-gray-10 mt-2">
 					<Link href={`/experiences/${experienceId}/shotstack`} className="underline text-gray-12">
@@ -138,6 +140,11 @@ export default async function ShotstackBillingPage({
 											{e.whop_payment_id ? (
 												<div className="text-2 text-gray-10 mt-1">
 													Whop payment <span className="font-mono">{e.whop_payment_id}</span>
+												</div>
+											) : null}
+											{e.kind === "expiry" && e.source_grant_id ? (
+												<div className="text-2 text-gray-10 mt-1 font-mono break-all">
+													offsets grant {e.source_grant_id}
 												</div>
 											) : null}
 										</td>

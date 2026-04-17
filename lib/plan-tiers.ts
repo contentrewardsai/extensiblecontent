@@ -31,50 +31,73 @@ export interface PlanTier {
 	shotstackCreditsPerPeriod: number;
 	/** Number of months unspent ShotStack credits remain valid for. */
 	creditRolloverMonths: number;
+	/**
+	 * Max bytes of post-media storage the user is allowed to consume across
+	 * every project they own. Counts both `post-media` and `post-media-private`.
+	 * Files in projects shared with the user count against the *project owner's*
+	 * cap, not the actor's, so this is the right column to read for the owner.
+	 */
+	maxStorageBytes: number;
 }
+
+/** 1 GB in bytes — used for plan storage caps. */
+const GB = 1024 * 1024 * 1024;
+
+/**
+ * Storage cap granted to users with no active subscription. Mirrors the value
+ * we used to hardcode as `OWNER_DEFAULT_MAX_BYTES` in lib/project-quota.ts so
+ * existing free users see no change.
+ */
+export const FREE_TIER_MAX_STORAGE_BYTES = 500 * 1024 * 1024;
 
 export const PLAN_TIERS: readonly PlanTier[] = [
 	{
 		productId: "prod_SKbivMikKZ0DZ",
 		rank: 1,
 		name: "Starter",
-		tagline: "1 connected account, 30 minutes of ShotStack rendering / month.",
+		tagline: "1 connected account, 30 minutes of ShotStack rendering / month, 10 GB storage.",
 		features: [
 			"1 Upload-Post profile",
 			"30 ShotStack minutes / month",
 			"3-month credit rollover",
+			"10 GB project storage",
 		],
 		maxUploadPostAccounts: 1,
 		shotstackCreditsPerPeriod: 30,
 		creditRolloverMonths: 3,
+		maxStorageBytes: 10 * GB,
 	},
 	{
 		productId: "prod_ShvmpSR7s0EoH",
 		rank: 2,
 		name: "Growth",
-		tagline: "10 connected accounts, 150 minutes of ShotStack rendering / month.",
+		tagline: "10 connected accounts, 150 minutes of ShotStack rendering / month, 40 GB storage.",
 		features: [
 			"10 Upload-Post profiles",
 			"150 ShotStack minutes / month",
 			"3-month credit rollover",
+			"40 GB project storage",
 		],
 		maxUploadPostAccounts: 10,
 		shotstackCreditsPerPeriod: 150,
 		creditRolloverMonths: 3,
+		maxStorageBytes: 40 * GB,
 	},
 	{
 		productId: "prod_G67Rs4iAZtexG",
 		rank: 3,
 		name: "Scale",
-		tagline: "25 connected accounts, 375 minutes of ShotStack rendering / month.",
+		tagline: "25 connected accounts, 375 minutes of ShotStack rendering / month, 100 GB storage.",
 		features: [
 			"25 Upload-Post profiles",
 			"375 ShotStack minutes / month",
 			"3-month credit rollover",
+			"100 GB project storage",
 		],
 		maxUploadPostAccounts: 25,
 		shotstackCreditsPerPeriod: 375,
 		creditRolloverMonths: 3,
+		maxStorageBytes: 100 * GB,
 	},
 ] as const;
 

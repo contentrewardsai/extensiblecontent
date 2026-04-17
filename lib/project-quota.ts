@@ -1,11 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { FREE_TIER_MAX_STORAGE_BYTES } from "@/lib/plan-tiers";
 
 /**
  * Storage quota enforcement for the post-media buckets.
  *
  * Two caps stack:
- *   1. Owner cap (`OWNER_DEFAULT_MAX_BYTES`) — global per-user limit, identical
- *      to what `app/api/extension/social-post/storage/route.ts` reports.
+ *   1. Owner cap — per-user limit driven by the owner's active subscription
+ *      tier. Stored on `users.max_storage_bytes` and materialized by
+ *      `lib/plan-entitlements.ts` whenever a Whop webhook arrives. Free tier
+ *      keeps the legacy 500 MB allowance via `FREE_TIER_MAX_STORAGE_BYTES`,
+ *      which is also the column default.
  *   2. Project cap (`projects.quota_bytes`) — optional per-project sub-cap set
  *      by the owner. Null means "no sub-cap; share the owner's pool with the
  *      project's siblings".
@@ -14,7 +18,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * collaborators uploading on a shared project still consume the owner's pool.
  */
 
-export const OWNER_DEFAULT_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
+/**
+ * Fallback owner cap for users whose row has not been backfilled yet (e.g.
+ * very old accounts). The migration default is also 500 MB so this should
+ * almost never be needed.
+ *
+ * @deprecated Read from `users.max_storage_bytes` via `getOwnerStorageStats`.
+ *   Re-exports `FREE_TIER_MAX_STORAGE_BYTES` for callers that need a
+ *   compile-time constant.
+ */
+export const OWNER_DEFAULT_MAX_BYTES = FREE_TIER_MAX_STORAGE_BYTES;
 export const POST_MEDIA_BUCKETS = ["post-media", "post-media-private"] as const;
 
 export class ProjectQuotaError extends Error {
@@ -52,24 +65,52 @@ function sumTotalBytes(rows: BucketStatsRow[] | null | undefined): number {
 }
 
 /**
+ * Look up the owner's effective storage cap from `users.max_storage_bytes`.
+ * Falls back to `FREE_TIER_MAX_STORAGE_BYTES` if the row is missing or the
+ * value is not a positive integer (defensive — the column is `NOT NULL` with
+ * a default in the schema).
+ */
+export async function getOwnerMaxStorageBytes(
+	supabase: SupabaseClient,
+	ownerId: string,
+): Promise<number> {
+	const { data, error } = await supabase
+		.from("users")
+		.select("max_storage_bytes")
+		.eq("id", ownerId)
+		.maybeSingle();
+	if (error) {
+		console.warn(`[project-quota] getOwnerMaxStorageBytes lookup failed for ${ownerId}:`, error);
+		return FREE_TIER_MAX_STORAGE_BYTES;
+	}
+	const raw = (data as { max_storage_bytes: number | string | null } | null)?.max_storage_bytes;
+	const n = raw == null ? NaN : Number(raw);
+	if (!Number.isFinite(n) || n <= 0) return FREE_TIER_MAX_STORAGE_BYTES;
+	return Math.floor(n);
+}
+
+/**
  * Sum bytes across both post-media buckets for the owner's user prefix.
  */
 export async function getOwnerStorageStats(
 	supabase: SupabaseClient,
 	ownerId: string,
 ): Promise<OwnerStorageStats> {
-	const { data, error } = await supabase.rpc("get_user_storage_stats", {
-		p_user_prefix: `${ownerId}/`,
-		p_bucket_ids: POST_MEDIA_BUCKETS as unknown as string[],
-	});
+	const [{ data, error }, maxBytes] = await Promise.all([
+		supabase.rpc("get_user_storage_stats", {
+			p_user_prefix: `${ownerId}/`,
+			p_bucket_ids: POST_MEDIA_BUCKETS as unknown as string[],
+		}),
+		getOwnerMaxStorageBytes(supabase, ownerId),
+	]);
 	if (error) {
 		throw new Error(`getOwnerStorageStats: ${error.message}`);
 	}
 	const usedBytes = sumTotalBytes(data as BucketStatsRow[] | null);
 	return {
 		usedBytes,
-		maxBytes: OWNER_DEFAULT_MAX_BYTES,
-		availableBytes: Math.max(0, OWNER_DEFAULT_MAX_BYTES - usedBytes),
+		maxBytes,
+		availableBytes: Math.max(0, maxBytes - usedBytes),
 	};
 }
 

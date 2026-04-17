@@ -7,7 +7,6 @@ import { listActiveInvites, listProjectMembers } from "@/lib/project-members";
 import {
 	getOwnerStorageStats,
 	getProjectStorageStats,
-	OWNER_DEFAULT_MAX_BYTES,
 } from "@/lib/project-quota";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { ProjectDetailClient } from "./project-detail-client";
@@ -90,7 +89,7 @@ export default async function ProjectDetailPage({
 					projectUsedBytes: projectStats.usedBytes,
 					projectQuotaBytes: project.quota_bytes as number | null,
 					ownerUsedBytes: ownerStats.usedBytes,
-					ownerMaxBytes: OWNER_DEFAULT_MAX_BYTES,
+					ownerMaxBytes: ownerStats.maxBytes,
 				}}
 				members={members}
 				invites={invites}

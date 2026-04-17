@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+	FREE_TIER_MAX_STORAGE_BYTES,
 	type PlanTier,
 	PLAN_PRODUCT_IDS,
 	pickHighestTier,
@@ -25,6 +26,12 @@ export interface UserEntitlements {
 	tier: PlanTier | null;
 	hasUpgraded: boolean;
 	maxUploadPostAccounts: number;
+	/**
+	 * Max post-media storage bytes the user is allowed across all projects
+	 * they own. Falls back to `FREE_TIER_MAX_STORAGE_BYTES` for users with no
+	 * active paid tier so existing free users keep working unchanged.
+	 */
+	maxStorageBytes: number;
 	activeMemberships: ResolvedMembership[];
 }
 
@@ -78,6 +85,7 @@ export function deriveEntitlements(memberships: ResolvedMembership[]): UserEntit
 		tier,
 		hasUpgraded: !!tier,
 		maxUploadPostAccounts: tier?.maxUploadPostAccounts ?? 0,
+		maxStorageBytes: tier?.maxStorageBytes ?? FREE_TIER_MAX_STORAGE_BYTES,
 		activeMemberships: memberships,
 	};
 }
@@ -96,6 +104,7 @@ export async function writeUserEntitlements(
 		.from("users")
 		.update({
 			max_upload_post_accounts: entitlements.maxUploadPostAccounts,
+			max_storage_bytes: entitlements.maxStorageBytes,
 			has_upgraded: entitlements.hasUpgraded,
 			updated_at: new Date().toISOString(),
 		})

@@ -3,6 +3,10 @@
 		{
 			"path": "/api/cron/upload-post-jwt-refresh",
 			"schedule": "5 0 * * *"
+		},
+		{
+			"path": "/api/cron/shotstack-credit-expiry",
+			"schedule": "15 0 * * *"
 		}
 	]
 }

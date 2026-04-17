@@ -56,17 +56,40 @@ function makeSupabaseRpc(
 	handlers: Partial<{
 		get_user_storage_stats: (args: Record<string, unknown>) => RpcResult | Error;
 		get_project_storage_bytes: (args: Record<string, unknown>) => RpcResult | Error;
+		/**
+		 * Override the value `getOwnerMaxStorageBytes` reads off
+		 * `users.max_storage_bytes`. Defaults to OWNER_DEFAULT_MAX_BYTES so
+		 * existing tests keep their expected cap.
+		 */
+		users_max_storage_bytes: number | null;
 	}>,
 ) {
 	const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+	const ownerCap =
+		"users_max_storage_bytes" in handlers
+			? (handlers.users_max_storage_bytes as number | null)
+			: OWNER_DEFAULT_MAX_BYTES;
 	const supabase = {
 		async rpc(fn: string, args: Record<string, unknown>) {
 			rpcCalls.push({ fn, args });
 			const handler = handlers[fn as keyof typeof handlers];
-			if (!handler) return { data: [], error: null };
-			const out = handler(args);
+			if (typeof handler !== "function") return { data: [], error: null };
+			const out = (handler as (args: Record<string, unknown>) => RpcResult | Error)(args);
 			if (out instanceof Error) return { data: null, error: { message: out.message } };
 			return { data: out.rows, error: null };
+		},
+		from(table: string) {
+			if (table !== "users") {
+				throw new Error(`unexpected from(${table})`);
+			}
+			const builder = {
+				select: (_cols: string) => builder,
+				eq: (_col: string, _val: string) => builder,
+				async maybeSingle() {
+					return { data: { max_storage_bytes: ownerCap }, error: null };
+				},
+			};
+			return builder;
 		},
 	} as unknown as Parameters<typeof getOwnerStorageStats>[0];
 	return { supabase, rpcCalls };

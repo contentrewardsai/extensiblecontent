@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PlanTier } from "@/lib/plan-tiers";
+import { reconcileExpiredGrants } from "@/lib/shotstack-expiry";
 
 /**
  * Append-only ShotStack credit ledger.
@@ -44,6 +45,14 @@ export async function getSpendableCredits(
 	supabase: SupabaseClient,
 	userId: string,
 ): Promise<number> {
+	// Lazily materialize any expiry rows that should exist before reading the
+	// balance; the post-migration spendable formula is just `sum(credits)`,
+	// so an unreconciled expired grant would be over-counted otherwise.
+	try {
+		await reconcileExpiredGrants(supabase, userId);
+	} catch (err) {
+		console.error("[shotstack-ledger] reconcile failed (continuing):", err);
+	}
 	const { data, error } = await supabase.rpc("shotstack_spendable_credits", { p_user_id: userId });
 	if (error) {
 		console.error("[shotstack-ledger] spendable rpc failed:", error);
@@ -217,6 +226,13 @@ export async function listLedgerEntries(
 	userId: string,
 	{ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<ShotstackCreditEntry[]> {
+	// Make sure any newly-expired grants show up as `kind=expiry` rows in
+	// the user's history before we paginate.
+	try {
+		await reconcileExpiredGrants(supabase, userId);
+	} catch (err) {
+		console.error("[shotstack-ledger] reconcile failed (continuing):", err);
+	}
 	const { data, error } = await supabase
 		.from("shotstack_credit_ledger")
 		.select("*")
