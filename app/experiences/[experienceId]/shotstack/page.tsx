@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { requireExperienceContext } from "@/lib/experience-context";
+import { getSpendableCredits } from "@/lib/shotstack-ledger";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { createShotstackTemplate, deleteShotstackTemplate } from "../experience-actions";
 import { ShotstackRenderForm } from "./shotstack-render-form";
@@ -21,7 +23,7 @@ export default async function ShotstackPage({
 	const { internalUserId } = await requireExperienceContext(experienceId);
 	const supabase = getServiceSupabase();
 
-	const [templatesRes, rendersRes, userRes] = await Promise.all([
+	const [templatesRes, rendersRes, userRes, spendableCredits] = await Promise.all([
 		supabase
 			.from("shotstack_templates")
 			.select("id, name, edit, default_env, created_at, updated_at")
@@ -33,12 +35,16 @@ export default async function ShotstackPage({
 			.eq("user_id", internalUserId)
 			.order("created_at", { ascending: false })
 			.limit(50),
-		supabase.from("users").select("shotstack_credits, shotstack_api_key_encrypted").eq("id", internalUserId).single(),
+		supabase.from("users").select("shotstack_api_key_encrypted").eq("id", internalUserId).single(),
+		getSpendableCredits(supabase, internalUserId),
 	]);
 
 	const templates = templatesRes.data ?? [];
 	const renders = rendersRes.data ?? [];
-	const credits = Number(userRes.data?.shotstack_credits ?? 0);
+	// Always read the spendable balance from the ledger (unexpired grants
+	// minus debits) instead of the cached column so this page can never lag
+	// behind a webhook that just expired or topped up credits.
+	const credits = spendableCredits;
 	const hasByok = !!userRes.data?.shotstack_api_key_encrypted?.trim();
 
 	return (
@@ -52,13 +58,19 @@ export default async function ShotstackPage({
 				</p>
 			</div>
 
-			<div className="flex flex-wrap gap-4 text-3 text-gray-11 border border-gray-a4 rounded-lg p-4 bg-gray-a2">
+			<div className="flex flex-wrap gap-4 text-3 text-gray-11 border border-gray-a4 rounded-lg p-4 bg-gray-a2 items-center">
 				<span>
 					<strong className="text-gray-12">Credits:</strong> {credits.toFixed(2)}
 				</span>
 				<span>
 					<strong className="text-gray-12">BYOK:</strong> {hasByok ? "configured" : "not set"}
 				</span>
+				<Link
+					href={`/experiences/${experienceId}/shotstack/billing`}
+					className="ml-auto text-3 text-gray-12 underline hover:no-underline"
+				>
+					View billing history →
+				</Link>
 			</div>
 
 			{err && ERR[err] ? (

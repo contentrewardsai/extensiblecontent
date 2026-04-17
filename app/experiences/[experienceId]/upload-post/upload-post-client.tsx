@@ -1,7 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
-import { refreshConnectUrlAction, uploadPostCloudAction } from "../experience-actions";
+import { useActionState, useState } from "react";
+import {
+	createUploadPostAccountAction,
+	refreshConnectUrlAction,
+	uploadPostCloudAction,
+} from "../experience-actions";
 
 export function ConnectUrlForm({ experienceId, accountId }: { experienceId: string; accountId: string }) {
 	const [state, formAction, pending] = useActionState(refreshConnectUrlAction, null);
@@ -26,6 +30,82 @@ export function ConnectUrlForm({ experienceId, accountId }: { experienceId: stri
 				</a>
 			) : null}
 		</div>
+	);
+}
+
+export function AddAccountForm({
+	experienceId,
+	disabled,
+	disabledReason,
+}: {
+	experienceId: string;
+	disabled: boolean;
+	disabledReason?: string;
+}) {
+	const [state, formAction, pending] = useActionState(createUploadPostAccountAction, null);
+	const [byok, setByok] = useState(false);
+	const justAdded = state?.ok === true ? state : null;
+
+	if (disabled) {
+		return (
+			<div className="border border-dashed border-gray-a4 rounded-lg p-4 bg-gray-a1">
+				<p className="text-3 text-gray-11">{disabledReason ?? "You've reached your account limit."}</p>
+			</div>
+		);
+	}
+
+	return (
+		<form action={formAction} className="border border-gray-a4 rounded-lg p-4 bg-gray-a2 flex flex-col gap-3">
+			<input type="hidden" name="experienceId" value={experienceId} />
+			<div>
+				<p className="text-4 font-semibold text-gray-12">Add Upload-Post account</p>
+				<p className="text-2 text-gray-10 mt-1">
+					Creates a profile in Upload-Post under your account, mints a connect link, and stores it here. Use BYOK if
+					you want to bill the API calls against your own Upload-Post key.
+				</p>
+			</div>
+			<label className="text-2 text-gray-11 flex flex-col gap-1">
+				<span>Account name</span>
+				<input
+					name="name"
+					type="text"
+					required
+					placeholder="e.g. Personal brand"
+					maxLength={120}
+					className="text-3 text-gray-12 bg-gray-a1 border border-gray-a4 rounded-md px-2 py-1.5"
+				/>
+			</label>
+
+			<label className="text-2 text-gray-11 flex items-center gap-2">
+				<input type="checkbox" checked={byok} onChange={(e) => setByok(e.target.checked)} className="size-4" />
+				Bring your own Upload-Post API key
+			</label>
+			{byok ? (
+				<label className="text-2 text-gray-11 flex flex-col gap-1">
+					<span>Upload-Post API key</span>
+					<input
+						name="api_key"
+						type="password"
+						autoComplete="off"
+						required
+						placeholder="apikey_…"
+						className="text-3 text-gray-12 bg-gray-a1 border border-gray-a4 rounded-md px-2 py-1.5 font-mono"
+					/>
+				</label>
+			) : null}
+
+			<div className="flex items-center gap-3">
+				<button
+					type="submit"
+					disabled={pending}
+					className="text-3 px-4 py-2 rounded-md bg-gray-12 text-gray-1 hover:opacity-90 disabled:opacity-50 self-start"
+				>
+					{pending ? "Adding…" : "Add account"}
+				</button>
+				{state && !state.ok ? <p className="text-2 text-red-11">{state.error}</p> : null}
+				{justAdded ? <p className="text-2 text-green-11">Added “{justAdded.name}”</p> : null}
+			</div>
+		</form>
 	);
 }
 

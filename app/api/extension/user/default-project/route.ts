@@ -50,15 +50,15 @@ export async function PATCH(request: NextRequest) {
 		if (typeof default_project_id !== "string" || !default_project_id.trim()) {
 			return Response.json({ error: "default_project_id must be a valid UUID or null" }, { status: 400 });
 		}
-		// Verify project belongs to user
+		// Verify the user is a member of this project (owner or collaborator).
 		const supabase = getSupabase();
-		const { data: project } = await supabase
-			.from("projects")
-			.select("id")
-			.eq("id", default_project_id.trim())
+		const { data: membership } = await supabase
+			.from("project_members")
+			.select("user_id")
+			.eq("project_id", default_project_id.trim())
 			.eq("user_id", user.user_id)
-			.single();
-		if (!project) {
+			.maybeSingle();
+		if (!membership) {
 			return Response.json({ error: "Project not found" }, { status: 404 });
 		}
 	}

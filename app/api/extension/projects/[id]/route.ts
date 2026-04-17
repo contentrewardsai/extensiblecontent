@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { assertProjectAccess, ProjectAccessError } from "@/lib/project-access";
+import { recordProjectAudit, resolveEditSource } from "@/lib/project-audit";
+import { normalizeQuotaInput, ProjectQuotaError } from "@/lib/project-quota";
 import type { Project, ProjectUpdate } from "@/lib/types/projects";
 
 function getSupabase() {
@@ -10,7 +13,22 @@ function getSupabase() {
 	return createClient(url, key);
 }
 
-async function projectWithJoins(supabase: SupabaseClient, project: { id: string; user_id: string; name: string; created_at: string; updated_at: string }) {
+interface ProjectRow {
+	id: string;
+	user_id?: string | null;
+	owner_id: string;
+	name: string;
+	description?: string | null;
+	quota_bytes?: number | null;
+	created_at: string;
+	updated_at: string;
+}
+
+async function projectWithJoins(
+	supabase: SupabaseClient,
+	project: ProjectRow,
+	role?: "owner" | "editor" | "viewer",
+) {
 	const [industriesRes, platformsRes, monetizationRes] = await Promise.all([
 		supabase.from("project_industries").select("industry_id, industries(id, name, created_at)").eq("project_id", project.id),
 		supabase.from("project_platforms").select("platform_id, platforms(id, name, slug, created_at)").eq("project_id", project.id),
@@ -29,10 +47,23 @@ async function projectWithJoins(supabase: SupabaseClient, project: { id: string;
 
 	return {
 		...project,
+		user_id: project.owner_id,
+		owner_id: project.owner_id,
+		description: project.description ?? null,
+		quota_bytes: project.quota_bytes ?? null,
 		industries,
 		platforms,
 		monetization,
+		...(role ? { role } : {}),
 	} as Project;
+}
+
+function accessErrorResponse(e: unknown) {
+	if (e instanceof ProjectAccessError) {
+		return Response.json({ error: e.message }, { status: e.status });
+	}
+	const message = e instanceof Error ? e.message : "Failed";
+	return Response.json({ error: message }, { status: 500 });
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -43,13 +74,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 	const { id } = await params;
 	const supabase = getSupabase();
-	const { data: project, error } = await supabase.from("projects").select("*").eq("id", id).eq("user_id", user.user_id).single();
+
+	let membership: Awaited<ReturnType<typeof assertProjectAccess>>;
+	try {
+		membership = await assertProjectAccess(supabase, id, user.user_id, "viewer");
+	} catch (e) {
+		return accessErrorResponse(e);
+	}
+
+	const { data: project, error } = await supabase
+		.from("projects")
+		.select("id, user_id, owner_id, name, description, quota_bytes, created_at, updated_at")
+		.eq("id", id)
+		.single();
 
 	if (error || !project) {
 		return Response.json({ error: error?.message ?? "Project not found" }, { status: 404 });
 	}
 
-	const result = await projectWithJoins(supabase, project);
+	const result = await projectWithJoins(supabase, project as ProjectRow, membership.role);
 	return Response.json(result);
 }
 
@@ -62,11 +105,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 	const { id } = await params;
 	const supabase = getSupabase();
 
-	const { data: existing } = await supabase.from("projects").select("id").eq("id", id).eq("user_id", user.user_id).single();
-	if (!existing) {
-		return Response.json({ error: "Project not found" }, { status: 404 });
-	}
-
 	let body: ProjectUpdate;
 	try {
 		body = await request.json();
@@ -74,13 +112,58 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
-	const { name, industry_ids, platform_ids, monetization_ids } = body;
+	const { name, description, quota_bytes, industry_ids, platform_ids, monetization_ids } = body;
 
+	// Quota changes are owner-only; other field tweaks need editor.
+	const requiresOwner = quota_bytes !== undefined;
+	let membership: Awaited<ReturnType<typeof assertProjectAccess>>;
+	try {
+		membership = await assertProjectAccess(supabase, id, user.user_id, requiresOwner ? "owner" : "editor");
+	} catch (e) {
+		return accessErrorResponse(e);
+	}
+
+	const { data: existing } = await supabase
+		.from("projects")
+		.select("id, name, description, quota_bytes")
+		.eq("id", id)
+		.maybeSingle();
+	if (!existing) {
+		return Response.json({ error: "Project not found" }, { status: 404 });
+	}
+
+	const before = {
+		name: existing.name,
+		description: existing.description,
+		quota_bytes: existing.quota_bytes,
+	};
+	const after: Record<string, unknown> = {};
+
+	const updates: Record<string, unknown> = {};
 	if (name !== undefined) {
 		if (typeof name !== "string" || !name.trim()) {
 			return Response.json({ error: "name must be a non-empty string" }, { status: 400 });
 		}
-		await supabase.from("projects").update({ name: name.trim(), updated_at: new Date().toISOString() }).eq("id", id);
+		updates.name = name.trim();
+		after.name = updates.name;
+	}
+	if (description !== undefined) {
+		updates.description = typeof description === "string" ? description.trim() || null : null;
+		after.description = updates.description;
+	}
+	if (quota_bytes !== undefined) {
+		try {
+			updates.quota_bytes = normalizeQuotaInput(quota_bytes);
+		} catch (e) {
+			const status = e instanceof ProjectQuotaError ? e.status : 400;
+			return Response.json({ error: e instanceof Error ? e.message : "invalid quota_bytes" }, { status });
+		}
+		after.quota_bytes = updates.quota_bytes;
+	}
+
+	if (Object.keys(updates).length > 0) {
+		updates.updated_at = new Date().toISOString();
+		await supabase.from("projects").update(updates).eq("id", id);
 	}
 
 	if (industry_ids !== undefined) {
@@ -102,12 +185,29 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 		}
 	}
 
-	const { data: project } = await supabase.from("projects").select("*").eq("id", id).single();
+	if (Object.keys(after).length > 0) {
+		await recordProjectAudit(supabase, {
+			projectId: id,
+			actorUserId: user.user_id,
+			source: resolveEditSource(request, "user"),
+			action: quota_bytes !== undefined ? "project.quota_changed" : "project.updated",
+			targetType: "project",
+			targetId: id,
+			before,
+			after,
+		});
+	}
+
+	const { data: project } = await supabase
+		.from("projects")
+		.select("id, user_id, owner_id, name, description, quota_bytes, created_at, updated_at")
+		.eq("id", id)
+		.single();
 	if (!project) {
 		return Response.json({ error: "Failed to fetch updated project" }, { status: 500 });
 	}
 
-	const result = await projectWithJoins(supabase, project);
+	const result = await projectWithJoins(supabase, project as ProjectRow, membership.role);
 	return Response.json(result);
 }
 
@@ -120,10 +220,30 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 	const { id } = await params;
 	const supabase = getSupabase();
 
-	const { data: existing } = await supabase.from("projects").select("id").eq("id", id).eq("user_id", user.user_id).single();
+	try {
+		await assertProjectAccess(supabase, id, user.user_id, "owner");
+	} catch (e) {
+		return accessErrorResponse(e);
+	}
+
+	const { data: existing } = await supabase
+		.from("projects")
+		.select("id, name")
+		.eq("id", id)
+		.maybeSingle();
 	if (!existing) {
 		return Response.json({ error: "Project not found" }, { status: 404 });
 	}
+
+	await recordProjectAudit(supabase, {
+		projectId: id,
+		actorUserId: user.user_id,
+		source: resolveEditSource(request, "user"),
+		action: "project.deleted",
+		targetType: "project",
+		targetId: id,
+		before: { name: existing.name },
+	});
 
 	await supabase.from("projects").delete().eq("id", id);
 	return new Response(null, { status: 204 });

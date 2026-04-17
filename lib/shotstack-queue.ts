@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { renderShotStack, creditsFromSeconds } from "@/lib/shotstack";
+import { getSpendableCredits, recordRenderDebit } from "@/lib/shotstack-ledger";
 
 export type QueueShotStackInput = {
 	userId: string;
@@ -49,8 +50,11 @@ export async function queueShotStackRender(supabase: SupabaseClient, input: Queu
 	}
 
 	if (!use_own_key && env !== "stage") {
-		const { data: userRow } = await supabase.from("users").select("shotstack_credits").eq("id", userId).single();
-		const credits = Number(userRow?.shotstack_credits ?? 0);
+		// Spendable balance = sum of unexpired grants minus debits, computed
+		// from `shotstack_credit_ledger`. We deliberately re-check at debit
+		// time instead of trusting the cached `users.shotstack_credits` so
+		// concurrent renders can't both pass a stale balance check.
+		const credits = await getSpendableCredits(supabase, userId);
 		if (credits < creditsNeeded) {
 			return {
 				ok: false,
@@ -86,12 +90,22 @@ export async function queueShotStackRender(supabase: SupabaseClient, input: Queu
 	}
 
 	if (!use_own_key && env !== "stage") {
-		const { data: u } = await supabase.from("users").select("shotstack_credits").eq("id", userId).single();
-		const current = Number(u?.shotstack_credits ?? 0);
-		await supabase
-			.from("users")
-			.update({ shotstack_credits: Math.max(0, current - creditsNeeded) })
-			.eq("id", userId);
+		// One write per render: a ledger debit. `recordRenderDebit` also
+		// refreshes the cached `users.shotstack_credits` so existing readers
+		// stay accurate. The legacy `shotstack_usage` table is kept for now
+		// as a denormalised duration log for reports that don't need the
+		// full ledger semantics.
+		try {
+			await recordRenderDebit(supabase, {
+				userId,
+				credits: creditsNeeded,
+				shotstackRenderId: result.id,
+				description: `Render ${result.id} (${duration_seconds.toFixed(2)}s)`,
+				metadata: { duration_seconds, env },
+			});
+		} catch (err) {
+			console.error("[shotstack] ledger debit failed:", err);
+		}
 
 		const { error: usageError } = await supabase.from("shotstack_usage").insert({
 			user_id: userId,

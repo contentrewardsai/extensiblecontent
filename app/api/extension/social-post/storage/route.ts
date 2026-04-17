@@ -1,37 +1,37 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
-
-const BUCKETS = ["post-media", "post-media-private"];
-const DEFAULT_MAX_BYTES = 500 * 1024 * 1024; // 500 MB default (shared across both buckets)
-
-function getSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
+import { listAccessibleProjects } from "@/lib/project-access";
+import {
+	getProjectStorageStats,
+	OWNER_DEFAULT_MAX_BYTES,
+	POST_MEDIA_BUCKETS,
+} from "@/lib/project-quota";
+import { getServiceSupabase } from "@/lib/supabase-service";
 
 /**
- * GET: Return user's storage quota info.
- * Uses get_user_storage_stats RPC to query across both buckets.
+ * GET: Return user's storage quota info plus per-project usage rows.
+ *
+ * The top-level `used_bytes` / `limit_bytes` fields stay user-scoped (they
+ * count files where the caller is the owner) so older extension builds keep
+ * working. The new `projects` array exposes per-project usage and quota for
+ * shared and owned projects so the dashboard / extension can render per-bar
+ * usage without extra round-trips.
  */
 export async function GET(request: NextRequest) {
 	const user = await getExtensionUser(request);
 	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-	const supabase = getSupabase();
+	const supabase = getServiceSupabase();
 
-	const { data, error } = await supabase.rpc("get_user_storage_stats", {
+	const { data: ownerStatsRows, error: ownerErr } = await supabase.rpc("get_user_storage_stats", {
 		p_user_prefix: `${user.user_id}/`,
-		p_bucket_ids: BUCKETS,
+		p_bucket_ids: POST_MEDIA_BUCKETS as unknown as string[],
 	});
-
-	if (error) {
-		return Response.json({ error: error.message }, { status: 500 });
+	if (ownerErr) {
+		return Response.json({ error: ownerErr.message }, { status: 500 });
 	}
 
-	const rows = (data ?? []) as { bucket_id: string; file_count: number; total_bytes: number }[];
+	const rows = (ownerStatsRows ?? []) as { bucket_id: string; file_count: number; total_bytes: number }[];
 	let totalBytes = 0;
 	let fileCount = 0;
 	let publicCount = 0;
@@ -47,12 +47,44 @@ export async function GET(request: NextRequest) {
 		}
 	}
 
+	const accessible = await listAccessibleProjects(supabase, user.user_id);
+
+	const projects: Array<{
+		project_id: string;
+		name: string;
+		owner_id: string;
+		role: "owner" | "editor" | "viewer";
+		used_bytes: number;
+		quota_bytes: number | null;
+	}> = [];
+
+	for (const project of accessible) {
+		try {
+			const stats = await getProjectStorageStats(supabase, project.owner_id, project.id, project.quota_bytes);
+			projects.push({
+				project_id: project.id,
+				name: project.name,
+				owner_id: project.owner_id,
+				role: project.role,
+				used_bytes: stats.usedBytes,
+				quota_bytes: project.quota_bytes,
+			});
+		} catch (e) {
+			console.error("[storage] per-project stats failed:", project.id, e);
+		}
+	}
+
 	return Response.json({
 		ok: true,
 		used_bytes: totalBytes,
-		max_bytes: DEFAULT_MAX_BYTES,
+		// `max_bytes` and `limit_bytes` are aliases. The extension reads
+		// `limit_bytes` / `limitBytes` (background/service-worker.js GET_STORAGE_INFO);
+		// older internal callers read `max_bytes`. Keep both so neither breaks.
+		max_bytes: OWNER_DEFAULT_MAX_BYTES,
+		limit_bytes: OWNER_DEFAULT_MAX_BYTES,
 		file_count: fileCount,
 		public_count: publicCount,
 		private_count: privateCount,
+		projects,
 	});
 }

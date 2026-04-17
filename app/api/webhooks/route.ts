@@ -1,27 +1,28 @@
 import { waitUntil } from "@vercel/functions";
-import type { Payment } from "@whop/sdk/resources.js";
 import type { NextRequest } from "next/server";
+import { handleMembershipChanged, handlePaymentSucceeded } from "@/lib/whop-payment-handler";
 import { whopsdk } from "@/lib/whop-sdk";
 
 export async function POST(request: NextRequest): Promise<Response> {
-	// Validate the webhook to ensure it's from Whop
 	const requestBodyText = await request.text();
 	const headers = Object.fromEntries(request.headers);
 	const webhookData = whopsdk.webhooks.unwrap(requestBodyText, { headers });
 
-	// Handle the webhook event
-	if (webhookData.type === "payment.succeeded") {
-		waitUntil(handlePaymentSucceeded(webhookData.data));
+	switch (webhookData.type) {
+		case "payment.succeeded":
+			// Funds the period: credits the ledger + syncs `users.max_upload_post_accounts`.
+			waitUntil(handlePaymentSucceeded(webhookData.data));
+			break;
+		case "membership.activated":
+		case "membership.deactivated":
+			// No credits (those follow payments) but the cached entitlement
+			// flags need to flip so the dashboard reflects the change.
+			waitUntil(handleMembershipChanged(webhookData.data.user?.id ?? null));
+			break;
+		default:
+			break;
 	}
 
-	// Make sure to return a 2xx status code quickly. Otherwise the webhook will be retried.
+	// 2xx fast — Whop retries any non-2xx and our handlers run on `waitUntil`.
 	return new Response("OK", { status: 200 });
-}
-
-async function handlePaymentSucceeded(payment: Payment) {
-	// TODO: Map Whop product/plan to:
-	// - shotstack_credits: add credits to users.shotstack_credits
-	// - max_upload_post_accounts: set users.max_upload_post_accounts
-	// Look up user by payment metadata (e.g. whop_user_id), then update Supabase.
-	console.log("[PAYMENT SUCCEEDED]", payment);
 }
