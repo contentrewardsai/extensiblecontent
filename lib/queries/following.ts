@@ -4,7 +4,7 @@ import type { Following } from "@/lib/types/following";
 export async function followingWithJoins(supabase: SupabaseClient, f: Record<string, unknown>): Promise<Following> {
 	const followingId = f.id as string;
 
-	const [accountsRes, emailsRes, phonesRes, addressesRes, notesRes] = await Promise.all([
+	const [accountsRes, emailsRes, phonesRes, addressesRes, notesRes, walletsRes] = await Promise.all([
 		supabase
 			.from("following_accounts")
 			.select("id, following_id, handle, url, platform_id, deleted, created_at, updated_at, platforms(id, name, slug)")
@@ -14,6 +14,7 @@ export async function followingWithJoins(supabase: SupabaseClient, f: Record<str
 		supabase.from("following_phones").select("*").eq("following_id", followingId).eq("deleted", false),
 		supabase.from("following_addresses").select("*").eq("following_id", followingId).eq("deleted", false),
 		supabase.from("following_notes").select("*").eq("following_id", followingId).eq("deleted", false),
+		supabase.from("following_wallets").select("*").eq("following_id", followingId).eq("deleted", false),
 	]);
 
 	const accounts = (accountsRes.data ?? []).map((r: Record<string, unknown>) => {
@@ -24,6 +25,7 @@ export async function followingWithJoins(supabase: SupabaseClient, f: Record<str
 	const phones = phonesRes.data ?? [];
 	const addresses = addressesRes.data ?? [];
 	const notes = notesRes.data ?? [];
+	const wallets = walletsRes.data ?? [];
 
 	return {
 		...f,
@@ -32,6 +34,7 @@ export async function followingWithJoins(supabase: SupabaseClient, f: Record<str
 		phones,
 		addresses,
 		notes,
+		wallets,
 	} as Following;
 }
 

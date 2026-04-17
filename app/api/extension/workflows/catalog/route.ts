@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import type { Workflow } from "@/lib/types/workflows";
+import { hostnameFromOrigin, normalizeHostname, workflowMatchesHostname } from "@/lib/workflow-hostname-match";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,6 +33,13 @@ export async function GET(request: NextRequest) {
 	const scope = request.nextUrl.searchParams.get("scope") || "published";
 	const limit = Math.min(Math.max(Number(request.nextUrl.searchParams.get("limit")) || 50, 1), 200);
 	const offset = Math.max(Number(request.nextUrl.searchParams.get("offset")) || 0, 0);
+
+	// Domain filter: extension passes ?hostname=labs.google or ?origin=https://labs.google.
+	// Normalize (lowercase, strip leading "www.") and match host or any subdomain against
+	// workflow.urlPattern.{origin,hostname} or the first run/action URL inside the JSONB blob.
+	const targetHostname =
+		normalizeHostname(request.nextUrl.searchParams.get("hostname")) ??
+		hostnameFromOrigin(request.nextUrl.searchParams.get("origin"));
 
 	const supabase = getSupabase();
 
@@ -88,7 +96,13 @@ export async function GET(request: NextRequest) {
 		}
 	}
 
-	const withAddedBy = await Promise.all(workflows.map((w) => workflowWithAddedBy(supabase, w)));
+	// In-memory hostname filter. Acceptable while limit <= 200; if growth pressures this,
+	// switch to a SQL pre-filter on workflow->'urlPattern'->>'origin' before this point.
+	const filtered = targetHostname
+		? workflows.filter((w) => workflowMatchesHostname(w.workflow, targetHostname))
+		: workflows;
+
+	const withAddedBy = await Promise.all(filtered.map((w) => workflowWithAddedBy(supabase, w)));
 
 	const hasMore = totalFetched >= limit;
 	return Response.json({

@@ -1,16 +1,45 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FollowingInsert, FollowingUpdate } from "@/lib/types/following";
+import type { FollowingInsert, FollowingUpdate, FollowingWalletInsert } from "@/lib/types/following";
 
 export type FollowingMutationError = { ok: false; error: string; status: number };
 export type FollowingMutationOk = { ok: true };
 export type CreateFollowingResult = { ok: true; id: string } | FollowingMutationError;
+
+function walletRowFor(w: FollowingWalletInsert, followingId: string, userId: string) {
+	return {
+		following_id: followingId,
+		chain: w.chain,
+		address: w.address,
+		network: w.network ?? null,
+		label: w.label ?? null,
+		watch_enabled: w.watch_enabled ?? w.watchEnabled ?? false,
+		automation_enabled: w.automation_enabled ?? w.automationEnabled ?? false,
+		auto_execute_swaps: w.auto_execute_swaps ?? w.autoExecuteSwaps ?? false,
+		size_mode: w.size_mode ?? w.sizeMode ?? null,
+		quote_mint: w.quote_mint ?? w.quoteMint ?? null,
+		fixed_amount_raw: w.fixed_amount_raw ?? w.fixedAmountRaw ?? null,
+		usd_amount: w.usd_amount ?? w.usdAmount ?? null,
+		proportional_scale_percent: w.proportional_scale_percent ?? w.proportionalScalePercent ?? null,
+		slippage_bps: w.slippage_bps ?? w.slippageBps ?? null,
+		added_by: userId,
+	};
+}
 
 export async function createFollowingForUser(
 	supabase: SupabaseClient,
 	userId: string,
 	body: FollowingInsert,
 ): Promise<CreateFollowingResult> {
-	const { name, birthday = null, accounts = [], emails = [], phones = [], addresses = [], notes = [] } = body;
+	const {
+		name,
+		birthday = null,
+		accounts = [],
+		emails = [],
+		phones = [],
+		addresses = [],
+		notes = [],
+		wallets = [],
+	} = body;
 
 	if (!name || typeof name !== "string" || !name.trim()) {
 		return { ok: false, error: "name is required", status: 400 };
@@ -86,6 +115,9 @@ export async function createFollowingForUser(
 			})),
 		);
 	}
+	if (wallets.length > 0) {
+		await supabase.from("following_wallets").insert(wallets.map((w) => walletRowFor(w, followingId, userId)));
+	}
 
 	return { ok: true, id: followingId };
 }
@@ -101,7 +133,7 @@ export async function updateFollowingForUser(
 		return { ok: false, error: "Following not found", status: 404 };
 	}
 
-	const { name, birthday, accounts, emails, phones, addresses, notes } = body;
+	const { name, birthday, accounts, emails, phones, addresses, notes, wallets } = body;
 
 	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 	if (name !== undefined) {
@@ -180,6 +212,12 @@ export async function updateFollowingForUser(
 					scheduled: n.scheduled ?? null,
 				})),
 			);
+		}
+	}
+	if (wallets !== undefined) {
+		await supabase.from("following_wallets").delete().eq("following_id", id);
+		if (wallets.length > 0) {
+			await supabase.from("following_wallets").insert(wallets.map((w) => walletRowFor(w, id, userId)));
 		}
 	}
 

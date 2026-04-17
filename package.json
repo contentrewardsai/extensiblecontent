@@ -7,7 +7,7 @@
 		"build": "next build",
 		"start": "next start",
 		"lint": "biome lint",
-		"test:unit": "node test/unit-tests.js && tsx test/knowledge-domain.test.ts && tsx test/extension-sidebar.test.ts && tsx test/sidebar-heartbeat.test.ts && tsx test/sidebar-lookup-parse.test.ts && tsx test/sidebar-project.test.ts && tsx test/sidebar-list-query.test.ts && tsx test/postgres-errors.test.ts",
+		"test:unit": "node test/unit-tests.js && tsx test/knowledge-domain.test.ts && tsx test/extension-sidebar.test.ts && tsx test/sidebar-heartbeat.test.ts && tsx test/sidebar-lookup-parse.test.ts && tsx test/sidebar-project.test.ts && tsx test/sidebar-list-query.test.ts && tsx test/postgres-errors.test.ts && tsx test/workflow-hostname-match.test.ts && tsx test/following-wallets.test.ts",
 		"db:migrate": "dotenv -e .env.local -- supabase db push",
 		"db:push": "dotenv -e .env.local -- supabase db push",
 		"db:reset": "dotenv -e .env.local -- supabase db reset"
