@@ -1,6 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getExtensionUser } from "@/lib/extension-auth";
-import { isPlanAdmin, parsePlanId } from "@/lib/promotion-plan";
+import { parsePlanId } from "@/lib/promotion-plan";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -9,39 +8,29 @@ interface RouteContext {
 	params: Promise<{ planId: string; platformId: string }>;
 }
 
-async function loadAdminContext(request: NextRequest, planId: string, platformId: string) {
-	if (!UUID_RE.test(platformId)) {
-		return { ok: false as const, status: 400, error: "Invalid platform id" };
-	}
-	const user = await getExtensionUser(request);
-	if (!user) return { ok: false as const, status: 401, error: "Unauthorized" };
-
-	const supabase = getServiceSupabase();
-	const { data: plan } = await supabase
-		.from("promotion_plans")
-		.select("id, admin_user_id")
-		.eq("id", planId)
-		.maybeSingle();
-	if (!plan) return { ok: false as const, status: 404, error: "Plan not found" };
-	if (!isPlanAdmin(plan, user.user_id)) {
-		return { ok: false as const, status: 403, error: "Forbidden" };
-	}
-	return { ok: true as const, supabase, planId, platformId };
-}
-
 /**
- * PATCH /api/plan/:planId/platforms/:platformId
- *
- * Admin-only. Updates platform-level fields ({ name?, followers? }).
- * Anyone updating a platform that isn't their own plan is rejected.
+ * Both endpoints below are **public** by design — `/plan/<slug>` is a
+ * fully open collaborative document. Anyone with the link can rename
+ * profiles, edit follower counts, and remove platforms (cascading to
+ * the platform's content + comments). The plan slug itself has no
+ * delete path.
  */
+
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
 	const { planId: rawPlanId, platformId } = await params;
 	const parsed = parsePlanId(rawPlanId);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
+	if (!UUID_RE.test(platformId)) {
+		return Response.json({ error: "Invalid platform id" }, { status: 400 });
+	}
 
-	const ctx = await loadAdminContext(request, parsed.id, platformId);
-	if (!ctx.ok) return Response.json({ error: ctx.error }, { status: ctx.status });
+	const supabase = getServiceSupabase();
+	const { data: plan } = await supabase
+		.from("promotion_plans")
+		.select("id")
+		.eq("id", parsed.id)
+		.maybeSingle();
+	if (!plan) return Response.json({ error: "Plan not found" }, { status: 404 });
 
 	let body: { name?: unknown; followers?: unknown };
 	try {
@@ -68,11 +57,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 		return Response.json({ error: "No fields to update" }, { status: 400 });
 	}
 
-	const { data: row, error } = await ctx.supabase
+	const { data: row, error } = await supabase
 		.from("promotion_plan_platforms")
 		.update(updates)
-		.eq("id", ctx.platformId)
-		.eq("plan_id", ctx.planId)
+		.eq("id", platformId)
+		.eq("plan_id", parsed.id)
 		.select("id, plan_id, name, followers, position, created_at")
 		.single();
 
@@ -82,24 +71,27 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 	return Response.json(row);
 }
 
-/**
- * DELETE /api/plan/:planId/platforms/:platformId
- *
- * Admin-only. Cascades to all child content + comments via FK.
- */
-export async function DELETE(request: NextRequest, { params }: RouteContext) {
+export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 	const { planId: rawPlanId, platformId } = await params;
 	const parsed = parsePlanId(rawPlanId);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
+	if (!UUID_RE.test(platformId)) {
+		return Response.json({ error: "Invalid platform id" }, { status: 400 });
+	}
 
-	const ctx = await loadAdminContext(request, parsed.id, platformId);
-	if (!ctx.ok) return Response.json({ error: ctx.error }, { status: ctx.status });
+	const supabase = getServiceSupabase();
+	const { data: plan } = await supabase
+		.from("promotion_plans")
+		.select("id")
+		.eq("id", parsed.id)
+		.maybeSingle();
+	if (!plan) return Response.json({ error: "Plan not found" }, { status: 404 });
 
-	const { error } = await ctx.supabase
+	const { error } = await supabase
 		.from("promotion_plan_platforms")
 		.delete()
-		.eq("id", ctx.platformId)
-		.eq("plan_id", ctx.planId);
+		.eq("id", platformId)
+		.eq("plan_id", parsed.id);
 	if (error) return Response.json({ error: error.message }, { status: 500 });
 	return new Response(null, { status: 204 });
 }

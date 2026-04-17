@@ -12,14 +12,15 @@ interface PlanPageProps {
  *
  *   /plan/<slug>
  *
- * Anyone who knows the slug can view the plan and contribute (comments,
- * platforms, content pieces). Only the admin who created the plan can
- * edit plan-level fields and choose the ShotStack template that loads
- * into the Fabric.js canvas at the bottom.
+ * Fully open document — anyone who knows the slug can create the plan
+ * (if it doesn't exist yet), edit every field, add platforms / content
+ * / comments, approve or reject content, and choose a ShotStack
+ * template for the Fabric.js canvas at the bottom. There is no login
+ * and no admin concept; the only thing the API does NOT expose is a
+ * delete-the-plan path.
  *
- * The server component does the initial fetch so the page is fully
- * SSR-friendly; the client component takes over for interaction and
- * Whop OAuth (sign in to claim/edit a plan).
+ * The server component does the initial fetch so the page is
+ * SSR-friendly; the client component takes over for interaction.
  */
 export default async function PlanPage({ params }: PlanPageProps) {
 	const { planId: rawPlanId } = await params;

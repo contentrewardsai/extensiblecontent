@@ -8,10 +8,7 @@ import {
 	Camera,
 	Cloud,
 	DollarSign,
-	Download,
 	Globe,
-	LogIn,
-	LogOut,
 	type LucideIcon,
 	MessageCircle,
 	Music,
@@ -27,9 +24,12 @@ import {
 	TrendingUp,
 	Video,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+	ALLOWED_MEDIA_KINDS,
 	ALLOWED_OBJECTIVES,
+	detectMediaKind,
+	type MediaKind,
 	type PromotionPlanCommentRow,
 	type PromotionPlanContentRow,
 	type PromotionPlanDetail,
@@ -55,64 +55,8 @@ const PLATFORMS: ReadonlyArray<{ name: string; icon: LucideIcon; type: "vertical
 	{ name: "Bluesky", icon: Cloud, type: "feed" },
 ];
 
-const FABRIC_CDN = "https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js";
-const TOKEN_STORAGE_KEY = "whop_plan_token";
-const PKCE_STORAGE_KEY = "whop_plan_oauth_pkce";
-// Path where we resume after Whop bounces back. Whop validates
-// `redirect_uri` against an allow-list, so we route through ONE fixed
-// URL (registered in the Whop dashboard) regardless of which plan slug
-// initiated the flow. The actual return target is stashed in
-// sessionStorage under RETURN_PATH_KEY and read by /plan/oauth/callback.
-const OAUTH_CALLBACK_PATH = "/plan/oauth/callback";
-const RETURN_PATH_KEY = "whop_plan_oauth_return";
-
 // ---------------------------------------------------------------------------
-// Token helpers (Whop OAuth — same flow as /extension/login but inline)
-// ---------------------------------------------------------------------------
-
-function base64url(bytes: Uint8Array) {
-	return btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, (c) => ({ "+": "-", "/": "_", "=": "" })[c]!);
-}
-function randomString(len: number) {
-	return base64url(crypto.getRandomValues(new Uint8Array(len)));
-}
-async function sha256(str: string) {
-	return base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str))));
-}
-
-interface StoredToken {
-	access_token: string;
-	refresh_token?: string;
-	expires_in?: number;
-	obtained_at: number;
-}
-
-function readStoredToken(): StoredToken | null {
-	if (typeof window === "undefined") return null;
-	try {
-		const raw = window.localStorage.getItem(TOKEN_STORAGE_KEY);
-		if (!raw) return null;
-		const parsed = JSON.parse(raw) as StoredToken;
-		if (!parsed?.access_token) return null;
-		return parsed;
-	} catch {
-		return null;
-	}
-}
-
-function persistToken(t: StoredToken | null) {
-	if (typeof window === "undefined") return;
-	if (t) window.localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(t));
-	else window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-}
-
-function authHeader(token: StoredToken | null): HeadersInit {
-	if (!token) return {};
-	return { Authorization: `Bearer ${token.access_token}` };
-}
-
-// ---------------------------------------------------------------------------
-// Detail helpers (the API response is just `PromotionPlanDetail` + admin flag)
+// Detail helpers
 // ---------------------------------------------------------------------------
 
 interface PlanApiResponse extends PromotionPlanDetail {
@@ -130,6 +74,34 @@ function ensureEstimates(estimates: Record<string, number> | undefined | null): 
 	return merged;
 }
 
+const jsonHeaders = { "Content-Type": "application/json" } as const;
+
+/**
+ * Translate a YouTube / Vimeo / generic URL to something safe to drop
+ * into an `<iframe src>`. Returns the original URL when we can't
+ * recognise the host (the iframe will simply 404 / refuse — but the
+ * raw URL is also surfaced in the editor so the user can fix it).
+ */
+function toEmbedSrc(url: string): string {
+	const u = url.trim();
+	if (!u) return "";
+	// youtu.be/<id>
+	const ytShort = u.match(/^https?:\/\/youtu\.be\/([\w-]{6,})/i);
+	if (ytShort) return `https://www.youtube.com/embed/${ytShort[1]}`;
+	// youtube.com/watch?v=<id>
+	const ytWatch = u.match(/[?&]v=([\w-]{6,})/);
+	if (/youtube\.com\/watch/i.test(u) && ytWatch) {
+		return `https://www.youtube.com/embed/${ytWatch[1]}`;
+	}
+	// already an /embed/ URL
+	if (/youtube\.com\/embed\//i.test(u)) return u;
+	// vimeo.com/<id>
+	const vimeo = u.match(/^https?:\/\/(?:www\.)?vimeo\.com\/(\d+)/i);
+	if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
+	if (/player\.vimeo\.com\/video\//i.test(u)) return u;
+	return u;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -141,147 +113,58 @@ interface PlanClientProps {
 
 export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 	const [detail, setDetail] = useState<PromotionPlanDetail | null>(initialDetail);
-	const [isAdmin, setIsAdmin] = useState(false);
-	const [viewerEmail, setViewerEmail] = useState<string | null>(null);
-	const [token, setToken] = useState<StoredToken | null>(null);
-	const [authStatus, setAuthStatus] = useState<"idle" | "loading" | "error">("idle");
-	const [authError, setAuthError] = useState<string | null>(null);
 	const [planNotFound, setPlanNotFound] = useState(initialDetail === null);
+	const [creating, setCreating] = useState(false);
+	const [createError, setCreateError] = useState<string | null>(null);
 
-	// Hydrate token from localStorage and refresh server-derived isAdmin.
-	useEffect(() => {
-		const stored = readStoredToken();
-		setToken(stored);
-	}, []);
-
-	// Once we know the token, refresh detail server-side so the admin flag
-	// matches what the backend says (the SSR fetch had no token).
-	const refreshDetail = useCallback(
-		async (overrideToken?: StoredToken | null) => {
-			const t = overrideToken === undefined ? token : overrideToken;
-			try {
-				const res = await fetch(`/api/plan/${planId}`, {
-					cache: "no-store",
-					headers: authHeader(t),
-				});
-				if (res.status === 404) {
-					setPlanNotFound(true);
-					setDetail(null);
-					setIsAdmin(false);
-					return;
-				}
-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
-				const data = (await res.json()) as PlanApiResponse;
-				setDetail({
-					plan: data.plan,
-					platforms: data.platforms,
-					content: data.content,
-					planComments: data.planComments,
-					contentComments: data.contentComments,
-					template: data.template,
-				});
-				setIsAdmin(Boolean(data.isAdmin));
-				setViewerEmail(data.viewer?.email ?? null);
-				setPlanNotFound(false);
-			} catch (err) {
-				console.error("[plan] refreshDetail failed:", err);
+	const refreshDetail = useCallback(async () => {
+		try {
+			const res = await fetch(`/api/plan/${planId}`, { cache: "no-store" });
+			if (res.status === 404) {
+				setPlanNotFound(true);
+				setDetail(null);
+				return;
 			}
-		},
-		[planId, token],
-	);
-
-	useEffect(() => {
-		if (token) refreshDetail(token);
-	}, [token, refreshDetail]);
-
-	// --------------------------------------------------------------------
-	// OAuth login flow (mirrors /extension/login but stays on this page)
-	// --------------------------------------------------------------------
-
-	const startOAuth = useCallback(async () => {
-		setAuthError(null);
-		const clientId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
-		if (!clientId) {
-			setAuthError("Missing NEXT_PUBLIC_WHOP_APP_ID");
-			setAuthStatus("error");
-			return;
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = (await res.json()) as PlanApiResponse;
+			setDetail({
+				plan: data.plan,
+				platforms: data.platforms,
+				content: data.content,
+				planComments: data.planComments,
+				contentComments: data.contentComments,
+				template: data.template,
+			});
+			setPlanNotFound(false);
+		} catch (err) {
+			console.error("[plan] refreshDetail failed:", err);
 		}
-		// Single fixed callback URL — must be registered in the Whop
-		// dashboard. The plan slug is preserved via sessionStorage rather
-		// than being baked into the redirect URI so we don't need one
-		// allow-list entry per plan.
-		const redirectUri = `${window.location.origin}${OAUTH_CALLBACK_PATH}`;
-		const pkce = {
-			codeVerifier: randomString(32),
-			state: randomString(16),
-			nonce: randomString(16),
-		};
-		sessionStorage.setItem(PKCE_STORAGE_KEY, JSON.stringify(pkce));
-		sessionStorage.setItem(RETURN_PATH_KEY, `/plan/${planId}`);
-		const params = new URLSearchParams({
-			response_type: "code",
-			client_id: clientId,
-			redirect_uri: redirectUri,
-			scope: "openid profile email",
-			state: pkce.state,
-			nonce: pkce.nonce,
-			code_challenge: await sha256(pkce.codeVerifier),
-			code_challenge_method: "S256",
-		});
-		params.set("a", "contentrewardsai");
-		window.location.href = `https://api.whop.com/oauth/authorize?${params}`;
 	}, [planId]);
 
-	const logout = useCallback(() => {
-		persistToken(null);
-		setToken(null);
-		setIsAdmin(false);
-		setViewerEmail(null);
-	}, []);
-
-	// --------------------------------------------------------------------
-	// Mutation helpers
-	// --------------------------------------------------------------------
-
-	const apiFetch = useCallback(
-		async (path: string, init: RequestInit = {}) => {
-			return fetch(path, {
-				...init,
-				headers: {
-					"Content-Type": "application/json",
-					...authHeader(token),
-					...(init.headers ?? {}),
-				},
-			});
-		},
-		[token],
-	);
-
-	const claimPlan = useCallback(async () => {
-		if (!token) {
-			startOAuth();
-			return;
+	const createPlan = useCallback(async () => {
+		setCreating(true);
+		setCreateError(null);
+		try {
+			const res = await fetch(`/api/plan/${planId}`, { method: "PUT" });
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { error?: string };
+				throw new Error(body.error ?? `Failed to create plan (HTTP ${res.status})`);
+			}
+			await refreshDetail();
+		} catch (err) {
+			setCreateError(err instanceof Error ? err.message : "Failed to create plan");
+		} finally {
+			setCreating(false);
 		}
-		const res = await apiFetch(`/api/plan/${planId}`, { method: "PUT" });
-		if (!res.ok) {
-			const body = (await res.json().catch(() => ({}))) as { error?: string };
-			alert(body.error ?? `Failed to claim plan (HTTP ${res.status})`);
-			return;
-		}
-		await refreshDetail();
-	}, [apiFetch, planId, refreshDetail, startOAuth, token]);
+	}, [planId, refreshDetail]);
 
 	if (planNotFound) {
 		return (
 			<NotFoundView
 				planId={planId}
-				viewerEmail={viewerEmail}
-				token={token}
-				authError={authError}
-				authStatus={authStatus}
-				onLogin={startOAuth}
-				onLogout={logout}
-				onClaim={claimPlan}
+				creating={creating}
+				createError={createError}
+				onCreate={createPlan}
 			/>
 		);
 	}
@@ -299,15 +182,7 @@ export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 			planId={planId}
 			detail={detail}
 			setDetail={setDetail}
-			isAdmin={isAdmin}
-			token={token}
-			viewerEmail={viewerEmail}
-			authStatus={authStatus}
-			authError={authError}
-			onLogin={startOAuth}
-			onLogout={logout}
 			refreshDetail={refreshDetail}
-			apiFetch={apiFetch}
 		/>
 	);
 }
@@ -318,17 +193,12 @@ export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 
 interface NotFoundProps {
 	planId: string;
-	viewerEmail: string | null;
-	token: StoredToken | null;
-	authStatus: "idle" | "loading" | "error";
-	authError: string | null;
-	onLogin: () => void;
-	onLogout: () => void;
-	onClaim: () => void;
+	creating: boolean;
+	createError: string | null;
+	onCreate: () => void;
 }
 
-function NotFoundView(props: NotFoundProps) {
-	const { planId, viewerEmail, token, authStatus, authError, onLogin, onLogout, onClaim } = props;
+function NotFoundView({ planId, creating, createError, onCreate }: NotFoundProps) {
 	return (
 		<div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
 			<div className="max-w-lg w-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
@@ -337,38 +207,18 @@ function NotFoundView(props: NotFoundProps) {
 				</div>
 				<h1 className="text-xl font-bold text-slate-800 mb-1">No plan at /plan/{planId}</h1>
 				<p className="text-sm text-slate-600 mb-6">
-					This slug is available. Sign in with Whop to create the plan and become its admin.
-					Anyone with the link will then be able to view and contribute.
+					This slug is available. Click below to spin up the plan — anyone with the link can then
+					view it, edit it, comment, and approve / reject content.
 				</p>
-				{authError ? <p className="text-sm text-red-600 mb-4">{authError}</p> : null}
-				{token ? (
-					<div className="flex flex-col gap-3">
-						<button
-							type="button"
-							onClick={onClaim}
-							className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg px-5 py-2.5"
-						>
-							Create this plan as {viewerEmail ?? "me"}
-						</button>
-						<button
-							type="button"
-							onClick={onLogout}
-							className="text-xs text-slate-500 hover:text-slate-700 underline"
-						>
-							Sign out
-						</button>
-					</div>
-				) : (
-					<button
-						type="button"
-						onClick={onLogin}
-						disabled={authStatus === "loading"}
-						className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-lg px-5 py-2.5"
-					>
-						<LogIn className="w-4 h-4" />{" "}
-						{authStatus === "loading" ? "Signing in…" : "Sign in with Whop"}
-					</button>
-				)}
+				{createError ? <p className="text-sm text-red-600 mb-4">{createError}</p> : null}
+				<button
+					type="button"
+					onClick={onCreate}
+					disabled={creating}
+					className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold rounded-lg px-5 py-2.5"
+				>
+					{creating ? "Creating…" : "Create this plan"}
+				</button>
 			</div>
 		</div>
 	);
@@ -382,40 +232,18 @@ interface PlanViewProps {
 	planId: string;
 	detail: PromotionPlanDetail;
 	setDetail: React.Dispatch<React.SetStateAction<PromotionPlanDetail | null>>;
-	isAdmin: boolean;
-	token: StoredToken | null;
-	viewerEmail: string | null;
-	authStatus: "idle" | "loading" | "error";
-	authError: string | null;
-	onLogin: () => void;
-	onLogout: () => void;
-	refreshDetail: (overrideToken?: StoredToken | null) => Promise<void>;
-	apiFetch: (path: string, init?: RequestInit) => Promise<Response>;
+	refreshDetail: () => Promise<void>;
 }
 
-function PlanView(props: PlanViewProps) {
-	const {
-		planId,
-		detail,
-		setDetail,
-		isAdmin,
-		token,
-		viewerEmail,
-		authStatus,
-		authError,
-		onLogin,
-		onLogout,
-		refreshDetail,
-		apiFetch,
-	} = props;
-
+function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	const { plan } = detail;
 
-	// ---- Plan field editing (admin only) -------------------------------
+	// ---- Plan-level edits ----------------------------------------------
 	const patchPlan = useCallback(
 		async (patch: Partial<PromotionPlanRow>) => {
-			const res = await apiFetch(`/api/plan/${planId}`, {
+			const res = await fetch(`/api/plan/${planId}`, {
 				method: "PATCH",
+				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
 			if (!res.ok) {
@@ -433,7 +261,7 @@ function PlanView(props: PlanViewProps) {
 				template: data.template,
 			});
 		},
-		[apiFetch, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	// ---- Comments -------------------------------------------------------
@@ -441,22 +269,24 @@ function PlanView(props: PlanViewProps) {
 	const submitPlanComment = useCallback(async () => {
 		const text = planCommentDraft.trim();
 		if (!text) return;
-		const res = await apiFetch(`/api/plan/${planId}/comments`, {
+		const res = await fetch(`/api/plan/${planId}/comments`, {
 			method: "POST",
+			headers: jsonHeaders,
 			body: JSON.stringify({ body: text }),
 		});
 		if (!res.ok) return;
 		const row = (await res.json()) as PromotionPlanCommentRow;
 		setPlanCommentDraft("");
 		setDetail((prev) => (prev ? { ...prev, planComments: [...prev.planComments, row] } : prev));
-	}, [apiFetch, planCommentDraft, planId, setDetail]);
+	}, [planCommentDraft, planId, setDetail]);
 
 	const submitContentComment = useCallback(
 		async (contentId: string, kind: "post" | "ad", body: string) => {
 			const text = body.trim();
 			if (!text) return;
-			const res = await apiFetch(`/api/plan/${planId}/comments`, {
+			const res = await fetch(`/api/plan/${planId}/comments`, {
 				method: "POST",
+				headers: jsonHeaders,
 				body: JSON.stringify({ body: text, content_id: contentId, kind }),
 			});
 			if (!res.ok) return;
@@ -470,28 +300,28 @@ function PlanView(props: PlanViewProps) {
 				return { ...prev, contentComments: next };
 			});
 		},
-		[apiFetch, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	// ---- Platforms ------------------------------------------------------
 	const addPlatform = useCallback(
 		async (name: string) => {
-			const res = await apiFetch(`/api/plan/${planId}/platforms`, {
+			const res = await fetch(`/api/plan/${planId}/platforms`, {
 				method: "POST",
+				headers: jsonHeaders,
 				body: JSON.stringify({ name, followers: 0 }),
 			});
 			if (!res.ok) return;
 			const row = (await res.json()) as PromotionPlanPlatformRow;
 			setDetail((prev) => (prev ? { ...prev, platforms: [...prev.platforms, row] } : prev));
 		},
-		[apiFetch, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	const removePlatform = useCallback(
 		async (id: string) => {
-			if (!isAdmin) return;
 			if (!confirm("Remove this platform and all of its content?")) return;
-			const res = await apiFetch(`/api/plan/${planId}/platforms/${id}`, { method: "DELETE" });
+			const res = await fetch(`/api/plan/${planId}/platforms/${id}`, { method: "DELETE" });
 			if (!res.ok) return;
 			setDetail((prev) =>
 				prev
@@ -503,14 +333,14 @@ function PlanView(props: PlanViewProps) {
 					: prev,
 			);
 		},
-		[apiFetch, isAdmin, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	const updatePlatform = useCallback(
 		async (id: string, patch: { name?: string; followers?: number }) => {
-			if (!isAdmin) return;
-			const res = await apiFetch(`/api/plan/${planId}/platforms/${id}`, {
+			const res = await fetch(`/api/plan/${planId}/platforms/${id}`, {
 				method: "PATCH",
+				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
 			if (!res.ok) return;
@@ -521,27 +351,29 @@ function PlanView(props: PlanViewProps) {
 					: prev,
 			);
 		},
-		[apiFetch, isAdmin, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	// ---- Content --------------------------------------------------------
 	const addContent = useCallback(
 		async (platformId: string) => {
-			const res = await apiFetch(`/api/plan/${planId}/content`, {
+			const res = await fetch(`/api/plan/${planId}/content`, {
 				method: "POST",
+				headers: jsonHeaders,
 				body: JSON.stringify({ platform_id: platformId, is_post: true, is_ad: false }),
 			});
 			if (!res.ok) return;
 			const row = (await res.json()) as PromotionPlanContentRow;
 			setDetail((prev) => (prev ? { ...prev, content: [...prev.content, row] } : prev));
 		},
-		[apiFetch, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	const updateContent = useCallback(
 		async (id: string, patch: Partial<PromotionPlanContentRow>) => {
-			const res = await apiFetch(`/api/plan/${planId}/content/${id}`, {
+			const res = await fetch(`/api/plan/${planId}/content/${id}`, {
 				method: "PATCH",
+				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
 			if (!res.ok) return;
@@ -550,20 +382,19 @@ function PlanView(props: PlanViewProps) {
 				prev ? { ...prev, content: prev.content.map((c) => (c.id === id ? row : c)) } : prev,
 			);
 		},
-		[apiFetch, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	const removeContent = useCallback(
 		async (id: string) => {
-			if (!isAdmin) return;
 			if (!confirm("Remove this content piece?")) return;
-			const res = await apiFetch(`/api/plan/${planId}/content/${id}`, { method: "DELETE" });
+			const res = await fetch(`/api/plan/${planId}/content/${id}`, { method: "DELETE" });
 			if (!res.ok) return;
 			setDetail((prev) =>
 				prev ? { ...prev, content: prev.content.filter((c) => c.id !== id) } : prev,
 			);
 		},
-		[apiFetch, isAdmin, planId, setDetail],
+		[planId, setDetail],
 	);
 
 	// ---- Recommendations (derived) -------------------------------------
@@ -618,29 +449,16 @@ function PlanView(props: PlanViewProps) {
 		return `$${(plan.daily_budget * days).toLocaleString()}`;
 	}, [plan.budget_type, plan.daily_budget, plan.end_date]);
 
-	// ---- Layout ---------------------------------------------------------
 	const estimates = ensureEstimates(plan.estimates);
 
 	return (
 		<div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
 			<div className="max-w-6xl mx-auto space-y-8">
-				<HeaderBar
-					planId={planId}
-					isAdmin={isAdmin}
-					adminClaimed={Boolean(plan.admin_user_id)}
-					token={token}
-					viewerEmail={viewerEmail}
-					authStatus={authStatus}
-					authError={authError}
-					onLogin={onLogin}
-					onLogout={onLogout}
-					onRefresh={() => refreshDetail()}
-				/>
+				<HeaderBar planId={planId} onRefresh={() => refreshDetail()} />
 
 				<div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 					<div className="lg:col-span-2 space-y-8">
 						<ExecutiveSummary
-							isAdmin={isAdmin}
 							intro={plan.intro}
 							onSaveIntro={(v) => patchPlan({ intro: v })}
 							planComments={detail.planComments}
@@ -650,14 +468,12 @@ function PlanView(props: PlanViewProps) {
 						/>
 
 						<ObjectiveBudget
-							isAdmin={isAdmin}
 							plan={plan}
 							onPatch={patchPlan}
 							totalBudgetLabel={totalBudgetLabel}
 						/>
 
 						<ProjectedOutcomes
-							isAdmin={isAdmin}
 							estimates={estimates}
 							dailyBudget={plan.daily_budget}
 							onPatch={(next) => patchPlan({ estimates: next })}
@@ -670,7 +486,6 @@ function PlanView(props: PlanViewProps) {
 				</div>
 
 				<PlatformsSection
-					isAdmin={isAdmin}
 					detail={detail}
 					objective={plan.objective}
 					dailyBudget={plan.daily_budget}
@@ -682,38 +497,16 @@ function PlanView(props: PlanViewProps) {
 					removeContent={removeContent}
 					submitContentComment={submitContentComment}
 				/>
-
-				<CanvasSection
-					isAdmin={isAdmin}
-					template={detail.template}
-					token={token}
-					currentTemplateId={plan.shotstack_template_id}
-					onChooseTemplate={(id) => patchPlan({ shotstack_template_id: id })}
-				/>
 			</div>
 		</div>
 	);
 }
 
 // ---------------------------------------------------------------------------
-// Header / login bar
+// Header
 // ---------------------------------------------------------------------------
 
-interface HeaderBarProps {
-	planId: string;
-	isAdmin: boolean;
-	adminClaimed: boolean;
-	token: StoredToken | null;
-	viewerEmail: string | null;
-	authStatus: "idle" | "loading" | "error";
-	authError: string | null;
-	onLogin: () => void;
-	onLogout: () => void;
-	onRefresh: () => void;
-}
-
-function HeaderBar(props: HeaderBarProps) {
-	const { planId, isAdmin, adminClaimed, token, viewerEmail, authStatus, authError, onLogin, onLogout } = props;
+function HeaderBar({ planId, onRefresh }: { planId: string; onRefresh: () => void }) {
 	return (
 		<div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
 			<div className="flex items-center gap-3">
@@ -724,51 +517,26 @@ function HeaderBar(props: HeaderBarProps) {
 				</div>
 			</div>
 			<div className="flex items-center gap-3">
-				{isAdmin ? (
-					<span className="text-xs uppercase tracking-wider font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full">
-						Admin mode
-					</span>
-				) : adminClaimed ? (
-					<span className="text-xs text-slate-500">View / contribute mode</span>
-				) : (
-					<span className="text-xs text-amber-700 bg-amber-100 px-3 py-1 rounded-full">
-						Unclaimed plan
-					</span>
-				)}
-				{token ? (
-					<>
-						<span className="text-xs text-slate-500 hidden md:inline">{viewerEmail}</span>
-						<button
-							type="button"
-							onClick={onLogout}
-							className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg"
-						>
-							<LogOut className="w-3 h-3" /> Sign out
-						</button>
-					</>
-				) : (
-					<button
-						type="button"
-						onClick={onLogin}
-						disabled={authStatus === "loading"}
-						className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg px-4 py-2"
-					>
-						<LogIn className="w-4 h-4" />{" "}
-						{authStatus === "loading" ? "Signing in…" : "Login with Whop"}
-					</button>
-				)}
-				{authError ? <span className="text-xs text-red-500">{authError}</span> : null}
+				<span className="text-xs text-slate-500">
+					Open document — anyone with the link can edit, comment, and approve.
+				</span>
+				<button
+					type="button"
+					onClick={onRefresh}
+					className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 px-3 py-1.5 rounded-lg"
+				>
+					Refresh
+				</button>
 			</div>
 		</div>
 	);
 }
 
 // ---------------------------------------------------------------------------
-// Section: Executive Summary + plan-level comments
+// Executive summary + plan-level comments
 // ---------------------------------------------------------------------------
 
 interface ExecutiveSummaryProps {
-	isAdmin: boolean;
 	intro: string;
 	onSaveIntro: (v: string) => Promise<void>;
 	planComments: PromotionPlanCommentRow[];
@@ -778,7 +546,7 @@ interface ExecutiveSummaryProps {
 }
 
 function ExecutiveSummary(props: ExecutiveSummaryProps) {
-	const { isAdmin, intro, onSaveIntro, planComments, draft, setDraft, onSubmitComment } = props;
+	const { intro, onSaveIntro, planComments, draft, setDraft, onSubmitComment } = props;
 	const [localIntro, setLocalIntro] = useState(intro);
 	useEffect(() => setLocalIntro(intro), [intro]);
 
@@ -790,21 +558,15 @@ function ExecutiveSummary(props: ExecutiveSummaryProps) {
 			<div className="space-y-6">
 				<div>
 					<label className="block text-sm font-semibold text-slate-700 mb-1">Our Recommendation</label>
-					{isAdmin ? (
-						<textarea
-							className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
-							rows={3}
-							value={localIntro}
-							onChange={(e) => setLocalIntro(e.target.value)}
-							onBlur={() => {
-								if (localIntro !== intro) onSaveIntro(localIntro);
-							}}
-						/>
-					) : (
-						<p className="p-3 border border-slate-100 bg-slate-50 rounded-lg text-sm text-slate-700 whitespace-pre-wrap">
-							{intro || <span className="italic text-slate-400">No recommendation yet.</span>}
-						</p>
-					)}
+					<textarea
+						className="w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-sm"
+						rows={3}
+						value={localIntro}
+						onChange={(e) => setLocalIntro(e.target.value)}
+						onBlur={() => {
+							if (localIntro !== intro) onSaveIntro(localIntro);
+						}}
+					/>
 				</div>
 				<div>
 					<label className="block text-sm font-semibold text-slate-700 mb-3 border-b pb-2">
@@ -860,17 +622,16 @@ function CommentBubble({
 }
 
 // ---------------------------------------------------------------------------
-// Section: Objective + budget
+// Objective + budget
 // ---------------------------------------------------------------------------
 
 interface ObjectiveBudgetProps {
-	isAdmin: boolean;
 	plan: PromotionPlanRow;
 	onPatch: (patch: Partial<PromotionPlanRow>) => Promise<void>;
 	totalBudgetLabel: string;
 }
 
-function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: ObjectiveBudgetProps) {
+function ObjectiveBudget({ plan, onPatch, totalBudgetLabel }: ObjectiveBudgetProps) {
 	const [localObjDesc, setLocalObjDesc] = useState(plan.objective_description);
 	const [localBudget, setLocalBudget] = useState<number>(plan.daily_budget);
 	useEffect(() => setLocalObjDesc(plan.objective_description), [plan.objective_description]);
@@ -886,10 +647,9 @@ function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: Objective
 					<div>
 						<label className="block text-sm font-semibold text-slate-700 mb-1">Primary Objective</label>
 						<select
-							className="w-full p-2.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-50 disabled:text-slate-500"
+							className="w-full p-2.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
 							value={plan.objective}
 							onChange={(e) => onPatch({ objective: e.target.value })}
-							disabled={!isAdmin}
 						>
 							{ALLOWED_OBJECTIVES.map((obj) => (
 								<option key={obj} value={obj}>
@@ -901,7 +661,7 @@ function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: Objective
 					<div>
 						<label className="block text-sm font-semibold text-slate-700 mb-1">Objective Context</label>
 						<textarea
-							className="w-full p-3 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm disabled:bg-slate-50"
+							className="w-full p-3 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
 							rows={3}
 							value={localObjDesc}
 							onChange={(e) => setLocalObjDesc(e.target.value)}
@@ -910,7 +670,6 @@ function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: Objective
 									onPatch({ objective_description: localObjDesc });
 								}
 							}}
-							disabled={!isAdmin}
 						/>
 					</div>
 				</div>
@@ -971,12 +730,6 @@ function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: Objective
 					<div className="pt-2 border-t border-slate-200">
 						<p className="text-sm text-slate-500">Total Projected Spend:</p>
 						<p className="text-lg font-bold text-emerald-600">{totalBudgetLabel}</p>
-						{!isAdmin && (
-							<p className="text-[10px] text-slate-400 mt-1">
-								Anyone with the link can adjust the budget — only the plan admin can rewrite the
-								objective.
-							</p>
-						)}
 					</div>
 				</div>
 			</div>
@@ -985,17 +738,16 @@ function ObjectiveBudget({ isAdmin, plan, onPatch, totalBudgetLabel }: Objective
 }
 
 // ---------------------------------------------------------------------------
-// Section: Projected outcomes
+// Projected outcomes
 // ---------------------------------------------------------------------------
 
 interface ProjectedOutcomesProps {
-	isAdmin: boolean;
 	estimates: Record<string, number>;
 	dailyBudget: number;
 	onPatch: (next: Record<string, number>) => Promise<void>;
 }
 
-function ProjectedOutcomes({ isAdmin, estimates, dailyBudget, onPatch }: ProjectedOutcomesProps) {
+function ProjectedOutcomes({ estimates, dailyBudget, onPatch }: ProjectedOutcomesProps) {
 	const [local, setLocal] = useState(estimates);
 	useEffect(() => setLocal(estimates), [estimates]);
 	const update = (key: string, value: number) => setLocal((prev) => ({ ...prev, [key]: value }));
@@ -1010,7 +762,7 @@ function ProjectedOutcomes({ isAdmin, estimates, dailyBudget, onPatch }: Project
 			</h2>
 			<p className="text-xs text-slate-500 mb-4 leading-relaxed">
 				These estimates are based on your selected budget of ${dailyBudget}/day and current
-				objective. {isAdmin ? "Adjust freely — saved on blur." : "Only the plan admin can edit these."}
+				objective. Adjust freely — saved on blur.
 			</p>
 			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
 				{Object.entries(local).map(([key, value]) => (
@@ -1023,11 +775,10 @@ function ProjectedOutcomes({ isAdmin, estimates, dailyBudget, onPatch }: Project
 						</span>
 						<input
 							type="number"
-							className="w-full p-1 text-lg font-bold text-slate-800 bg-transparent border-b-2 border-transparent focus:border-emerald-500 outline-none transition-all group-hover:bg-white rounded disabled:cursor-not-allowed"
+							className="w-full p-1 text-lg font-bold text-slate-800 bg-transparent border-b-2 border-transparent focus:border-emerald-500 outline-none transition-all group-hover:bg-white rounded"
 							value={value}
 							onChange={(e) => update(key, Number(e.target.value) || 0)}
 							onBlur={flush}
-							disabled={!isAdmin}
 						/>
 					</div>
 				))}
@@ -1037,7 +788,7 @@ function ProjectedOutcomes({ isAdmin, estimates, dailyBudget, onPatch }: Project
 }
 
 // ---------------------------------------------------------------------------
-// Section: Recommendations
+// Recommendations
 // ---------------------------------------------------------------------------
 
 function RecommendationsPanel({
@@ -1080,11 +831,10 @@ function RecommendationsPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Section: Platforms / Profiles / Content + previews
+// Platforms / Profiles / Content + previews
 // ---------------------------------------------------------------------------
 
 interface PlatformsSectionProps {
-	isAdmin: boolean;
 	detail: PromotionPlanDetail;
 	objective: string;
 	dailyBudget: number;
@@ -1099,7 +849,6 @@ interface PlatformsSectionProps {
 
 function PlatformsSection(props: PlatformsSectionProps) {
 	const {
-		isAdmin,
 		detail,
 		objective,
 		dailyBudget,
@@ -1130,8 +879,7 @@ function PlatformsSection(props: PlatformsSectionProps) {
 						<Smartphone className="w-6 h-6 text-emerald-500" /> Platforms, Profiles & Previews
 					</h2>
 					<p className="text-sm text-slate-500 mt-1">
-						Anyone with the link can add profiles, content, comments, approve / reject ads, and tweak
-						budgets. Only the plan admin can rename profiles or remove items.
+						Anyone with the link can add profiles, edit content, leave notes, and approve / reject.
 					</p>
 				</div>
 				<AddPlatformDropdown onAdd={addPlatform} />
@@ -1148,7 +896,6 @@ function PlatformsSection(props: PlatformsSectionProps) {
 							platform={platform}
 							index={idx}
 							content={contentByPlatform.get(platform.id) ?? []}
-							isAdmin={isAdmin}
 							objective={objective}
 							dailyBudget={dailyBudget}
 							onRemove={() => removePlatform(platform.id)}
@@ -1215,7 +962,6 @@ interface PlatformCardProps {
 	platform: PromotionPlanPlatformRow;
 	index: number;
 	content: PromotionPlanContentRow[];
-	isAdmin: boolean;
 	objective: string;
 	dailyBudget: number;
 	onRemove: () => void;
@@ -1232,7 +978,6 @@ function PlatformCard(props: PlatformCardProps) {
 		platform,
 		index,
 		content,
-		isAdmin,
 		objective,
 		dailyBudget,
 		onRemove,
@@ -1264,13 +1009,12 @@ function PlatformCard(props: PlatformCardProps) {
 							<label className="text-xs text-slate-500 font-medium">Followers:</label>
 							<input
 								type="number"
-								className="w-24 p-1 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-emerald-500 focus:ring-0 disabled:opacity-60"
+								className="w-24 p-1 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-emerald-500 focus:ring-0"
 								value={followers}
 								onChange={(e) => setFollowers(Number(e.target.value) || 0)}
 								onBlur={() => {
 									if (followers !== platform.followers) onUpdate({ followers });
 								}}
-								disabled={!isAdmin}
 							/>
 						</div>
 					</div>
@@ -1283,16 +1027,14 @@ function PlatformCard(props: PlatformCardProps) {
 					>
 						<Plus className="w-4 h-4" /> Add Content Piece
 					</button>
-					{isAdmin ? (
-						<button
-							type="button"
-							onClick={onRemove}
-							className="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
-							aria-label="Remove platform"
-						>
-							<Trash2 className="w-5 h-5" />
-						</button>
-					) : null}
+					<button
+						type="button"
+						onClick={onRemove}
+						className="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
+						aria-label="Remove platform"
+					>
+						<Trash2 className="w-5 h-5" />
+					</button>
 				</div>
 			</div>
 
@@ -1304,7 +1046,6 @@ function PlatformCard(props: PlatformCardProps) {
 						index={cIdx}
 						platformName={platform.name}
 						objective={objective}
-						isAdmin={isAdmin}
 						dailyBudget={dailyBudget}
 						commentBucket={commentBuckets[c.id] ?? { post: [], ad: [] }}
 						onUpdate={(patch) => onUpdateContent(c.id, patch)}
@@ -1324,12 +1065,144 @@ function PlatformCard(props: PlatformCardProps) {
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Content payload editor (title, body, media URL, CTA)
+// ---------------------------------------------------------------------------
+
+interface ContentPayloadEditorProps {
+	content: PromotionPlanContentRow;
+	onUpdate: (patch: Partial<PromotionPlanContentRow>) => Promise<void>;
+}
+
+function ContentPayloadEditor({ content, onUpdate }: ContentPayloadEditorProps) {
+	const [title, setTitle] = useState(content.title);
+	const [body, setBody] = useState(content.body);
+	const [mediaUrl, setMediaUrl] = useState(content.media_url);
+	const [ctaLabel, setCtaLabel] = useState(content.cta_label);
+	const [ctaUrl, setCtaUrl] = useState(content.cta_url);
+	useEffect(() => setTitle(content.title), [content.title]);
+	useEffect(() => setBody(content.body), [content.body]);
+	useEffect(() => setMediaUrl(content.media_url), [content.media_url]);
+	useEffect(() => setCtaLabel(content.cta_label), [content.cta_label]);
+	useEffect(() => setCtaUrl(content.cta_url), [content.cta_url]);
+
+	return (
+		<div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+			<div>
+				<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+					Title / Hook
+				</label>
+				<input
+					type="text"
+					placeholder="e.g. Stop wasting hours on social posts"
+					value={title}
+					onChange={(e) => setTitle(e.target.value)}
+					onBlur={() => {
+						if (title !== content.title) onUpdate({ title });
+					}}
+					className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+				/>
+			</div>
+			<div>
+				<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+					Description / Body Copy
+				</label>
+				<textarea
+					placeholder="Caption, voiceover script, post body…"
+					rows={3}
+					value={body}
+					onChange={(e) => setBody(e.target.value)}
+					onBlur={() => {
+						if (body !== content.body) onUpdate({ body });
+					}}
+					className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+				/>
+			</div>
+
+			<div className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-3">
+				<div>
+					<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+						Media URL
+					</label>
+					<input
+						type="url"
+						placeholder="https://… (image, .mp4 video, or YouTube/Vimeo link)"
+						value={mediaUrl}
+						onChange={(e) => setMediaUrl(e.target.value)}
+						onBlur={() => {
+							// Sending just `media_url` lets the server auto-derive
+							// `media_kind` from the URL; the user can still
+							// override via the dropdown afterwards.
+							if (mediaUrl !== content.media_url) onUpdate({ media_url: mediaUrl });
+						}}
+						className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+					/>
+				</div>
+				<div>
+					<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+						Type
+					</label>
+					<select
+						value={content.media_kind}
+						onChange={(e) => onUpdate({ media_kind: e.target.value as MediaKind })}
+						className="w-full p-2 border border-slate-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+					>
+						{ALLOWED_MEDIA_KINDS.map((k) => (
+							<option key={k} value={k}>
+								{k === "none" ? "no media" : k}
+							</option>
+						))}
+					</select>
+				</div>
+			</div>
+			{mediaUrl ? (
+				<p className="text-[10px] text-slate-400">
+					Auto-detected as <strong>{detectMediaKind(mediaUrl)}</strong> on save — override with the
+					dropdown if wrong.
+				</p>
+			) : null}
+
+			<div className="grid grid-cols-1 md:grid-cols-[140px_1fr] gap-3">
+				<div>
+					<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+						CTA Label
+					</label>
+					<input
+						type="text"
+						placeholder="Learn More"
+						value={ctaLabel}
+						onChange={(e) => setCtaLabel(e.target.value)}
+						onBlur={() => {
+							if (ctaLabel !== content.cta_label) onUpdate({ cta_label: ctaLabel });
+						}}
+						className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+					/>
+				</div>
+				<div>
+					<label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+						CTA URL
+					</label>
+					<input
+						type="url"
+						placeholder="https://yourbrand.com/landing"
+						value={ctaUrl}
+						onChange={(e) => setCtaUrl(e.target.value)}
+						onBlur={() => {
+							if (ctaUrl !== content.cta_url) onUpdate({ cta_url: ctaUrl });
+						}}
+						className="w-full p-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+					/>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 interface ContentRowProps {
 	content: PromotionPlanContentRow;
 	index: number;
 	platformName: string;
 	objective: string;
-	isAdmin: boolean;
 	dailyBudget: number;
 	commentBucket: { post: PromotionPlanCommentRow[]; ad: PromotionPlanCommentRow[] };
 	onUpdate: (patch: Partial<PromotionPlanContentRow>) => Promise<void>;
@@ -1343,7 +1216,6 @@ function ContentRow(props: ContentRowProps) {
 		index,
 		platformName,
 		objective,
-		isAdmin,
 		dailyBudget,
 		commentBucket,
 		onUpdate,
@@ -1367,8 +1239,8 @@ function ContentRow(props: ContentRowProps) {
 		<div className="p-6 flex flex-col xl:flex-row gap-8 items-start bg-slate-50/50">
 			<div className="w-full xl:w-auto shrink-0 flex justify-center">
 				<div className="relative group">
-					<PlatformPreview platformName={platformName} objective={objective} />
-					<div className="absolute top-2 left-2 bg-slate-800/80 backdrop-blur text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg">
+					<PlatformPreview platformName={platformName} objective={objective} content={c} />
+					<div className="absolute top-2 left-2 bg-slate-800/80 backdrop-blur text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg z-30">
 						Content Item #{index + 1}
 					</div>
 				</div>
@@ -1376,17 +1248,21 @@ function ContentRow(props: ContentRowProps) {
 
 			<div className="flex-1 w-full space-y-6">
 				<div className="flex justify-between items-center border-b border-slate-200 pb-3">
-					<h3 className="font-bold text-slate-800">Distribution Strategy</h3>
-					{isAdmin ? (
-						<button
-							type="button"
-							onClick={onRemove}
-							className="text-slate-400 hover:text-red-500 transition-colors text-xs flex items-center gap-1"
-						>
-							<Trash2 className="w-3 h-3" /> Remove Item
-						</button>
-					) : null}
+					<h3 className="font-bold text-slate-800">Content</h3>
+					<button
+						type="button"
+						onClick={onRemove}
+						className="text-slate-400 hover:text-red-500 transition-colors text-xs flex items-center gap-1"
+					>
+						<Trash2 className="w-3 h-3" /> Remove Item
+					</button>
 				</div>
+
+				<ContentPayloadEditor content={c} onUpdate={onUpdate} />
+
+				<h3 className="font-bold text-slate-800 border-b border-slate-200 pb-3">
+					Distribution Strategy
+				</h3>
 
 				<div className="flex flex-wrap gap-4">
 					<label
@@ -1559,10 +1435,6 @@ interface ReviewBlockProps {
 	title: string;
 	accent: "emerald" | "blue";
 	status: "pending" | "approved" | "rejected";
-	/**
-	 * Anyone with the URL may approve/reject — the API is public for
-	 * status transitions. The callback is therefore always non-null.
-	 */
 	onSetStatus: (s: "approved" | "rejected") => void;
 	comments: PromotionPlanCommentRow[];
 	draft: string;
@@ -1652,25 +1524,33 @@ function ReviewBlock(props: ReviewBlockProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Mock platform preview (verbatim from the user's React)
+// Mock platform preview
 // ---------------------------------------------------------------------------
 
-function PlatformPreview({ platformName, objective }: { platformName: string; objective: string }) {
+interface PlatformPreviewProps {
+	platformName: string;
+	objective: string;
+	content: PromotionPlanContentRow;
+}
+
+function PlatformPreview({ platformName, objective, content }: PlatformPreviewProps) {
 	const platInfo = PLATFORMS.find((p) => p.name === platformName);
 	if (!platInfo) return null;
 	const Icon = platInfo.icon;
+
+	const titleFallback = content.title || `Stop wasting hours on ${platformName}`;
+	const bodyFallback =
+		content.body ||
+		`Struggling to manage your ${platformName} presence? Our automation drives ${objective.toLowerCase()} efficiently.`;
+	const ctaLabel = content.cta_label || "Learn More";
 
 	if (platInfo.type === "vertical") {
 		return (
 			<div className="w-[280px] bg-slate-900 rounded-[2.5rem] p-2 shadow-xl border-[6px] border-slate-800 relative overflow-hidden h-[500px] flex flex-col mx-auto shrink-0">
 				<div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-6 bg-slate-800 rounded-b-2xl z-20" />
 				<div className="relative flex-grow bg-slate-800 rounded-[2rem] overflow-hidden">
-					<img
-						src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=400&q=80"
-						alt="Video preview"
-						className="absolute inset-0 w-full h-full object-cover opacity-60"
-					/>
-					<div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent z-10" />
+					<MediaSurface content={content} aspect="vertical" />
+					<div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent z-10 pointer-events-none" />
 					<div className="absolute top-8 left-4 z-20 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-2">
 						<Icon className="w-4 h-4 text-white" />
 						<span className="text-xs font-semibold text-white">{platformName}</span>
@@ -1680,9 +1560,18 @@ function PlatformPreview({ platformName, objective }: { platformName: string; ob
 							<div className="w-8 h-8 rounded-full bg-emerald-500 border-2 border-white" />
 							<span className="text-sm font-bold text-white">@yourbrand</span>
 						</div>
-						<p className="text-xs text-slate-200 line-clamp-2">
-							Check out our latest update — driving {objective.toLowerCase()} 🚀
-						</p>
+						<p className="text-sm font-bold text-white line-clamp-2">{titleFallback}</p>
+						<p className="text-xs text-slate-200 line-clamp-3">{bodyFallback}</p>
+						{content.cta_url ? (
+							<a
+								href={content.cta_url}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-block mt-1 bg-white text-slate-900 text-[10px] font-bold px-2 py-1 rounded-full"
+							>
+								{ctaLabel}
+							</a>
+						) : null}
 					</div>
 				</div>
 			</div>
@@ -1703,309 +1592,97 @@ function PlatformPreview({ platformName, objective }: { platformName: string; ob
 				</div>
 				<Icon className="w-5 h-5 text-slate-300" />
 			</div>
-			<p className="text-sm text-slate-700 mb-3 leading-relaxed">
-				Struggling to manage your {platformName} presence? Our automation drives{" "}
-				{objective.toLowerCase()} efficiently.
-			</p>
+			<p className="text-sm font-bold text-slate-900 mb-1 leading-tight">{titleFallback}</p>
+			<p className="text-sm text-slate-700 mb-3 leading-relaxed line-clamp-3">{bodyFallback}</p>
 			<div className="w-full h-40 bg-slate-100 rounded-lg overflow-hidden mb-3 relative">
-				<img
-					src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&q=80"
-					alt="Feed"
-					className="w-full h-full object-cover"
-				/>
-				<div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-white font-semibold">
-					Learn More
-				</div>
+				<MediaSurface content={content} aspect="feed" />
+				{content.cta_url ? (
+					<a
+						href={content.cta_url}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 px-2 py-1 rounded text-[10px] text-white font-semibold"
+					>
+						{ctaLabel}
+					</a>
+				) : (
+					<div className="absolute bottom-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-white font-semibold">
+						{ctaLabel}
+					</div>
+				)}
 			</div>
 		</div>
 	);
 }
 
-// ---------------------------------------------------------------------------
-// Section: Fabric.js canvas + ShotStack template loader
-// ---------------------------------------------------------------------------
-
-interface CanvasSectionProps {
-	isAdmin: boolean;
-	template: PromotionPlanDetail["template"];
-	currentTemplateId: string | null;
-	token: StoredToken | null;
-	onChooseTemplate: (id: string | null) => Promise<void>;
-}
-
-interface FabricLike {
-	Canvas: new (id: string, opts?: Record<string, unknown>) => FabricCanvasLike;
-	Text: new (text: string, opts?: Record<string, unknown>) => unknown;
-	Rect: new (opts?: Record<string, unknown>) => unknown;
-	Image: { fromURL: (url: string, cb: (img: unknown) => void, opts?: Record<string, unknown>) => void };
-}
-
-interface FabricCanvasLike {
-	add: (obj: unknown) => void;
-	clear: () => void;
-	dispose: () => void;
-	renderAll: () => void;
-	toDataURL: (opts: Record<string, unknown>) => string;
-	setBackgroundColor: (color: string, cb: () => void) => void;
-}
-
-declare global {
-	interface Window {
-		fabric?: FabricLike;
-	}
-}
-
-function CanvasSection(props: CanvasSectionProps) {
-	const { isAdmin, template, currentTemplateId, token, onChooseTemplate } = props;
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const fabricRef = useRef<FabricCanvasLike | null>(null);
-	const [fabricReady, setFabricReady] = useState(false);
-	const [templates, setTemplates] = useState<{ id: string; name: string }[] | null>(null);
-
-	// Load Fabric.js from CDN once.
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		if (window.fabric) {
-			setFabricReady(true);
-			return;
-		}
-		const existing = document.querySelector<HTMLScriptElement>(`script[src="${FABRIC_CDN}"]`);
-		if (existing) {
-			existing.addEventListener("load", () => setFabricReady(true), { once: true });
-			return;
-		}
-		const script = document.createElement("script");
-		script.src = FABRIC_CDN;
-		script.async = true;
-		script.onload = () => setFabricReady(true);
-		document.body.appendChild(script);
-	}, []);
-
-	// Initialise + redraw whenever template changes.
-	useEffect(() => {
-		if (!fabricReady || !canvasRef.current || !window.fabric) return;
-		const fabric = window.fabric;
-		if (fabricRef.current) {
-			fabricRef.current.dispose();
-			fabricRef.current = null;
-		}
-		const canvas = new fabric.Canvas(canvasRef.current.id, {
-			width: 800,
-			height: 400,
-			backgroundColor: "#f8fafc",
-		});
-		fabricRef.current = canvas;
-		drawTemplate(fabric, canvas, template);
-		return () => {
-			canvas.dispose();
-			fabricRef.current = null;
-		};
-	}, [fabricReady, template]);
-
-	// Admin-only template list (uses the existing /api/extension/shotstack-templates).
-	useEffect(() => {
-		if (!isAdmin || !token) {
-			setTemplates(null);
-			return;
-		}
-		let cancelled = false;
-		(async () => {
-			try {
-				const res = await fetch("/api/extension/shotstack-templates", {
-					headers: authHeader(token),
-				});
-				if (!res.ok) return;
-				const data = (await res.json()) as { id: string; name: string }[];
-				if (!cancelled) setTemplates(data);
-			} catch (err) {
-				console.error("[plan] failed to load templates:", err);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [isAdmin, token]);
-
-	const downloadCanvas = () => {
-		if (!fabricRef.current) return;
-		const dataURL = fabricRef.current.toDataURL({ format: "png", quality: 1 });
-		const link = document.createElement("a");
-		link.download = "workspace.png";
-		link.href = dataURL;
-		document.body.appendChild(link);
-		link.click();
-		document.body.removeChild(link);
-	};
-
-	return (
-		<section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-			<div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-				<div>
-					<h2 className="text-xl font-bold text-slate-800">Visual Workspace</h2>
-					<p className="text-sm text-slate-500">
-						{template
-							? `Loaded ShotStack template: ${template.name}`
-							: "No template attached. Use this canvas for brainstorming or campaign diagrams."}
-					</p>
-				</div>
-				<div className="flex items-center gap-3">
-					{isAdmin ? (
-						<TemplatePicker
-							templates={templates}
-							currentTemplateId={currentTemplateId}
-							onChange={onChooseTemplate}
-						/>
-					) : null}
-					<button
-						type="button"
-						onClick={downloadCanvas}
-						className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm"
-					>
-						<Download className="w-4 h-4" /> Download
-					</button>
-				</div>
-			</div>
-			<div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 flex justify-center p-4">
-				<div className="shadow-md bg-white">
-					<canvas id="plan-fabric-canvas" ref={canvasRef} />
-				</div>
-			</div>
-			{!fabricReady ? (
-				<p className="text-xs text-slate-400 mt-2 text-center">Loading Fabric.js…</p>
-			) : null}
-		</section>
-	);
-}
-
-function TemplatePicker({
-	templates,
-	currentTemplateId,
-	onChange,
-}: {
-	templates: { id: string; name: string }[] | null;
-	currentTemplateId: string | null;
-	onChange: (id: string | null) => Promise<void>;
-}) {
-	if (!templates) {
-		return <span className="text-xs text-slate-400">Loading templates…</span>;
-	}
-	if (templates.length === 0) {
-		return <span className="text-xs text-slate-400">No ShotStack templates yet.</span>;
-	}
-	return (
-		<select
-			className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
-			value={currentTemplateId ?? ""}
-			onChange={(e) => onChange(e.target.value || null)}
-		>
-			<option value="">— No template —</option>
-			{templates.map((t) => (
-				<option key={t.id} value={t.id}>
-					{t.name}
-				</option>
-			))}
-		</select>
-	);
-}
-
 /**
- * Best-effort render of a ShotStack edit JSON onto a Fabric.js canvas:
- * we walk the timeline and map any text or image clip that is visible at
- * t = 0 to a Fabric.Text or Fabric.Image. This is intentionally
- * lightweight — full ShotStack playback isn't possible on a 2-D canvas —
- * but it gives the admin & viewers a recognisable preview of the chosen
- * template.
+ * Renders the media payload for a content piece inside an existing
+ * preview container (the parent supplies width / height / positioning).
+ * Falls back to a tasteful Unsplash placeholder when no media URL is
+ * set so the preview still looks like a real post.
  */
-function drawTemplate(
-	fabric: FabricLike,
-	canvas: FabricCanvasLike,
-	template: PromotionPlanDetail["template"],
-) {
-	canvas.clear();
-	if (!template) {
-		canvas.add(
-			new fabric.Text("Visual Workspace (Fabric.js initialised)", {
-				left: 50,
-				top: 50,
-				fill: "#94a3b8",
-				fontSize: 24,
-				fontFamily: "sans-serif",
-			}),
+function MediaSurface({
+	content,
+	aspect,
+}: {
+	content: PromotionPlanContentRow;
+	aspect: "vertical" | "feed";
+}) {
+	const placeholder =
+		aspect === "vertical"
+			? "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=400&q=80"
+			: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&q=80";
+	const opacity = aspect === "vertical" ? "opacity-60" : "";
+
+	if (!content.media_url) {
+		return (
+			<img
+				src={placeholder}
+				alt="Preview placeholder"
+				className={`absolute inset-0 w-full h-full object-cover ${opacity}`}
+			/>
 		);
-		canvas.renderAll();
-		return;
 	}
 
-	canvas.add(
-		new fabric.Text(template.name, {
-			left: 20,
-			top: 16,
-			fill: "#0f172a",
-			fontSize: 16,
-			fontFamily: "sans-serif",
-			fontWeight: "bold",
-		}),
+	if (content.media_kind === "video") {
+		return (
+			<video
+				src={content.media_url}
+				controls
+				playsInline
+				preload="metadata"
+				className={`absolute inset-0 w-full h-full object-cover bg-black ${opacity}`}
+			>
+				<track kind="captions" />
+			</video>
+		);
+	}
+
+	if (content.media_kind === "embed") {
+		return (
+			<iframe
+				src={toEmbedSrc(content.media_url)}
+				title="Media preview"
+				allow="autoplay; encrypted-media; picture-in-picture"
+				allowFullScreen
+				className="absolute inset-0 w-full h-full"
+			/>
+		);
+	}
+
+	// 'image' or 'none' (with a URL) — render as image.
+	return (
+		<img
+			src={content.media_url}
+			alt={content.title || "Content preview"}
+			className={`absolute inset-0 w-full h-full object-cover ${opacity}`}
+		/>
 	);
-
-	type ShotstackClip = {
-		start?: number;
-		length?: number;
-		asset?: {
-			type?: string;
-			text?: string;
-			src?: string;
-			html?: string;
-			font?: { color?: string; size?: number; family?: string };
-		};
-		position?: string;
-	};
-	const tracks =
-		(template.edit as { timeline?: { tracks?: { clips?: ShotstackClip[] }[] } })?.timeline?.tracks ??
-		[];
-	let yOffset = 60;
-	for (const track of tracks) {
-		for (const clip of track.clips ?? []) {
-			const start = clip.start ?? 0;
-			const length = clip.length ?? Number.POSITIVE_INFINITY;
-			if (start > 0 || start + length <= 0) continue;
-			const asset = clip.asset ?? {};
-			if (asset.type === "text" && typeof asset.text === "string") {
-				canvas.add(
-					new fabric.Text(asset.text, {
-						left: 40,
-						top: yOffset,
-						fill: asset.font?.color ?? "#0f172a",
-						fontSize: asset.font?.size ?? 22,
-						fontFamily: asset.font?.family ?? "sans-serif",
-					}),
-				);
-				yOffset += (asset.font?.size ?? 22) + 16;
-			} else if (asset.type === "image" && typeof asset.src === "string") {
-				fabric.Image.fromURL(
-					asset.src,
-					(img) => {
-						canvas.add(img);
-						canvas.renderAll();
-					},
-					{ left: 40, top: yOffset, scaleX: 0.3, scaleY: 0.3, crossOrigin: "anonymous" },
-				);
-				yOffset += 120;
-			} else if (asset.type === "html" && typeof asset.html === "string") {
-				const stripped = asset.html.replace(/<[^>]+>/g, "").slice(0, 120);
-				if (stripped) {
-					canvas.add(
-						new fabric.Text(stripped, {
-							left: 40,
-							top: yOffset,
-							fill: "#334155",
-							fontSize: 18,
-							fontFamily: "sans-serif",
-						}),
-					);
-					yOffset += 30;
-				}
-			}
-		}
-	}
-	canvas.renderAll();
 }
+
+// NOTE: The Fabric.js + ShotStack visual workspace was removed for now.
+// The `shotstack_template_id` column on `promotion_plans` and the
+// `/api/plan/templates` endpoint are intentionally kept so the canvas
+// can be re-introduced later without a data migration. The original
+// `CanvasSection` / `TemplatePicker` / `drawTemplate` block lives in
+// git history if you need to revive it.

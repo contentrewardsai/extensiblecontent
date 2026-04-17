@@ -35,6 +35,15 @@ export type ReviewStatus = (typeof ALLOWED_REVIEW_STATUSES)[number];
 export const ALLOWED_AD_BUDGET_MODES = ["dynamic", "fixed"] as const;
 export type AdBudgetMode = (typeof ALLOWED_AD_BUDGET_MODES)[number];
 
+/**
+ * Mirror of the `media_kind` CHECK constraint on `promotion_plan_content`.
+ * `'embed'` is reserved for URLs the client converts to an iframe src
+ * (YouTube / Vimeo / etc.); `'video'` is for direct video file URLs
+ * (.mp4 / .webm / .mov) rendered with a `<video>` tag.
+ */
+export const ALLOWED_MEDIA_KINDS = ["none", "image", "video", "embed"] as const;
+export type MediaKind = (typeof ALLOWED_MEDIA_KINDS)[number];
+
 export const COMMENT_KINDS = ["plan", "post", "ad"] as const;
 export type CommentKind = (typeof COMMENT_KINDS)[number];
 
@@ -98,6 +107,36 @@ export function isValidAdBudgetMode(value: unknown): value is AdBudgetMode {
 	);
 }
 
+export function isValidMediaKind(value: unknown): value is MediaKind {
+	return typeof value === "string" && (ALLOWED_MEDIA_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * Heuristic auto-detection of `media_kind` from a raw URL string. Used
+ * by the API when a caller supplies `media_url` without an explicit
+ * `media_kind`, and exported so the client UI can show a sensible
+ * default in the picker as the user types.
+ */
+export function detectMediaKind(rawUrl: string): MediaKind {
+	const url = rawUrl.trim();
+	if (!url) return "none";
+	const lower = url.toLowerCase();
+	if (
+		lower.includes("youtube.com/watch") ||
+		lower.includes("youtube.com/embed") ||
+		lower.includes("youtu.be/") ||
+		lower.includes("vimeo.com/") ||
+		lower.includes("player.vimeo.com/")
+	) {
+		return "embed";
+	}
+	if (/\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(lower)) return "video";
+	if (/\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i.test(lower)) return "image";
+	// Anything else falls through to image — usually a CDN URL with no
+	// extension. The user can flip the picker manually if needed.
+	return "image";
+}
+
 // ---------------------------------------------------------------------------
 // Wire types (snake_case mirrors of the DB rows + the aggregated detail shape)
 // ---------------------------------------------------------------------------
@@ -137,6 +176,17 @@ export interface PromotionPlanContentRow {
 	ad_budget_mode: AdBudgetMode;
 	ad_budget_amount: number;
 	targeting: { age?: string; gender?: string; location?: string; interests?: string };
+	/** Headline / hook for the piece. */
+	title: string;
+	/** Long-form copy / description / caption. */
+	body: string;
+	/** What kind of media `media_url` points at — see `MediaKind`. */
+	media_kind: MediaKind;
+	/** Image src, video src, or embeddable page URL. Empty string = no media. */
+	media_url: string;
+	/** Optional CTA shown on the preview card. */
+	cta_label: string;
+	cta_url: string;
 	position: number;
 	created_at: string;
 }
@@ -206,7 +256,7 @@ export async function getPlanWithDetails(
 		supabase
 			.from("promotion_plan_content")
 			.select(
-				"id, plan_id, platform_id, is_post, is_ad, post_status, ad_status, ad_budget_mode, ad_budget_amount, targeting, position, created_at",
+				"id, plan_id, platform_id, is_post, is_ad, post_status, ad_status, ad_budget_mode, ad_budget_amount, targeting, title, body, media_kind, media_url, cta_label, cta_url, position, created_at",
 			)
 			.eq("plan_id", planId)
 			.order("position", { ascending: true })
