@@ -38,6 +38,20 @@ export interface PlanTier {
 	 * cap, not the actor's, so this is the right column to read for the owner.
 	 */
 	maxStorageBytes: number;
+	/**
+	 * Public Whop product page URL. Used as a fallback "buy" link when the
+	 * Whop SDK is unable to resolve the per-plan `purchase_url` (e.g. when
+	 * `WHOP_COMPANY_ID` is missing or the API key lacks the
+	 * `plan:read` scope and returns 403). The product page lets the user
+	 * pick the plan + complete checkout.
+	 */
+	productUrl: string;
+	/**
+	 * Static, human-readable price label shown when the live Whop API
+	 * lookup is unavailable. Format mirrors what `formatPriceLabel` would
+	 * render for a renewal plan.
+	 */
+	priceLabel: string;
 }
 
 /** 1 GB in bytes — used for plan storage caps. */
@@ -66,6 +80,8 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 30,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 10 * GB,
+		productUrl: "https://whop.com/content-rewards-ai/extensible-content-06/",
+		priceLabel: "$10 / month",
 	},
 	{
 		productId: "prod_ShvmpSR7s0EoH",
@@ -82,6 +98,8 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 150,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 40 * GB,
+		productUrl: "https://whop.com/content-rewards-ai/extensible-content-10-profiles/",
+		priceLabel: "$40 / month",
 	},
 	{
 		productId: "prod_G67Rs4iAZtexG",
@@ -98,6 +116,8 @@ export const PLAN_TIERS: readonly PlanTier[] = [
 		shotstackCreditsPerPeriod: 375,
 		creditRolloverMonths: 3,
 		maxStorageBytes: 100 * GB,
+		productUrl: "https://whop.com/content-rewards-ai/extensible-content-25-profiles/",
+		priceLabel: "$100 / month",
 	},
 ] as const;
 

@@ -104,10 +104,11 @@ export function ExtensionUpgradeScreen({ userEmail }: UpgradeScreenProps) {
 				}}
 			>
 				<header style={{ textAlign: "center", marginBottom: 48 }}>
+					<ExtensibleContentLogo />
 					<p
 						style={{
 							display: "inline-block",
-							margin: "0 0 16px 0",
+							margin: "16px 0 16px 0",
 							padding: "6px 14px",
 							borderRadius: 999,
 							background: "#e8fdf2",
@@ -518,6 +519,117 @@ function FeatureRow({ primary, secondary }: { primary: string; secondary?: strin
 				</>
 			) : null}
 		</li>
+	);
+}
+
+function ExtensibleContentLogo() {
+	return (
+		<div style={{ maxWidth: 420, margin: "0 auto" }}>
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="100%" height="auto">
+				<defs>
+					<linearGradient id="ecStreamGreen" x1="0%" y1="0%" x2="100%" y2="0%">
+						<stop offset="0%" stopColor="#00E676" />
+						<stop offset="100%" stopColor="#1DE9B6" />
+					</linearGradient>
+					<linearGradient id="ecStreamGreenVertical" x1="0%" y1="0%" x2="100%" y2="100%">
+						<stop offset="0%" stopColor="#00E676" />
+						<stop offset="100%" stopColor="#00C853" />
+					</linearGradient>
+				</defs>
+				<rect width="600" height="200" fill="#FFFFFF" rx="16" />
+				<rect width="600" height="200" fill="#F0F4F8" fillOpacity="0.4" rx="16" />
+				<g transform="translate(70, 55)">
+					<rect x="0" y="0" width="65" height="65" rx="16" fill="url(#ecStreamGreenVertical)" />
+					<path d="M 25 20 L 45 32 L 25 45 Z" fill="#FFFFFF" />
+					<path
+						d="M 75 15 A 40 40 0 0 1 75 50"
+						fill="none"
+						stroke="url(#ecStreamGreenVertical)"
+						strokeWidth="4"
+						strokeLinecap="round"
+						opacity="0.6"
+					/>
+					<path
+						d="M 85 5 A 55 55 0 0 1 85 60"
+						fill="none"
+						stroke="url(#ecStreamGreenVertical)"
+						strokeWidth="4"
+						strokeLinecap="round"
+						opacity="0.9"
+					/>
+				</g>
+				<g transform="translate(180, 0)">
+					<text
+						x="0"
+						y="100"
+						fontFamily="system-ui, -apple-system, sans-serif"
+						fontSize="44"
+						fontWeight="900"
+						letterSpacing="-1"
+						fill="#1E293B"
+					>
+						E
+					</text>
+					<g transform="translate(0, 0)">
+						<line x1="28" y1="79" x2="46" y2="97" stroke="#1E293B" strokeWidth="6" strokeLinecap="round" />
+						<line
+							x1="28"
+							y1="97"
+							x2="46"
+							y2="79"
+							stroke="url(#ecStreamGreen)"
+							strokeWidth="6"
+							strokeLinecap="round"
+						/>
+						<path
+							d="M 37 79 L 46 79 L 46 88"
+							fill="none"
+							stroke="url(#ecStreamGreen)"
+							strokeWidth="6"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						/>
+					</g>
+					<text
+						x="51"
+						y="100"
+						fontFamily="system-ui, -apple-system, sans-serif"
+						fontSize="44"
+						fontWeight="900"
+						letterSpacing="-1"
+						fill="#1E293B"
+					>
+						tensible
+						<tspan fontWeight="400" fill="url(#ecStreamGreen)">
+							Content
+						</tspan>
+					</text>
+					<rect x="0" y="113" width="4" height="28" rx="2" fill="url(#ecStreamGreenVertical)" />
+					<text
+						x="14"
+						y="123"
+						fontFamily="system-ui, -apple-system, sans-serif"
+						fontSize="10"
+						fontWeight="700"
+						letterSpacing="1.5"
+						fill="#64748B"
+					>
+						CONTENT CREATION &amp; DISTRIBUTION, AUTOMATED.
+					</text>
+					<text
+						x="14"
+						y="139"
+						fontFamily="system-ui, -apple-system, sans-serif"
+						fontSize="10"
+						fontWeight="700"
+						letterSpacing="1.5"
+						fill="#64748B"
+					>
+						MONETIZATION, INCLUDED.
+					</text>
+				</g>
+			</svg>
+		</div>
 	);
 }
 
