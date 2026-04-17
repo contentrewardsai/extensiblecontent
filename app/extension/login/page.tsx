@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ExtensionUpgradeScreen } from "./upgrade-screen";
 
 const STORAGE_KEY = "whop_oauth_pkce";
 const MESSAGE_TYPE = "WHOP_AUTH_SUCCESS";
@@ -24,6 +25,7 @@ async function sha256(str: string) {
 export default function ExtensionLoginPage() {
 	const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
 	const [message, setMessage] = useState<string>("");
+	const [userEmail, setUserEmail] = useState<string | undefined>();
 
 	const startOAuth = useCallback(async () => {
 		const clientId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
@@ -107,6 +109,7 @@ export default function ExtensionLoginPage() {
 			};
 			const payload = { type: MESSAGE_TYPE, tokens, user: data.user };
 			window.postMessage(payload, "*");
+			setUserEmail(data.user.email);
 			setStatus("success");
 			setMessage("Logged in! You can close this tab.");
 		} catch (err) {
@@ -130,12 +133,7 @@ export default function ExtensionLoginPage() {
 		);
 	}
 	if (status === "success") {
-		return (
-			<div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50 p-8">
-				<p className="text-lg font-medium text-green-700">Successfully signed in!</p>
-				<p className="text-sm text-gray-600">{message}</p>
-			</div>
-		);
+		return <ExtensionUpgradeScreen userEmail={userEmail} />;
 	}
 	if (status === "error") {
 		const isOAuthConfig = message.toLowerCase().includes("oauth not configured");
