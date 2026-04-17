@@ -536,8 +536,6 @@ function ExtensibleContentLogo() {
 						<stop offset="100%" stopColor="#00C853" />
 					</linearGradient>
 				</defs>
-				<rect width="600" height="200" fill="#FFFFFF" rx="16" />
-				<rect width="600" height="200" fill="#F0F4F8" fillOpacity="0.4" rx="16" />
 				<g transform="translate(70, 55)">
 					<rect x="0" y="0" width="65" height="65" rx="16" fill="url(#ecStreamGreenVertical)" />
 					<path d="M 25 20 L 45 32 L 25 45 Z" fill="#FFFFFF" />
