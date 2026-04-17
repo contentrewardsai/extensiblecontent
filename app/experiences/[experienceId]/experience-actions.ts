@@ -518,6 +518,26 @@ export type UpdateProjectActionState =
 	| { ok: true }
 	| { ok: false; error: string };
 
+/**
+ * Parses a `<input type="number">` field that's allowed to be blank
+ * ("clear the cap") or a non-negative integer. Returns `undefined` when
+ * the field wasn't submitted at all.
+ */
+function parseOptionalNonNegativeIntField(
+	formData: FormData,
+	field: string,
+): number | null | undefined {
+	const raw = formData.get(field);
+	if (raw == null) return undefined;
+	const trimmed = String(raw).trim();
+	if (trimmed === "") return null;
+	const n = Number(trimmed);
+	if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+		throw new Error(`${field} must be a non-negative integer or blank`);
+	}
+	return n;
+}
+
 export async function updateProjectSettingsAction(
 	_prev: UpdateProjectActionState | null,
 	formData: FormData,
@@ -528,6 +548,13 @@ export async function updateProjectSettingsAction(
 	const description = formData.get("description") != null ? String(formData.get("description")).trim() : undefined;
 	const quotaProvided = formData.get("quota_bytes") != null;
 	const quotaRaw = quotaProvided ? String(formData.get("quota_bytes")) : "";
+	let creditCap: number | null | undefined;
+	try {
+		creditCap = parseOptionalNonNegativeIntField(formData, "shotstack_monthly_credit_cap");
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : "Invalid credit cap" };
+	}
+	const creditCapProvided = creditCap !== undefined;
 
 	if (!experienceId || !projectId) {
 		return { ok: false, error: "experienceId and projectId are required" };
@@ -536,12 +563,13 @@ export async function updateProjectSettingsAction(
 	try {
 		const { internalUserId } = await requireExperienceActionUser(experienceId);
 		const supabase = getServiceSupabase();
-		const required: ProjectRole = quotaProvided ? "owner" : "editor";
+		const ownerOnly = quotaProvided || creditCapProvided;
+		const required: ProjectRole = ownerOnly ? "owner" : "editor";
 		await assertProjectAccess(supabase, projectId, internalUserId, required);
 
 		const { data: existing } = await supabase
 			.from("projects")
-			.select("name, description, quota_bytes")
+			.select("name, description, quota_bytes, shotstack_monthly_credit_cap")
 			.eq("id", projectId)
 			.maybeSingle();
 		if (!existing) return { ok: false, error: "Project not found" };
@@ -561,6 +589,10 @@ export async function updateProjectSettingsAction(
 			updates.quota_bytes = quotaRaw.trim() === "" ? null : normalizeQuotaInput(quotaRaw);
 			after.quota_bytes = updates.quota_bytes;
 		}
+		if (creditCapProvided) {
+			updates.shotstack_monthly_credit_cap = creditCap;
+			after.shotstack_monthly_credit_cap = creditCap;
+		}
 
 		if (Object.keys(updates).length === 0) return { ok: true };
 
@@ -568,11 +600,20 @@ export async function updateProjectSettingsAction(
 		const { error } = await supabase.from("projects").update(updates).eq("id", projectId);
 		if (error) return { ok: false, error: error.message };
 
+		// Pick the most specific audit action so the activity feed is
+		// readable. Quota changes get their own row; otherwise credit-cap
+		// updates win, falling back to the generic project.updated.
+		const auditAction = quotaProvided
+			? "project.quota_changed"
+			: creditCapProvided
+				? "project.credit_cap_changed"
+				: "project.updated";
+
 		await recordProjectAudit(supabase, {
 			projectId,
 			actorUserId: internalUserId,
 			source: PROJECT_AUDIT_SOURCE,
-			action: quotaProvided ? "project.quota_changed" : "project.updated",
+			action: auditAction,
 			targetType: "project",
 			targetId: projectId,
 			before: existing,
@@ -582,6 +623,93 @@ export async function updateProjectSettingsAction(
 		revalidatePath(`/experiences/${experienceId}/projects/${projectId}`);
 		revalidatePath(`/experiences/${experienceId}/uploads`);
 		return { ok: true };
+	} catch (e) {
+		return { ok: false, error: projectActionError(e) };
+	}
+}
+
+export type UpdateMemberCreditOverrideState =
+	| { ok: true; user_id: string; cap: number | null }
+	| { ok: false; error: string };
+
+/**
+ * Owner-only: set or clear the per-member ShotStack monthly credit cap.
+ * Blank `monthly_credit_cap` deletes the override (member falls back to the
+ * project-level cap, or unbounded if no project cap is set).
+ */
+export async function updateProjectMemberCreditOverrideAction(
+	_prev: UpdateMemberCreditOverrideState | null,
+	formData: FormData,
+): Promise<UpdateMemberCreditOverrideState> {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const projectId = String(formData.get("projectId") ?? "");
+	const userId = String(formData.get("userId") ?? "");
+	let cap: number | null | undefined;
+	try {
+		cap = parseOptionalNonNegativeIntField(formData, "monthly_credit_cap");
+	} catch (e) {
+		return { ok: false, error: e instanceof Error ? e.message : "Invalid cap" };
+	}
+
+	if (!experienceId || !projectId || !userId) {
+		return { ok: false, error: "Missing project, member, or experience id" };
+	}
+	if (cap === undefined) {
+		return { ok: false, error: "monthly_credit_cap is required" };
+	}
+
+	try {
+		const { internalUserId } = await requireExperienceActionUser(experienceId);
+		const supabase = getServiceSupabase();
+		await assertProjectAccess(supabase, projectId, internalUserId, "owner");
+
+		// Sanity: the member we're capping must actually be on the project.
+		// Avoids creating dangling override rows for users who left.
+		const { data: membership } = await supabase
+			.from("project_members")
+			.select("role")
+			.eq("project_id", projectId)
+			.eq("user_id", userId)
+			.maybeSingle();
+		if (!membership) {
+			return { ok: false, error: "User is not a member of this project" };
+		}
+
+		if (cap == null) {
+			const { error } = await supabase
+				.from("project_member_credit_overrides")
+				.delete()
+				.eq("project_id", projectId)
+				.eq("user_id", userId);
+			if (error) return { ok: false, error: error.message };
+		} else {
+			const now = new Date().toISOString();
+			const { error } = await supabase
+				.from("project_member_credit_overrides")
+				.upsert(
+					{
+						project_id: projectId,
+						user_id: userId,
+						monthly_credit_cap: cap,
+						updated_at: now,
+					},
+					{ onConflict: "project_id,user_id" },
+				);
+			if (error) return { ok: false, error: error.message };
+		}
+
+		await recordProjectAudit(supabase, {
+			projectId,
+			actorUserId: internalUserId,
+			source: PROJECT_AUDIT_SOURCE,
+			action: cap == null ? "project.member_credit_override_cleared" : "project.member_credit_override_set",
+			targetType: "project_member",
+			targetId: userId,
+			after: { user_id: userId, monthly_credit_cap: cap },
+		});
+
+		revalidatePath(`/experiences/${experienceId}/projects/${projectId}`);
+		return { ok: true, user_id: userId, cap };
 	} catch (e) {
 		return { ok: false, error: projectActionError(e) };
 	}

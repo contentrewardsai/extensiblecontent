@@ -3,10 +3,22 @@ import { getExtensionUser } from "@/lib/extension-auth";
 import { sidebarWithConnected } from "@/lib/extension-sidebar";
 import { type ParsedSidebarListQuery, parseSidebarListQuery } from "@/lib/sidebar-list-query";
 import { getExtensionServiceSupabase } from "@/lib/supabase-extension-service";
+import { isUserEntitled } from "@/lib/user-entitlement";
 
 const LIST_SUCCESS_HEADERS = {
 	"Cache-Control": "private, no-store",
 	Vary: "Authorization",
+} as const;
+
+/**
+ * Header advertising the unentitled empty-state to the dashboard. Render
+ * "Upgrade to enable remote extension control" when present so users
+ * understand why their extensions don't show up rather than seeing an
+ * unexplained empty list.
+ */
+const UNENTITLED_HEADERS = {
+	...LIST_SUCCESS_HEADERS,
+	"X-Sidebars-Gated": "1",
 } as const;
 
 type ListQueryOk = Extract<ParsedSidebarListQuery, { ok: true }>;
@@ -49,6 +61,18 @@ export async function sidebarsListGetResponse(request: NextRequest): Promise<Res
 	}
 
 	const supabase = getExtensionServiceSupabase();
+
+	// Remote sidebar control is a paid (or paid-project-member) feature: an
+	// unentitled user gets an empty list (200) so the Whop dashboard can
+	// render a clean "upgrade to enable remote control" empty state. The
+	// register/heartbeat/[id]/disconnect endpoints stay open so the
+	// extension still phones home — the dashboard lights up the moment the
+	// user upgrades or is added to a paying project.
+	const { entitled } = await isUserEntitled(supabase, user.user_id);
+	if (!entitled) {
+		return Response.json({ sidebars: [] }, { headers: UNENTITLED_HEADERS });
+	}
+
 	const { data: sidebars, error } = await applySidebarsFilters(supabase, user.user_id, listQ, "rows");
 
 	if (error) {
@@ -79,6 +103,14 @@ export async function sidebarsListHeadResponse(request: NextRequest): Promise<Re
 	}
 
 	const supabase = getExtensionServiceSupabase();
+
+	const { entitled } = await isUserEntitled(supabase, user.user_id);
+	if (!entitled) {
+		const headers = new Headers(UNENTITLED_HEADERS);
+		headers.set("X-Result-Count", "0");
+		return new Response(null, { status: 200, headers });
+	}
+
 	const { error, count } = await applySidebarsFilters(supabase, user.user_id, listQ, "count");
 
 	if (error) {

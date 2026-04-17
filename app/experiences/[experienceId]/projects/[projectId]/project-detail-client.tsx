@@ -9,6 +9,8 @@ import {
 	type CreateProjectInviteState,
 	removeProjectMemberAction,
 	revokeProjectInviteAction,
+	updateProjectMemberCreditOverrideAction,
+	type UpdateMemberCreditOverrideState,
 	updateProjectSettingsAction,
 	type UpdateProjectActionState,
 } from "../../experience-actions";
@@ -26,6 +28,8 @@ interface Props {
 		name: string;
 		description: string | null;
 		quotaBytes: number | null;
+		/** Optional monthly ShotStack credit cap for this project (credits = render minutes). */
+		shotstackMonthlyCreditCap: number | null;
 		ownerId: string;
 		createdAt: string;
 		updatedAt: string;
@@ -36,7 +40,13 @@ interface Props {
 		ownerUsedBytes: number;
 		ownerMaxBytes: number;
 	};
+	creditUsage: {
+		/** Sum of debits charged to this project this calendar month. */
+		projectSpentThisMonth: number;
+	};
 	members: ProjectMemberRow[];
+	/** Map of user_id → per-member monthly credit cap. Missing key = no override. */
+	memberCreditOverrides: Record<string, number>;
 	invites: ProjectInviteRow[];
 	auditEntries: ProjectAuditEntry[];
 	memberNames: Record<string, string>;
@@ -78,6 +88,7 @@ export function ProjectDetailClient(props: Props) {
 					role={props.role}
 					ownerCapBytes={props.usage.ownerMaxBytes}
 					ownerUsedBytes={props.usage.ownerUsedBytes}
+					projectShotstackSpentThisMonth={props.creditUsage.projectSpentThisMonth}
 				/>
 			) : null}
 			{tab === "members" ? (
@@ -87,6 +98,7 @@ export function ProjectDetailClient(props: Props) {
 					myUserId={props.myUserId}
 					role={props.role}
 					members={props.members}
+					memberCreditOverrides={props.memberCreditOverrides}
 					invites={props.invites}
 				/>
 			) : null}
@@ -157,6 +169,7 @@ function SettingsTab({
 	role,
 	ownerCapBytes,
 	ownerUsedBytes,
+	projectShotstackSpentThisMonth,
 }: {
 	experienceId: string;
 	projectId: string;
@@ -164,12 +177,16 @@ function SettingsTab({
 	role: Props["role"];
 	ownerCapBytes: number;
 	ownerUsedBytes: number;
+	projectShotstackSpentThisMonth: number;
 }) {
 	const initial: UpdateProjectActionState | null = null;
 	const [state, formAction, pending] = useActionState(updateProjectSettingsAction, initial);
 	const ownerRemainingBytes = Math.max(0, ownerCapBytes - ownerUsedBytes);
 	const isOwner = role === "owner";
 	const isEditor = role === "editor" || role === "owner";
+	const cap = project.shotstackMonthlyCreditCap;
+	const capRemaining =
+		cap == null ? null : Math.max(0, cap - projectShotstackSpentThisMonth);
 
 	return (
 		<form action={formAction} className="flex flex-col gap-4 max-w-xl">
@@ -218,6 +235,29 @@ function SettingsTab({
 				</span>
 			</label>
 
+			<label className="text-2 text-gray-11 flex flex-col gap-1">
+				<span>
+					Monthly ShotStack credit cap{" "}
+					<span className="text-gray-10">— owner only · 1 credit = 1 render minute</span>
+				</span>
+				<input
+					type="number"
+					name="shotstack_monthly_credit_cap"
+					min={0}
+					step={1}
+					placeholder="(no cap — uses owner's wallet only)"
+					defaultValue={cap ?? ""}
+					disabled={!isOwner}
+					className="text-3 text-gray-12 bg-gray-a2 border border-gray-a4 rounded-md px-2 py-1.5 disabled:opacity-50 font-mono"
+				/>
+				<span className="text-2 text-gray-10">
+					Spent this month: <span className="font-mono">{projectShotstackSpentThisMonth}</span>
+					{cap != null
+						? ` / ${cap} credits — ${capRemaining} remaining`
+						: " credits (no project cap; only the owner wallet is checked)"}
+				</span>
+			</label>
+
 			{isEditor ? (
 				<button
 					type="submit"
@@ -241,6 +281,7 @@ function MembersTab({
 	myUserId,
 	role,
 	members,
+	memberCreditOverrides,
 	invites,
 }: {
 	experienceId: string;
@@ -248,6 +289,7 @@ function MembersTab({
 	myUserId: string;
 	role: Props["role"];
 	members: ProjectMemberRow[];
+	memberCreditOverrides: Record<string, number>;
 	invites: ProjectInviteRow[];
 }) {
 	const isOwner = role === "owner";
@@ -266,6 +308,7 @@ function MembersTab({
 							projectId={projectId}
 							isOwnerActor={isOwner}
 							canLeave={!isOwner && m.user_id === myUserId}
+							creditOverride={memberCreditOverrides[m.user_id] ?? null}
 						/>
 					))}
 				</ul>
@@ -329,73 +372,142 @@ function MemberRow({
 	projectId,
 	isOwnerActor,
 	canLeave,
+	creditOverride,
 }: {
 	member: ProjectMemberRow;
 	experienceId: string;
 	projectId: string;
 	isOwnerActor: boolean;
 	canLeave: boolean;
+	creditOverride: number | null;
 }) {
 	const [pending, startTransition] = useTransition();
 	const display = member.user.name?.trim() || member.user.email || member.user_id;
 	return (
-		<li className="flex items-center justify-between p-3 gap-3">
-			<div className="min-w-0">
-				<div className="text-3 text-gray-12 truncate">{display}</div>
-				<div className="text-2 text-gray-10 truncate font-mono">{member.user.email ?? member.user_id}</div>
-			</div>
-			<div className="flex items-center gap-2 shrink-0">
-				{isOwnerActor && member.role !== "owner" ? (
-					<form
-						action={(formData) => {
-							startTransition(async () => {
-								await changeProjectMemberRoleAction(formData);
-							});
-						}}
-						className="flex items-center gap-1"
-					>
-						<input type="hidden" name="experienceId" value={experienceId} />
-						<input type="hidden" name="projectId" value={projectId} />
-						<input type="hidden" name="userId" value={member.user_id} />
-						<select
-							name="role"
-							defaultValue={member.role}
-							onChange={(e) => {
-								const form = e.currentTarget.form;
-								if (form) form.requestSubmit();
+		<li className="flex flex-col gap-2 p-3">
+			<div className="flex items-center justify-between gap-3">
+				<div className="min-w-0">
+					<div className="text-3 text-gray-12 truncate">{display}</div>
+					<div className="text-2 text-gray-10 truncate font-mono">{member.user.email ?? member.user_id}</div>
+				</div>
+				<div className="flex items-center gap-2 shrink-0">
+					{isOwnerActor && member.role !== "owner" ? (
+						<form
+							action={(formData) => {
+								startTransition(async () => {
+									await changeProjectMemberRoleAction(formData);
+								});
 							}}
-							className="text-2 text-gray-12 bg-gray-a2 border border-gray-a4 rounded px-2 py-1"
+							className="flex items-center gap-1"
 						>
-							<option value="viewer">Viewer</option>
-							<option value="editor">Editor</option>
-							<option value="owner">Owner</option>
-						</select>
-					</form>
-				) : (
-					<span className="text-2 text-gray-11 px-2 py-1 rounded bg-gray-a3 capitalize">{member.role}</span>
-				)}
-				{(isOwnerActor && member.role !== "owner") || canLeave ? (
-					<form
-						action={(formData) => {
-							startTransition(async () => {
-								await removeProjectMemberAction(formData);
-							});
-						}}
-					>
-						<input type="hidden" name="experienceId" value={experienceId} />
-						<input type="hidden" name="projectId" value={projectId} />
-						<input type="hidden" name="userId" value={member.user_id} />
-						<button
-							type="submit"
-							disabled={pending}
-							className="text-2 px-2 py-1 rounded-md border border-red-a5 text-red-11 hover:bg-red-a3 disabled:opacity-50"
+							<input type="hidden" name="experienceId" value={experienceId} />
+							<input type="hidden" name="projectId" value={projectId} />
+							<input type="hidden" name="userId" value={member.user_id} />
+							<select
+								name="role"
+								defaultValue={member.role}
+								onChange={(e) => {
+									const form = e.currentTarget.form;
+									if (form) form.requestSubmit();
+								}}
+								className="text-2 text-gray-12 bg-gray-a2 border border-gray-a4 rounded px-2 py-1"
+							>
+								<option value="viewer">Viewer</option>
+								<option value="editor">Editor</option>
+								<option value="owner">Owner</option>
+							</select>
+						</form>
+					) : (
+						<span className="text-2 text-gray-11 px-2 py-1 rounded bg-gray-a3 capitalize">{member.role}</span>
+					)}
+					{(isOwnerActor && member.role !== "owner") || canLeave ? (
+						<form
+							action={(formData) => {
+								startTransition(async () => {
+									await removeProjectMemberAction(formData);
+								});
+							}}
 						>
-							{canLeave ? "Leave" : "Remove"}
-						</button>
-					</form>
-				) : null}
+							<input type="hidden" name="experienceId" value={experienceId} />
+							<input type="hidden" name="projectId" value={projectId} />
+							<input type="hidden" name="userId" value={member.user_id} />
+							<button
+								type="submit"
+								disabled={pending}
+								className="text-2 px-2 py-1 rounded-md border border-red-a5 text-red-11 hover:bg-red-a3 disabled:opacity-50"
+							>
+								{canLeave ? "Leave" : "Remove"}
+							</button>
+						</form>
+					) : null}
+				</div>
 			</div>
+			{isOwnerActor && member.role !== "owner" ? (
+				<MemberCreditOverrideForm
+					experienceId={experienceId}
+					projectId={projectId}
+					userId={member.user_id}
+					initialCap={creditOverride}
+				/>
+			) : creditOverride != null ? (
+				<div className="text-2 text-gray-10">
+					Personal monthly cap: <span className="font-mono">{creditOverride}</span> credits
+				</div>
+			) : null}
 		</li>
+	);
+}
+
+function MemberCreditOverrideForm({
+	experienceId,
+	projectId,
+	userId,
+	initialCap,
+}: {
+	experienceId: string;
+	projectId: string;
+	userId: string;
+	initialCap: number | null;
+}) {
+	const initial: UpdateMemberCreditOverrideState | null = null;
+	const [state, formAction, pending] = useActionState(
+		updateProjectMemberCreditOverrideAction,
+		initial,
+	);
+	return (
+		<form
+			action={formAction}
+			className="flex flex-wrap items-center gap-2 text-2 text-gray-10"
+		>
+			<input type="hidden" name="experienceId" value={experienceId} />
+			<input type="hidden" name="projectId" value={projectId} />
+			<input type="hidden" name="userId" value={userId} />
+			<label className="flex items-center gap-1">
+				<span>ShotStack monthly cap:</span>
+				<input
+					type="number"
+					name="monthly_credit_cap"
+					min={0}
+					step={1}
+					placeholder="(use project cap)"
+					defaultValue={initialCap ?? ""}
+					className="text-2 text-gray-12 bg-gray-a2 border border-gray-a4 rounded px-2 py-1 font-mono w-32"
+				/>
+			</label>
+			<button
+				type="submit"
+				disabled={pending}
+				className="text-2 px-2 py-1 rounded-md border border-gray-a5 text-gray-12 hover:bg-gray-a3 disabled:opacity-50"
+			>
+				{pending ? "Saving…" : initialCap == null ? "Set" : "Update"}
+			</button>
+			{state && state.ok === false ? <span className="text-red-11">{state.error}</span> : null}
+			{state && state.ok ? (
+				<span className="text-green-11">
+					{state.cap == null ? "Override cleared" : `Cap set to ${state.cap}`}
+				</span>
+			) : null}
+		</form>
 	);
 }
 

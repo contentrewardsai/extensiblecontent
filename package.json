@@ -7,7 +7,7 @@
 		"build": "next build",
 		"start": "next start",
 		"lint": "biome lint",
-		"test:unit": "node test/unit-tests.js && tsx test/knowledge-domain.test.ts && tsx test/extension-sidebar.test.ts && tsx test/sidebar-heartbeat.test.ts && tsx test/sidebar-lookup-parse.test.ts && tsx test/sidebar-project.test.ts && tsx test/sidebar-list-query.test.ts && tsx test/postgres-errors.test.ts && tsx test/workflow-hostname-match.test.ts && tsx test/following-wallets.test.ts && tsx test/storage-object-resolve.test.ts && tsx test/project-access.test.ts && tsx test/project-quota.test.ts && tsx test/project-audit.test.ts && tsx test/shotstack-expiry.test.ts && tsx --test test/plan-tiers.test.ts",
+		"test:unit": "node test/unit-tests.js && tsx test/knowledge-domain.test.ts && tsx test/extension-sidebar.test.ts && tsx test/sidebar-heartbeat.test.ts && tsx test/sidebar-lookup-parse.test.ts && tsx test/sidebar-project.test.ts && tsx test/sidebar-list-query.test.ts && tsx test/postgres-errors.test.ts && tsx test/workflow-hostname-match.test.ts && tsx test/following-wallets.test.ts && tsx test/storage-object-resolve.test.ts && tsx test/project-access.test.ts && tsx test/project-quota.test.ts && tsx test/project-audit.test.ts && tsx test/shotstack-expiry.test.ts && tsx test/promotion-plan.test.ts && tsx --test test/plan-tiers.test.ts",
 		"db:migrate": "dotenv -e .env.local -- supabase db push",
 		"db:push": "dotenv -e .env.local -- supabase db push",
 		"db:reset": "dotenv -e .env.local -- supabase db reset"
@@ -18,6 +18,7 @@
 		"@vercel/functions": "^3.1.4",
 		"@whop/react": "0.3.0",
 		"@whop/sdk": "0.0.3",
+		"lucide-react": "^1.8.0",
 		"next": "16.1.1",
 		"react": "19.2.0",
 		"react-dom": "19.2.0"

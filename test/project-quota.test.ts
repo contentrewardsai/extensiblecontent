@@ -9,6 +9,12 @@ import {
 	ProjectQuotaError,
 } from "../lib/project-quota";
 
+// Stand-in cap for "paid user" tests. We can't use OWNER_DEFAULT_MAX_BYTES
+// any more because the free-tier default is now 0 — a fallback that would
+// fail almost every quota assertion below. Pick something well above the
+// numbers the assertions add to keep arithmetic legible.
+const PAID_TIER_TEST_CAP = 1_000_000_000; // 1 GB
+
 // ---------------------------------------------------------------------------
 // normalizeQuotaInput — accepts non-negative integers / numeric strings /
 // null / empty string. Anything else → ProjectQuotaError(400).
@@ -58,8 +64,10 @@ function makeSupabaseRpc(
 		get_project_storage_bytes: (args: Record<string, unknown>) => RpcResult | Error;
 		/**
 		 * Override the value `getOwnerMaxStorageBytes` reads off
-		 * `users.max_storage_bytes`. Defaults to OWNER_DEFAULT_MAX_BYTES so
-		 * existing tests keep their expected cap.
+		 * `users.max_storage_bytes`. Defaults to PAID_TIER_TEST_CAP so most
+		 * tests can pretend the owner is a paid user with plenty of room;
+		 * pass `null` or 0 to exercise the free-tier fallback (which is now
+		 * also 0, since `FREE_TIER_MAX_STORAGE_BYTES` was lowered).
 		 */
 		users_max_storage_bytes: number | null;
 	}>,
@@ -68,7 +76,7 @@ function makeSupabaseRpc(
 	const ownerCap =
 		"users_max_storage_bytes" in handlers
 			? (handlers.users_max_storage_bytes as number | null)
-			: OWNER_DEFAULT_MAX_BYTES;
+			: PAID_TIER_TEST_CAP;
 	const supabase = {
 		async rpc(fn: string, args: Record<string, unknown>) {
 			rpcCalls.push({ fn, args });
@@ -111,8 +119,8 @@ void (async () => {
 	});
 	const stats = await getOwnerStorageStats(supabase, "owner-1");
 	assert.equal(stats.usedBytes, 3_500_000);
-	assert.equal(stats.maxBytes, OWNER_DEFAULT_MAX_BYTES);
-	assert.equal(stats.availableBytes, OWNER_DEFAULT_MAX_BYTES - 3_500_000);
+	assert.equal(stats.maxBytes, PAID_TIER_TEST_CAP);
+	assert.equal(stats.availableBytes, PAID_TIER_TEST_CAP - 3_500_000);
 	// Verify the RPC contract — owner prefix needs the trailing slash.
 	assert.equal(rpcCalls[0].args.p_user_prefix, "owner-1/");
 	assert.deepEqual(rpcCalls[0].args.p_bucket_ids, [...POST_MEDIA_BUCKETS]);
@@ -122,10 +130,22 @@ void (async () => {
 {
 	const { supabase } = makeSupabaseRpc({
 		get_user_storage_stats: () => ({
-			rows: [{ bucket_id: "post-media", file_count: 1, total_bytes: OWNER_DEFAULT_MAX_BYTES * 2 }],
+			rows: [{ bucket_id: "post-media", file_count: 1, total_bytes: PAID_TIER_TEST_CAP * 2 }],
 		}),
 	});
 	const stats = await getOwnerStorageStats(supabase, "owner-2");
+	assert.equal(stats.availableBytes, 0);
+}
+
+// Free-tier owner (cap = 0): availableBytes is 0 even with no usage.
+{
+	const { supabase } = makeSupabaseRpc({
+		users_max_storage_bytes: 0,
+		get_user_storage_stats: () => ({ rows: [] }),
+	});
+	const stats = await getOwnerStorageStats(supabase, "owner-free");
+	assert.equal(stats.usedBytes, 0);
+	assert.equal(stats.maxBytes, OWNER_DEFAULT_MAX_BYTES); // 0
 	assert.equal(stats.availableBytes, 0);
 }
 
@@ -193,7 +213,7 @@ function ownerStubBytes(used: number): RpcResult {
 // Owner cap exceeded → owner_full (status 413).
 {
 	const { supabase } = makeSupabaseRpc({
-		get_user_storage_stats: () => ownerStubBytes(OWNER_DEFAULT_MAX_BYTES - 10),
+		get_user_storage_stats: () => ownerStubBytes(PAID_TIER_TEST_CAP - 10),
 		get_project_storage_bytes: () => ownerStubBytes(0),
 	});
 	await assert.rejects(
@@ -205,6 +225,25 @@ function ownerStubBytes(used: number): RpcResult {
 				addBytes: 100,
 			}),
 		(e: unknown) => e instanceof ProjectQuotaError && e.code === "owner_full" && e.status === 413,
+	);
+}
+
+// Free-tier owner (cap = 0): even a 1-byte upload triggers owner_full.
+{
+	const { supabase } = makeSupabaseRpc({
+		users_max_storage_bytes: 0,
+		get_user_storage_stats: () => ownerStubBytes(0),
+		get_project_storage_bytes: () => ownerStubBytes(0),
+	});
+	await assert.rejects(
+		() =>
+			assertProjectQuota(supabase, {
+				ownerId: "free-owner",
+				projectId: "proj-1",
+				quotaBytes: null,
+				addBytes: 1,
+			}),
+		(e: unknown) => e instanceof ProjectQuotaError && e.code === "owner_full",
 	);
 }
 
@@ -230,7 +269,7 @@ function ownerStubBytes(used: number): RpcResult {
 // reject because of a bad client-side estimate.
 {
 	const { supabase } = makeSupabaseRpc({
-		get_user_storage_stats: () => ownerStubBytes(OWNER_DEFAULT_MAX_BYTES),
+		get_user_storage_stats: () => ownerStubBytes(PAID_TIER_TEST_CAP),
 		get_project_storage_bytes: () => ownerStubBytes(0),
 	});
 	// Right at the cap with addBytes=0 should NOT throw.
@@ -240,7 +279,7 @@ function ownerStubBytes(used: number): RpcResult {
 		quotaBytes: null,
 		addBytes: Number.NaN,
 	});
-	assert.equal(r.owner.usedBytes, OWNER_DEFAULT_MAX_BYTES);
+	assert.equal(r.owner.usedBytes, PAID_TIER_TEST_CAP);
 }
 
 // Quota of 0 means "fully blocked" — even a 1-byte upload throws project_full.

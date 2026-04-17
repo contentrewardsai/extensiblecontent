@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import type { Workflow } from "@/lib/types/workflows";
+import { isUserEntitled } from "@/lib/user-entitlement";
 import { hostnameFromOrigin, normalizeHostname, workflowMatchesHostname } from "@/lib/workflow-hostname-match";
 
 function getSupabase() {
@@ -30,9 +31,19 @@ export async function GET(request: NextRequest) {
 	const user = await getExtensionUser(request);
 	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-	const scope = request.nextUrl.searchParams.get("scope") || "published";
+	const requestedScope = request.nextUrl.searchParams.get("scope") || "published";
 	const limit = Math.min(Math.max(Number(request.nextUrl.searchParams.get("limit")) || 50, 1), 200);
 	const offset = Math.max(Number(request.nextUrl.searchParams.get("offset")) || 0, 0);
+
+	const supabase = getSupabase();
+
+	// Free users (not paid, not invited to a paying user's project) only ever
+	// see workflows they own / were added to / belong to one of their member
+	// projects. Force the global "published" branch off for them by collapsing
+	// the scope down to "mine" — `scope=all` requests get the same treatment
+	// so the published rows never leak in.
+	const entitled = (await isUserEntitled(supabase, user.user_id)).entitled;
+	const scope = entitled ? requestedScope : "mine";
 
 	// Domain filter: extension passes ?hostname=labs.google or ?origin=https://labs.google.
 	// Normalize (lowercase, strip leading "www.") and match host or any subdomain against
@@ -40,8 +51,6 @@ export async function GET(request: NextRequest) {
 	const targetHostname =
 		normalizeHostname(request.nextUrl.searchParams.get("hostname")) ??
 		hostnameFromOrigin(request.nextUrl.searchParams.get("origin"));
-
-	const supabase = getSupabase();
 
 	let workflows: Record<string, unknown>[] = [];
 	let totalFetched = 0;
@@ -61,17 +70,34 @@ export async function GET(request: NextRequest) {
 	}
 
 	if (scope === "mine" || scope === "all") {
-		// Get workflows user created or was added to
-		const { data: addedRows } = await supabase
-			.from("workflow_added_by")
-			.select("workflow_id")
-			.eq("user_id", user.user_id);
+		// "Mine" = workflows the caller created OR was explicitly added to
+		// OR belong to a project the caller is a member of. The latter is
+		// what lets a free user invited to a paying user's project see the
+		// project's workflows in the extension without unlocking the global
+		// catalog.
+		const [{ data: addedRows }, { data: memberRows }] = await Promise.all([
+			supabase
+				.from("workflow_added_by")
+				.select("workflow_id")
+				.eq("user_id", user.user_id),
+			supabase
+				.from("project_members")
+				.select("project_id")
+				.eq("user_id", user.user_id),
+		]);
 		const addedIds = (addedRows ?? []).map((r) => r.workflow_id);
+		const memberProjectIds = Array.from(
+			new Set(
+				((memberRows ?? []) as Array<{ project_id: string | null }>)
+					.map((r) => r.project_id)
+					.filter((id): id is string => typeof id === "string" && id.length > 0),
+			),
+		);
 
-		const orFilter =
-			addedIds.length > 0
-				? `created_by.eq.${user.user_id},id.in.(${addedIds.join(",")})`
-				: `created_by.eq.${user.user_id}`;
+		const orParts: string[] = [`created_by.eq.${user.user_id}`];
+		if (addedIds.length > 0) orParts.push(`id.in.(${addedIds.join(",")})`);
+		if (memberProjectIds.length > 0) orParts.push(`project_id.in.(${memberProjectIds.join(",")})`);
+		const orFilter = orParts.join(",");
 
 		const { data: mine } = await supabase
 			.from("workflows")

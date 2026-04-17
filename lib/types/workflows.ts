@@ -10,6 +10,8 @@ export interface Workflow {
 	version: number;
 	initial_version: string | null;
 	archived: boolean;
+	/** Optional project this workflow belongs to. Members of the project see it via /api/extension/workflows. */
+	project_id: string | null;
 	created_at: string;
 	updated_at: string;
 	added_by: { user_id: string }[];
@@ -25,6 +27,8 @@ export interface WorkflowInsert {
 	version?: number;
 	initial_version?: string | null;
 	added_by?: string[];
+	/** Attach this workflow to a project the caller can edit. Optional. */
+	project_id?: string | null;
 }
 
 export interface WorkflowUpdate {
@@ -36,4 +40,5 @@ export interface WorkflowUpdate {
 	version?: number;
 	initial_version?: string | null;
 	added_by?: string[];
+	project_id?: string | null;
 }

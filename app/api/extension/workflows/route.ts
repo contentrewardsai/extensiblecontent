@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { assertProjectAccess, ProjectAccessError } from "@/lib/project-access";
 import type { Workflow, WorkflowInsert } from "@/lib/types/workflows";
 
 function getSupabase() {
@@ -29,13 +30,29 @@ export async function GET(request: NextRequest) {
 
 	const supabase = getSupabase();
 
-	const { data: addedRows } = await supabase.from("workflow_added_by").select("workflow_id").eq("user_id", user.user_id);
+	const [{ data: addedRows }, { data: memberRows }] = await Promise.all([
+		supabase.from("workflow_added_by").select("workflow_id").eq("user_id", user.user_id),
+		supabase.from("project_members").select("project_id").eq("user_id", user.user_id),
+	]);
 	const addedIds = (addedRows ?? []).map((r) => r.workflow_id);
+	const memberProjectIds = Array.from(
+		new Set(
+			((memberRows ?? []) as Array<{ project_id: string | null }>)
+				.map((r) => r.project_id)
+				.filter((id): id is string => typeof id === "string" && id.length > 0),
+		),
+	);
 
-	const orFilter =
-		addedIds.length > 0
-			? `created_by.eq.${user.user_id},id.in.(${addedIds.join(",")})`
-			: `created_by.eq.${user.user_id}`;
+	// Build an OR filter spanning three sources:
+	//   - workflows the caller created
+	//   - workflows the caller was explicitly added to (workflow_added_by)
+	//   - workflows attached to any project the caller is a member of
+	// Each branch is appended only when the relevant id list is non-empty
+	// to keep the PostgREST `or=` string clean.
+	const orParts: string[] = [`created_by.eq.${user.user_id}`];
+	if (addedIds.length > 0) orParts.push(`id.in.(${addedIds.join(",")})`);
+	if (memberProjectIds.length > 0) orParts.push(`project_id.in.(${memberProjectIds.join(",")})`);
+	const orFilter = orParts.join(",");
 
 	const { data: workflows, error } = await supabase
 		.from("workflows")
@@ -85,6 +102,27 @@ export async function POST(request: NextRequest) {
 
 	const supabase = getSupabase();
 
+	// Optional `project_id`: if present, the caller must have at least
+	// editor access on that project. Validates the FK in app code so we can
+	// return a clean 403/404 instead of a Postgres FK violation.
+	let projectId: string | null = null;
+	if (typeof body.project_id === "string" && body.project_id.trim()) {
+		try {
+			const membership = await assertProjectAccess(
+				supabase,
+				body.project_id.trim(),
+				user.user_id,
+				"editor",
+			);
+			projectId = membership.projectId;
+		} catch (err) {
+			if (err instanceof ProjectAccessError) {
+				return Response.json({ error: err.message }, { status: err.status });
+			}
+			throw err;
+		}
+	}
+
 	// Opaque JSON: persist full `workflow` without stripping nested keys (e.g. analyzed.actions[].comment).
 	// See docs/BACKEND_IMPLEMENTATION_PROMPT.md and lib/workflow-json-contract.ts.
 	const insertRow: Record<string, unknown> = {
@@ -96,6 +134,7 @@ export async function POST(request: NextRequest) {
 		approved,
 		version,
 		initial_version,
+		project_id: projectId,
 		updated_at: new Date().toISOString(),
 	};
 	if (body.id) insertRow.id = body.id;

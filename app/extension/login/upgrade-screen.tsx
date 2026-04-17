@@ -327,9 +327,10 @@ export function ExtensionUpgradeScreen({ userEmail }: UpgradeScreenProps) {
 						fontSize: "0.95em",
 					}}
 				>
-					You can upgrade, downgrade, or cancel at any time from your billing dashboard. You
-					can safely close this tab once you&apos;ve picked a plan — the extension is already
-					signed in.
+					You can upgrade, downgrade, or cancel at any time from your billing dashboard.
+					<br />
+					You can safely close this tab once you&apos;ve picked a plan — the extension is
+					already signed in.
 				</footer>
 			</div>
 		</div>

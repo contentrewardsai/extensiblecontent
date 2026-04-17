@@ -59,11 +59,13 @@ export interface PlanTier {
 const GB = 1024 * 1024 * 1024;
 
 /**
- * Storage cap granted to users with no active subscription. Mirrors the value
- * we used to hardcode as `OWNER_DEFAULT_MAX_BYTES` in lib/project-quota.ts so
- * existing free users see no change.
+ * Storage cap granted to users with no active subscription. Free users get
+ * **0 bytes** of their own storage — they can still create projects locally
+ * and they can use storage of any project they were invited to (which counts
+ * against the *paying* owner's pool), but uploads to their own projects are
+ * blocked until they upgrade. Paid tiers raise this via `syncUserEntitlements`.
  */
-export const FREE_TIER_MAX_STORAGE_BYTES = 500 * 1024 * 1024;
+export const FREE_TIER_MAX_STORAGE_BYTES = 0;
 
 export const PLAN_TIERS: readonly PlanTier[] = [
 	{

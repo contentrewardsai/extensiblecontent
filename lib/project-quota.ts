@@ -7,21 +7,23 @@ import { FREE_TIER_MAX_STORAGE_BYTES } from "@/lib/plan-tiers";
  * Two caps stack:
  *   1. Owner cap — per-user limit driven by the owner's active subscription
  *      tier. Stored on `users.max_storage_bytes` and materialized by
- *      `lib/plan-entitlements.ts` whenever a Whop webhook arrives. Free tier
- *      keeps the legacy 500 MB allowance via `FREE_TIER_MAX_STORAGE_BYTES`,
- *      which is also the column default.
+ *      `lib/plan-entitlements.ts` whenever a Whop webhook arrives. Free
+ *      users get **0 bytes** (`FREE_TIER_MAX_STORAGE_BYTES`); paid tiers
+ *      raise it to 10 / 40 / 100 GB. The column default is also 0.
  *   2. Project cap (`projects.quota_bytes`) — optional per-project sub-cap set
  *      by the owner. Null means "no sub-cap; share the owner's pool with the
  *      project's siblings".
  *
  * All file paths live under the *owner's* user prefix (`${owner_id}/...`), so
  * collaborators uploading on a shared project still consume the owner's pool.
+ * That's how an invited free user can still upload to a paying owner's
+ * project even though their own cap is 0.
  */
 
 /**
- * Fallback owner cap for users whose row has not been backfilled yet (e.g.
- * very old accounts). The migration default is also 500 MB so this should
- * almost never be needed.
+ * Fallback owner cap when the row is missing entirely. Same value as
+ * `FREE_TIER_MAX_STORAGE_BYTES` (now 0), so a missing row behaves the same
+ * as an unentitled free user.
  *
  * @deprecated Read from `users.max_storage_bytes` via `getOwnerStorageStats`.
  *   Re-exports `FREE_TIER_MAX_STORAGE_BYTES` for callers that need a

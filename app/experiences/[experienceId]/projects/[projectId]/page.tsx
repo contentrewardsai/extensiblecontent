@@ -30,23 +30,43 @@ export default async function ProjectDetailPage({
 
 	const { data: project } = await supabase
 		.from("projects")
-		.select("id, name, description, quota_bytes, owner_id, created_at, updated_at")
+		.select(
+			"id, name, description, quota_bytes, shotstack_monthly_credit_cap, owner_id, created_at, updated_at",
+		)
 		.eq("id", projectId)
 		.single();
 	if (!project) notFound();
 
-	const [members, invites, auditEntries, projectStats, ownerStats] = await Promise.all([
-		listProjectMembers(supabase, projectId),
-		membership.role === "owner" ? listActiveInvites(supabase, projectId) : Promise.resolve([]),
-		listProjectAuditEntries(supabase, projectId, { limit: 100 }),
-		getProjectStorageStats(supabase, project.owner_id, projectId, project.quota_bytes ?? null),
-		getOwnerStorageStats(supabase, project.owner_id),
-	]);
+	const [members, invites, auditEntries, projectStats, ownerStats, memberOverrideRows, projectSpentRow] =
+		await Promise.all([
+			listProjectMembers(supabase, projectId),
+			membership.role === "owner" ? listActiveInvites(supabase, projectId) : Promise.resolve([]),
+			listProjectAuditEntries(supabase, projectId, { limit: 100 }),
+			getProjectStorageStats(supabase, project.owner_id, projectId, project.quota_bytes ?? null),
+			getOwnerStorageStats(supabase, project.owner_id),
+			supabase
+				.from("project_member_credit_overrides")
+				.select("user_id, monthly_credit_cap")
+				.eq("project_id", projectId),
+			supabase.rpc("project_shotstack_spent_this_month", {
+				p_project_id: projectId,
+				p_actor_user_id: null,
+			}),
+		]);
 
 	const memberNames: Record<string, string> = {};
 	for (const m of members) {
 		memberNames[m.user_id] = m.user.name?.trim() || m.user.email || m.user_id;
 	}
+
+	const memberOverrides: Record<string, number> = {};
+	for (const row of (memberOverrideRows.data ?? []) as Array<{
+		user_id: string;
+		monthly_credit_cap: number;
+	}>) {
+		memberOverrides[row.user_id] = row.monthly_credit_cap;
+	}
+	const projectShotstackSpentThisMonth = Number(projectSpentRow.data ?? 0);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -81,6 +101,8 @@ export default async function ProjectDetailPage({
 					name: project.name as string,
 					description: (project.description as string | null) ?? null,
 					quotaBytes: (project.quota_bytes as number | null) ?? null,
+					shotstackMonthlyCreditCap:
+						(project.shotstack_monthly_credit_cap as number | null) ?? null,
 					ownerId: project.owner_id as string,
 					createdAt: project.created_at as string,
 					updatedAt: project.updated_at as string,
@@ -91,7 +113,11 @@ export default async function ProjectDetailPage({
 					ownerUsedBytes: ownerStats.usedBytes,
 					ownerMaxBytes: ownerStats.maxBytes,
 				}}
+				creditUsage={{
+					projectSpentThisMonth: projectShotstackSpentThisMonth,
+				}}
 				members={members}
+				memberCreditOverrides={memberOverrides}
 				invites={invites}
 				auditEntries={auditEntries}
 				memberNames={memberNames}

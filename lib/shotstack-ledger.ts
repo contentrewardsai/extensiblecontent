@@ -37,6 +37,14 @@ export interface ShotstackCreditEntry {
 	expires_at: string | null;
 	shotstack_render_id: string | null;
 	source_grant_id: string | null;
+	/** For debits: the project the render was charged to, when known. */
+	project_id: string | null;
+	/**
+	 * For debits: the project member who triggered the render. May differ
+	 * from `user_id` (the wallet-holding owner) when a collaborator
+	 * renders into a shared project.
+	 */
+	actor_user_id: string | null;
 	metadata: Record<string, unknown>;
 	created_at: string;
 }
@@ -82,16 +90,36 @@ export async function refreshCachedCreditBalance(
 }
 
 export interface RecordDebitInput {
+	/** Wallet holder — the *paying owner* whose credits are debited. */
 	userId: string;
 	credits: number;
 	shotstackRenderId: string;
 	description?: string;
 	metadata?: Record<string, unknown>;
+	/**
+	 * Optional project the render was scoped to. Required when the actor
+	 * is not the owner so per-project caps can attribute spend correctly.
+	 */
+	projectId?: string | null;
+	/**
+	 * Optional project member who triggered the render. Defaults to the
+	 * wallet owner (`userId`) when omitted, which matches the solo-owner
+	 * flow where the owner is also the actor.
+	 */
+	actorUserId?: string | null;
 }
 
 export async function recordRenderDebit(
 	supabase: SupabaseClient,
-	{ userId, credits, shotstackRenderId, description, metadata }: RecordDebitInput,
+	{
+		userId,
+		credits,
+		shotstackRenderId,
+		description,
+		metadata,
+		projectId = null,
+		actorUserId = null,
+	}: RecordDebitInput,
 ): Promise<number> {
 	if (credits <= 0) return getSpendableCredits(supabase, userId);
 
@@ -101,6 +129,10 @@ export async function recordRenderDebit(
 		credits: -Math.abs(credits),
 		description: description ?? `Render ${shotstackRenderId}`,
 		shotstack_render_id: shotstackRenderId,
+		project_id: projectId,
+		// Default to the wallet owner so the column is never null for
+		// solo-owner renders (keeps per-actor analytics simple).
+		actor_user_id: actorUserId ?? userId,
 		metadata: metadata ?? {},
 	});
 	if (error) {

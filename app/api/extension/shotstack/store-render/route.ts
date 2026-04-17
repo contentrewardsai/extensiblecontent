@@ -1,10 +1,45 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
+import { assertProjectAccess, ProjectAccessError } from "@/lib/project-access";
+import { assertProjectQuota, ProjectQuotaError } from "@/lib/project-quota";
+import { recordAdjustment } from "@/lib/shotstack-ledger";
 
 const BUCKET_PUBLIC = "post-media";
 const BUCKET_PRIVATE = "post-media-private";
 const SIGNED_URL_EXPIRY = 3600;
+
+/**
+ * Refund the credit debit for `renderId` so the user isn't charged for a
+ * render they couldn't store. We only refund the `credits_used` recorded on
+ * `shotstack_renders` (matches what `queueShotStackRender` debited) and
+ * write an adjustment so the billing-history page shows the offset clearly.
+ */
+async function refundRenderCredits(
+	supabase: SupabaseClient,
+	userId: string,
+	renderId: string,
+	reason: string,
+): Promise<void> {
+	const { data } = await supabase
+		.from("shotstack_renders")
+		.select("credits_used")
+		.eq("shotstack_render_id", renderId)
+		.eq("user_id", userId)
+		.maybeSingle();
+	const credits = Number((data as { credits_used: number | null } | null)?.credits_used ?? 0);
+	if (!Number.isFinite(credits) || credits <= 0) return;
+	try {
+		await recordAdjustment(supabase, {
+			userId,
+			credits,
+			description: `Refund for render ${renderId} (${reason})`,
+			metadata: { shotstack_render_id: renderId, reason },
+		});
+	} catch (err) {
+		console.error("[store-render] refund adjustment failed:", err);
+	}
+}
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -55,17 +90,44 @@ export async function POST(request: NextRequest) {
 
 	const supabase = getSupabase();
 
-	// Verify render belongs to user
+	// Resolve project membership first (editor required to write into the
+	// project). The project owner is the storage-cap holder — files live
+	// under the owner's prefix so an editor uploading on a shared project
+	// counts against the owner's pool. Same convention as the social-post
+	// storage upload route.
+	let owner_id: string;
+	try {
+		const membership = await assertProjectAccess(supabase, project_id, user.user_id, "editor");
+		owner_id = membership.ownerId;
+	} catch (err) {
+		if (err instanceof ProjectAccessError) {
+			return Response.json({ error: err.message }, { status: err.status });
+		}
+		throw err;
+	}
+
+	// Verify the render exists and belongs to the project owner. With
+	// project-shared rendering an actor (collaborator) can store a render
+	// they triggered against the owner's wallet — but only if they have
+	// editor access to the project the render was scoped to (already
+	// asserted above).
 	const { data: render } = await supabase
 		.from("shotstack_renders")
 		.select("id")
 		.eq("shotstack_render_id", renderId)
-		.eq("user_id", user.user_id)
-		.single();
+		.eq("user_id", owner_id)
+		.maybeSingle();
 
 	if (!render) {
 		return Response.json({ error: "Render not found" }, { status: 404 });
 	}
+
+	const { data: projectRow } = await supabase
+		.from("projects")
+		.select("quota_bytes")
+		.eq("id", project_id)
+		.maybeSingle();
+	const quotaBytes = (projectRow?.quota_bytes as number | null) ?? null;
 
 	// Fetch the rendered file from CDN
 	let fileBuffer: ArrayBuffer;
@@ -82,9 +144,30 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: msg }, { status: 502 });
 	}
 
+	// Quota check before the storage write. If we'd blow past the owner's
+	// cap (or the project sub-cap), refund the render credit so the user
+	// isn't charged for output they can't keep, and surface a 413.
+	try {
+		await assertProjectQuota(supabase, {
+			ownerId: owner_id,
+			projectId: project_id,
+			quotaBytes,
+			addBytes: fileBuffer.byteLength,
+		});
+	} catch (err) {
+		if (err instanceof ProjectQuotaError) {
+			// Refund the *owner's* wallet — that's where the debit landed
+			// (queueShotStackRender uses the project owner as the wallet
+			// holder, not the actor).
+			await refundRenderCredits(supabase, owner_id, renderId, err.code);
+			return Response.json({ error: err.message, code: err.code }, { status: err.status });
+		}
+		throw err;
+	}
+
 	const ext = format || "mp4";
 	const timestamp = Date.now();
-	const filePath = `${user.user_id}/${project_id}/generations/${template_id}/${timestamp}_${renderId}.${ext}`;
+	const filePath = `${owner_id}/${project_id}/generations/${template_id}/${timestamp}_${renderId}.${ext}`;
 
 	const { error: uploadError } = await supabase.storage
 		.from(bucket)
@@ -108,7 +191,6 @@ export async function POST(request: NextRequest) {
 		fileUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}`;
 	}
 
-	// Update the render record with the permanent Supabase URL
 	await supabase
 		.from("shotstack_renders")
 		.update({
@@ -116,13 +198,14 @@ export async function POST(request: NextRequest) {
 			updated_at: new Date().toISOString(),
 		})
 		.eq("shotstack_render_id", renderId)
-		.eq("user_id", user.user_id);
+		.eq("user_id", owner_id);
 
 	return Response.json({
 		ok: true,
 		file_url: fileUrl,
-		file_path: filePath.slice(user.user_id.length + 1),
+		file_path: filePath.slice(owner_id.length + 1),
 		project_id,
+		owner_id,
 		template_id,
 		private: isPrivate,
 	});
