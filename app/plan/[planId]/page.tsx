@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getPlanWithDetails, parsePlanId } from "@/lib/promotion-plan";
 import { getServiceSupabase } from "@/lib/supabase-service";
+import "../plan.css";
 import { PlanClient } from "./plan-client";
 
 interface PlanPageProps {
@@ -44,7 +45,10 @@ export default async function PlanPage({ params }: PlanPageProps) {
 
 function PlanIdError({ message }: { message: string }) {
 	return (
-		<div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
+		<div
+			data-plan-root
+			className="min-h-screen bg-slate-50 flex items-center justify-center p-8"
+		>
 			<div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
 				<h1 className="text-xl font-bold text-slate-800 mb-2">Invalid plan link</h1>
 				<p className="text-sm text-slate-600 mb-6">{message}</p>

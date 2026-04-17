@@ -1,0 +1,64 @@
+/*
+ * Plan-page style isolation.
+ *
+ * The whole app is wrapped in <WhopApp>, which loads Frosted UI's CSS
+ * (`@whop/react/styles.css`). Frosted UI styles a lot of native form
+ * controls and globals, which causes white-on-white text and other
+ * contrast problems on /plan/<slug>. This file scopes a hard reset to
+ * `[data-plan-root]` so the plan page renders with deterministic light
+ * colours regardless of what Frosted UI does above us.
+ *
+ * Imported once from `app/plan/[planId]/page.tsx`.
+ */
+
+[data-plan-root] {
+	color-scheme: light;
+	color: #1e293b; /* slate-800 */
+	background-color: #f8fafc; /* slate-50 */
+}
+
+/*
+ * Native form controls inside the plan page. Frosted UI sets
+ * `color: inherit; background-color: transparent;` on inputs, which
+ * normally inherits a sane colour — but inside dark Whop surfaces it
+ * can cascade as white. We pin everything to slate explicitly. Tailwind
+ * utility classes still win because they have higher specificity for
+ * the properties they set.
+ */
+[data-plan-root] input,
+[data-plan-root] select,
+[data-plan-root] textarea,
+[data-plan-root] button {
+	color: #1e293b;
+	-webkit-text-fill-color: #1e293b;
+}
+
+[data-plan-root] input::placeholder,
+[data-plan-root] textarea::placeholder {
+	color: #94a3b8; /* slate-400 */
+	-webkit-text-fill-color: #94a3b8;
+	opacity: 1;
+}
+
+/*
+ * <option> elements are rendered by the OS but inherit colours from
+ * the <select>'s computed style on most platforms. Pinning them to
+ * white-on-slate guarantees the dropdown menu is readable even when
+ * the user's OS is in dark mode (which is what causes the "white text
+ * on white background" effect for selects).
+ */
+[data-plan-root] select option {
+	color: #1e293b;
+	background-color: #ffffff;
+}
+
+/*
+ * Some Frosted UI button rules try to apply the framework's button
+ * background to *every* native <button>. We don't want any of that
+ * inside the plan page — Tailwind handles the look. Reset to neutral
+ * so the Tailwind classes on the buttons aren't fighting framework
+ * defaults.
+ */
+[data-plan-root] button {
+	background-color: transparent;
+}

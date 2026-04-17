@@ -267,7 +267,10 @@ export function PlanClient({ planId, initialDetail }: PlanClientProps) {
 
 	if (!detail) {
 		return (
-			<div className="min-h-screen bg-slate-50 flex items-center justify-center">
+			<div
+				data-plan-root
+				className="min-h-screen bg-slate-50 flex items-center justify-center"
+			>
 				<p className="text-slate-500">Loading plan…</p>
 			</div>
 		);
@@ -296,7 +299,10 @@ interface NotFoundProps {
 
 function NotFoundView({ planId, creating, createError, onCreate }: NotFoundProps) {
 	return (
-		<div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
+		<div
+			data-plan-root
+			className="min-h-screen bg-slate-50 flex items-center justify-center p-8"
+		>
 			<div className="max-w-lg w-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
 				<div className="mx-auto w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-4">
 					<Target className="w-6 h-6" />
@@ -419,7 +425,9 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 
 	const removePlatform = useCallback(
 		async (id: string) => {
-			if (!confirm("Remove this platform and all of its content?")) return;
+			// Confirmation is handled inline in the UI (`ConfirmIconButton`)
+			// because the page is often rendered inside a Whop iframe whose
+			// sandbox blocks native window.confirm() / window.alert() dialogs.
 			const res = await trackedFetch(`/api/plan/${planId}/platforms/${id}`, {
 				method: "DELETE",
 			});
@@ -500,7 +508,7 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 
 	const removeContent = useCallback(
 		async (id: string) => {
-			if (!confirm("Remove this content piece?")) return;
+			// Confirmation handled inline (see removePlatform comment).
 			const res = await trackedFetch(`/api/plan/${planId}/content/${id}`, { method: "DELETE" });
 			if (!res || !res.ok) return;
 			setDetail((prev) =>
@@ -565,7 +573,10 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	const estimates = ensureEstimates(plan.estimates);
 
 	return (
-		<div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+		<div
+			data-plan-root
+			className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800"
+		>
 			<div className="max-w-6xl mx-auto space-y-8">
 				<HeaderBar
 					planId={planId}
@@ -1263,14 +1274,18 @@ function PlatformCard(props: PlatformCardProps) {
 					>
 						<Plus className="w-4 h-4" /> Add Content Piece
 					</button>
-					<button
-						type="button"
-						onClick={onRemove}
-						className="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
-						aria-label="Remove platform"
-					>
-						<Trash2 className="w-5 h-5" />
-					</button>
+					<ConfirmIconButton
+						onConfirm={onRemove}
+						ariaLabel="Remove platform and all of its content"
+						idleClassName="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-lg"
+						armedClassName="text-white bg-red-500 hover:bg-red-600 transition-colors px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1"
+						idle={<Trash2 className="w-5 h-5" />}
+						armed={
+							<>
+								<Trash2 className="w-3.5 h-3.5" /> Click to confirm
+							</>
+						}
+					/>
 				</div>
 			</div>
 
@@ -1301,6 +1316,72 @@ function PlatformCard(props: PlatformCardProps) {
 				) : null}
 			</div>
 		</div>
+	);
+}
+
+/**
+ * Two-step confirm button. First click swaps the label/icon to a
+ * "Click to confirm" state; a second click within `revertAfterMs`
+ * actually fires `onConfirm`. We need this because the plan page is
+ * often embedded inside a Whop iframe whose sandbox blocks native
+ * `window.confirm()` dialogs (they silently return `false`, which
+ * meant our previous delete buttons just appeared dead).
+ *
+ * The component owns its arming state so callers don't have to
+ * track per-row UI flags.
+ */
+function ConfirmIconButton({
+	onConfirm,
+	idleClassName,
+	armedClassName,
+	idle,
+	armed,
+	ariaLabel,
+	revertAfterMs = 3500,
+}: {
+	onConfirm: () => void;
+	idleClassName: string;
+	armedClassName: string;
+	idle: React.ReactNode;
+	armed: React.ReactNode;
+	ariaLabel: string;
+	revertAfterMs?: number;
+}) {
+	const [isArmed, setIsArmed] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		};
+	}, []);
+
+	const handleClick = () => {
+		if (isArmed) {
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+				timerRef.current = null;
+			}
+			setIsArmed(false);
+			onConfirm();
+			return;
+		}
+		setIsArmed(true);
+		timerRef.current = setTimeout(() => {
+			setIsArmed(false);
+			timerRef.current = null;
+		}, revertAfterMs);
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={handleClick}
+			aria-label={isArmed ? `Confirm: ${ariaLabel}` : ariaLabel}
+			className={isArmed ? armedClassName : idleClassName}
+		>
+			{isArmed ? armed : idle}
+		</button>
 	);
 }
 
@@ -1609,13 +1690,22 @@ function ContentRow(props: ContentRowProps) {
 						/>
 						<h3 className="font-bold text-slate-800">Content</h3>
 					</div>
-					<button
-						type="button"
-						onClick={onRemove}
-						className="text-slate-400 hover:text-red-500 transition-colors text-xs flex items-center gap-1"
-					>
-						<Trash2 className="w-3 h-3" /> Remove Item
-					</button>
+					<ConfirmIconButton
+						onConfirm={onRemove}
+						ariaLabel="Remove this content item"
+						idleClassName="text-slate-400 hover:text-red-500 transition-colors text-xs flex items-center gap-1"
+						armedClassName="text-white bg-red-500 hover:bg-red-600 transition-colors text-xs flex items-center gap-1 px-2 py-1 rounded-md font-semibold"
+						idle={
+							<>
+								<Trash2 className="w-3 h-3" /> Remove Item
+							</>
+						}
+						armed={
+							<>
+								<Trash2 className="w-3 h-3" /> Click to confirm
+							</>
+						}
+					/>
 				</div>
 
 				<ContentPayloadEditor content={c} onUpdate={onUpdate} />
