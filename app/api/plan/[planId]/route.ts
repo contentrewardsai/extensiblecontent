@@ -21,6 +21,7 @@ interface RouteContext {
  */
 
 const ALL_PLAN_FIELDS = new Set([
+	"title",
 	"intro",
 	"objective",
 	"objective_description",
@@ -74,6 +75,7 @@ export async function PUT(_request: NextRequest, { params }: RouteContext) {
 	const { error: insertErr } = await supabase.from("promotion_plans").insert({
 		id: parsed.id,
 		admin_user_id: null,
+		title: "",
 		intro:
 			"We recommend a comprehensive, cross-platform approach to establish authority, drive engagement, and efficiently convert your audience into loyal customers.",
 		objective: "Leads",
@@ -116,6 +118,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
 	const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
+	if (body.title !== undefined) {
+		if (typeof body.title !== "string") {
+			return Response.json({ error: "title must be a string" }, { status: 400 });
+		}
+		updates.title = body.title.slice(0, 200);
+	}
 	if (typeof body.intro === "string") updates.intro = body.intro.slice(0, 4000);
 	if (body.objective !== undefined) {
 		if (!isValidObjective(body.objective)) {

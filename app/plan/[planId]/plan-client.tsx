@@ -6,6 +6,8 @@ import {
 	Briefcase,
 	Calendar,
 	Camera,
+	ChevronDown,
+	ChevronUp,
 	Cloud,
 	DollarSign,
 	Globe,
@@ -24,7 +26,7 @@ import {
 	TrendingUp,
 	Video,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ALLOWED_MEDIA_KINDS,
 	ALLOWED_OBJECTIVES,
@@ -75,6 +77,100 @@ function ensureEstimates(estimates: Record<string, number> | undefined | null): 
 }
 
 const jsonHeaders = { "Content-Type": "application/json" } as const;
+
+// ---------------------------------------------------------------------------
+// Save status — surfaced as a small pip in the header so the user always
+// knows whether their last edit reached the database. We expose a tiny
+// hook + a `trackedFetch` factory rather than an entire context: the
+// pattern is dead-simple and there's only one place that consumes it.
+// ---------------------------------------------------------------------------
+
+type SaveState = "idle" | "saving" | "saved" | "error";
+interface SaveStatus {
+	state: SaveState;
+	message?: string;
+}
+
+function useSaveStatus() {
+	const [status, setStatus] = useState<SaveStatus>({ state: "idle" });
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const setSaving = useCallback(() => {
+		if (timerRef.current) clearTimeout(timerRef.current);
+		setStatus({ state: "saving" });
+	}, []);
+	const setSaved = useCallback(() => {
+		if (timerRef.current) clearTimeout(timerRef.current);
+		setStatus({ state: "saved" });
+		// Auto-fade back to idle so the pip doesn't permanently say "Saved".
+		timerRef.current = setTimeout(() => setStatus({ state: "idle" }), 1800);
+	}, []);
+	const setError = useCallback((message: string) => {
+		if (timerRef.current) clearTimeout(timerRef.current);
+		setStatus({ state: "error", message });
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (timerRef.current) clearTimeout(timerRef.current);
+		};
+	}, []);
+
+	return { status, setSaving, setSaved, setError };
+}
+
+/**
+ * Wraps `fetch` so every save call updates the global save pip and
+ * surfaces a friendly error message to the user instead of failing
+ * silently. Returns the raw Response so callers can still inspect the
+ * body / status as before.
+ */
+function makeTrackedFetch(
+	hooks: { setSaving: () => void; setSaved: () => void; setError: (m: string) => void },
+) {
+	return async function trackedFetch(
+		input: string,
+		init?: RequestInit,
+	): Promise<Response | null> {
+		hooks.setSaving();
+		try {
+			const res = await fetch(input, init);
+			if (!res.ok) {
+				const body = (await res.clone().json().catch(() => ({}))) as { error?: string };
+				hooks.setError(body.error ?? `Save failed (HTTP ${res.status})`);
+				return res;
+			}
+			hooks.setSaved();
+			return res;
+		} catch (err) {
+			hooks.setError(err instanceof Error ? err.message : "Network error");
+			return null;
+		}
+	};
+}
+
+/**
+ * Fractional-position math for ordered lists. Returns the new position
+ * to assign when the item at `idx` moves one slot in `direction`, or
+ * `null` if the move would be a no-op (already at the edge). The list
+ * MUST be sorted by position before calling.
+ */
+function computeReorderPosition<T extends { position: number }>(
+	items: ReadonlyArray<T>,
+	idx: number,
+	direction: "up" | "down",
+): number | null {
+	if (direction === "up") {
+		if (idx <= 0) return null;
+		const prev = items[idx - 1];
+		const prevPrev = items[idx - 2];
+		return prevPrev ? (prevPrev.position + prev.position) / 2 : prev.position - 1;
+	}
+	if (idx >= items.length - 1) return null;
+	const next = items[idx + 1];
+	const nextNext = items[idx + 2];
+	return nextNext ? (next.position + nextNext.position) / 2 : next.position + 1;
+}
 
 /**
  * Translate a YouTube / Vimeo / generic URL to something safe to drop
@@ -238,19 +334,22 @@ interface PlanViewProps {
 function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	const { plan } = detail;
 
+	// ---- Save status pip + tracked fetch -------------------------------
+	const { status: saveStatus, setSaving, setSaved, setError } = useSaveStatus();
+	const trackedFetch = useMemo(
+		() => makeTrackedFetch({ setSaving, setSaved, setError }),
+		[setSaving, setSaved, setError],
+	);
+
 	// ---- Plan-level edits ----------------------------------------------
 	const patchPlan = useCallback(
 		async (patch: Partial<PromotionPlanRow>) => {
-			const res = await fetch(`/api/plan/${planId}`, {
+			const res = await trackedFetch(`/api/plan/${planId}`, {
 				method: "PATCH",
 				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
-			if (!res.ok) {
-				const body = (await res.json().catch(() => ({}))) as { error?: string };
-				alert(body.error ?? `Failed to save (HTTP ${res.status})`);
-				return;
-			}
+			if (!res || !res.ok) return;
 			const data = (await res.json()) as PlanApiResponse;
 			setDetail({
 				plan: data.plan,
@@ -261,7 +360,7 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 				template: data.template,
 			});
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	// ---- Comments -------------------------------------------------------
@@ -269,27 +368,27 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	const submitPlanComment = useCallback(async () => {
 		const text = planCommentDraft.trim();
 		if (!text) return;
-		const res = await fetch(`/api/plan/${planId}/comments`, {
+		const res = await trackedFetch(`/api/plan/${planId}/comments`, {
 			method: "POST",
 			headers: jsonHeaders,
 			body: JSON.stringify({ body: text }),
 		});
-		if (!res.ok) return;
+		if (!res || !res.ok) return;
 		const row = (await res.json()) as PromotionPlanCommentRow;
 		setPlanCommentDraft("");
 		setDetail((prev) => (prev ? { ...prev, planComments: [...prev.planComments, row] } : prev));
-	}, [planCommentDraft, planId, setDetail]);
+	}, [planCommentDraft, planId, setDetail, trackedFetch]);
 
 	const submitContentComment = useCallback(
 		async (contentId: string, kind: "post" | "ad", body: string) => {
 			const text = body.trim();
 			if (!text) return;
-			const res = await fetch(`/api/plan/${planId}/comments`, {
+			const res = await trackedFetch(`/api/plan/${planId}/comments`, {
 				method: "POST",
 				headers: jsonHeaders,
 				body: JSON.stringify({ body: text, content_id: contentId, kind }),
 			});
-			if (!res.ok) return;
+			if (!res || !res.ok) return;
 			const row = (await res.json()) as PromotionPlanCommentRow;
 			setDetail((prev) => {
 				if (!prev) return prev;
@@ -300,29 +399,31 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 				return { ...prev, contentComments: next };
 			});
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	// ---- Platforms ------------------------------------------------------
 	const addPlatform = useCallback(
 		async (name: string) => {
-			const res = await fetch(`/api/plan/${planId}/platforms`, {
+			const res = await trackedFetch(`/api/plan/${planId}/platforms`, {
 				method: "POST",
 				headers: jsonHeaders,
 				body: JSON.stringify({ name, followers: 0 }),
 			});
-			if (!res.ok) return;
+			if (!res || !res.ok) return;
 			const row = (await res.json()) as PromotionPlanPlatformRow;
 			setDetail((prev) => (prev ? { ...prev, platforms: [...prev.platforms, row] } : prev));
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	const removePlatform = useCallback(
 		async (id: string) => {
 			if (!confirm("Remove this platform and all of its content?")) return;
-			const res = await fetch(`/api/plan/${planId}/platforms/${id}`, { method: "DELETE" });
-			if (!res.ok) return;
+			const res = await trackedFetch(`/api/plan/${planId}/platforms/${id}`, {
+				method: "DELETE",
+			});
+			if (!res || !res.ok) return;
 			setDetail((prev) =>
 				prev
 					? {
@@ -333,68 +434,80 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 					: prev,
 			);
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	const updatePlatform = useCallback(
-		async (id: string, patch: { name?: string; followers?: number }) => {
-			const res = await fetch(`/api/plan/${planId}/platforms/${id}`, {
+		async (id: string, patch: { name?: string; followers?: number; position?: number }) => {
+			const res = await trackedFetch(`/api/plan/${planId}/platforms/${id}`, {
 				method: "PATCH",
 				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
-			if (!res.ok) return;
+			if (!res || !res.ok) return;
 			const row = (await res.json()) as PromotionPlanPlatformRow;
 			setDetail((prev) =>
 				prev
-					? { ...prev, platforms: prev.platforms.map((p) => (p.id === id ? row : p)) }
+					? {
+							...prev,
+							platforms: prev.platforms
+								.map((p) => (p.id === id ? row : p))
+								.sort((a, b) => a.position - b.position),
+						}
 					: prev,
 			);
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	// ---- Content --------------------------------------------------------
 	const addContent = useCallback(
 		async (platformId: string) => {
-			const res = await fetch(`/api/plan/${planId}/content`, {
+			const res = await trackedFetch(`/api/plan/${planId}/content`, {
 				method: "POST",
 				headers: jsonHeaders,
 				body: JSON.stringify({ platform_id: platformId, is_post: true, is_ad: false }),
 			});
-			if (!res.ok) return;
+			if (!res || !res.ok) return;
 			const row = (await res.json()) as PromotionPlanContentRow;
 			setDetail((prev) => (prev ? { ...prev, content: [...prev.content, row] } : prev));
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	const updateContent = useCallback(
 		async (id: string, patch: Partial<PromotionPlanContentRow>) => {
-			const res = await fetch(`/api/plan/${planId}/content/${id}`, {
+			const res = await trackedFetch(`/api/plan/${planId}/content/${id}`, {
 				method: "PATCH",
 				headers: jsonHeaders,
 				body: JSON.stringify(patch),
 			});
-			if (!res.ok) return;
+			if (!res || !res.ok) return;
 			const row = (await res.json()) as PromotionPlanContentRow;
 			setDetail((prev) =>
-				prev ? { ...prev, content: prev.content.map((c) => (c.id === id ? row : c)) } : prev,
+				prev
+					? {
+							...prev,
+							content: prev.content
+								.map((c) => (c.id === id ? row : c))
+								.sort((a, b) => a.position - b.position),
+						}
+					: prev,
 			);
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	const removeContent = useCallback(
 		async (id: string) => {
 			if (!confirm("Remove this content piece?")) return;
-			const res = await fetch(`/api/plan/${planId}/content/${id}`, { method: "DELETE" });
-			if (!res.ok) return;
+			const res = await trackedFetch(`/api/plan/${planId}/content/${id}`, { method: "DELETE" });
+			if (!res || !res.ok) return;
 			setDetail((prev) =>
 				prev ? { ...prev, content: prev.content.filter((c) => c.id !== id) } : prev,
 			);
 		},
-		[planId, setDetail],
+		[planId, setDetail, trackedFetch],
 	);
 
 	// ---- Recommendations (derived) -------------------------------------
@@ -454,7 +567,13 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	return (
 		<div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
 			<div className="max-w-6xl mx-auto space-y-8">
-				<HeaderBar planId={planId} onRefresh={() => refreshDetail()} />
+				<HeaderBar
+					planId={planId}
+					title={plan.title}
+					onRenameTitle={(t) => patchPlan({ title: t })}
+					onRefresh={() => refreshDetail()}
+					saveStatus={saveStatus}
+				/>
 
 				<div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 					<div className="lg:col-span-2 space-y-8">
@@ -496,6 +615,26 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 					updateContent={updateContent}
 					removeContent={removeContent}
 					submitContentComment={submitContentComment}
+					onMovePlatform={(id, direction) => {
+						const sorted = [...detail.platforms].sort((a, b) => a.position - b.position);
+						const idx = sorted.findIndex((p) => p.id === id);
+						if (idx < 0) return;
+						const next = computeReorderPosition(sorted, idx, direction);
+						if (next === null) return;
+						void updatePlatform(id, { position: next });
+					}}
+					onMoveContent={(id, direction) => {
+						const target = detail.content.find((c) => c.id === id);
+						if (!target) return;
+						const siblings = detail.content
+							.filter((c) => c.platform_id === target.platform_id)
+							.sort((a, b) => a.position - b.position);
+						const idx = siblings.findIndex((c) => c.id === id);
+						if (idx < 0) return;
+						const next = computeReorderPosition(siblings, idx, direction);
+						if (next === null) return;
+						void updateContent(id, { position: next });
+					}}
 				/>
 			</div>
 		</div>
@@ -506,20 +645,44 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 // Header
 // ---------------------------------------------------------------------------
 
-function HeaderBar({ planId, onRefresh }: { planId: string; onRefresh: () => void }) {
+interface HeaderBarProps {
+	planId: string;
+	title: string;
+	onRenameTitle: (t: string) => Promise<void>;
+	onRefresh: () => void;
+	saveStatus: SaveStatus;
+}
+
+function HeaderBar({ planId, title, onRenameTitle, onRefresh, saveStatus }: HeaderBarProps) {
+	const [localTitle, setLocalTitle] = useState(title);
+	useEffect(() => setLocalTitle(title), [title]);
+
 	return (
-		<div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
-			<div className="flex items-center gap-3">
-				<div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black text-lg">EC</div>
-				<div>
+		<div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+			<div className="flex items-center gap-3 min-w-0 flex-1">
+				<div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black text-lg shrink-0">
+					EC
+				</div>
+				<div className="min-w-0 flex-1">
 					<p className="text-xs uppercase tracking-wider text-slate-400">Promotion Plan</p>
-					<h1 className="text-xl font-bold text-slate-800 leading-tight">/plan/{planId}</h1>
+					<input
+						type="text"
+						placeholder={`/plan/${planId}`}
+						value={localTitle}
+						onChange={(e) => setLocalTitle(e.target.value)}
+						onBlur={() => {
+							if (localTitle !== title) onRenameTitle(localTitle);
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+						}}
+						className="w-full bg-transparent text-xl font-bold text-slate-800 leading-tight outline-none focus:ring-2 focus:ring-emerald-500 rounded px-1 -mx-1 placeholder:text-slate-300"
+					/>
+					<p className="text-[11px] text-slate-400 mt-0.5">/plan/{planId}</p>
 				</div>
 			</div>
-			<div className="flex items-center gap-3">
-				<span className="text-xs text-slate-500">
-					Open document — anyone with the link can edit, comment, and approve.
-				</span>
+			<div className="flex items-center gap-3 shrink-0">
+				<SaveStatusPip status={saveStatus} />
 				<button
 					type="button"
 					onClick={onRefresh}
@@ -529,6 +692,34 @@ function HeaderBar({ planId, onRefresh }: { planId: string; onRefresh: () => voi
 				</button>
 			</div>
 		</div>
+	);
+}
+
+function SaveStatusPip({ status }: { status: SaveStatus }) {
+	// Always render so the layout doesn't jump; just swap label / colour.
+	const styles: Record<SaveState, { dot: string; text: string; label: string }> = {
+		idle: {
+			dot: "bg-slate-300",
+			text: "text-slate-400",
+			label: "Open document — autosaves as you type",
+		},
+		saving: { dot: "bg-amber-400 animate-pulse", text: "text-amber-600", label: "Saving…" },
+		saved: { dot: "bg-emerald-500", text: "text-emerald-600", label: "Saved" },
+		error: {
+			dot: "bg-red-500",
+			text: "text-red-600",
+			label: status.message ?? "Save failed",
+		},
+	};
+	const s = styles[status.state];
+	return (
+		<span
+			className={`inline-flex items-center gap-2 text-xs font-medium ${s.text} max-w-[260px] truncate`}
+			title={status.state === "error" ? status.message : undefined}
+		>
+			<span className={`inline-block w-2 h-2 rounded-full ${s.dot}`} />
+			{s.label}
+		</span>
 	);
 }
 
@@ -840,11 +1031,16 @@ interface PlatformsSectionProps {
 	dailyBudget: number;
 	addPlatform: (name: string) => Promise<void>;
 	removePlatform: (id: string) => Promise<void>;
-	updatePlatform: (id: string, patch: { name?: string; followers?: number }) => Promise<void>;
+	updatePlatform: (
+		id: string,
+		patch: { name?: string; followers?: number; position?: number },
+	) => Promise<void>;
 	addContent: (platformId: string) => Promise<void>;
 	updateContent: (id: string, patch: Partial<PromotionPlanContentRow>) => Promise<void>;
 	removeContent: (id: string) => Promise<void>;
 	submitContentComment: (contentId: string, kind: "post" | "ad", body: string) => Promise<void>;
+	onMovePlatform: (id: string, direction: "up" | "down") => void;
+	onMoveContent: (id: string, direction: "up" | "down") => void;
 }
 
 function PlatformsSection(props: PlatformsSectionProps) {
@@ -859,6 +1055,8 @@ function PlatformsSection(props: PlatformsSectionProps) {
 		updateContent,
 		removeContent,
 		submitContentComment,
+		onMovePlatform,
+		onMoveContent,
 	} = props;
 
 	const contentByPlatform = useMemo(() => {
@@ -895,14 +1093,18 @@ function PlatformsSection(props: PlatformsSectionProps) {
 							key={platform.id}
 							platform={platform}
 							index={idx}
+							isFirst={idx === 0}
+							isLast={idx === detail.platforms.length - 1}
 							content={contentByPlatform.get(platform.id) ?? []}
 							objective={objective}
 							dailyBudget={dailyBudget}
 							onRemove={() => removePlatform(platform.id)}
 							onUpdate={(patch) => updatePlatform(platform.id, patch)}
+							onMove={(direction) => onMovePlatform(platform.id, direction)}
 							onAddContent={() => addContent(platform.id)}
 							onUpdateContent={updateContent}
 							onRemoveContent={removeContent}
+							onMoveContent={onMoveContent}
 							commentBuckets={detail.contentComments}
 							submitContentComment={submitContentComment}
 						/>
@@ -961,14 +1163,18 @@ function AddPlatformDropdown({ onAdd }: { onAdd: (name: string) => Promise<void>
 interface PlatformCardProps {
 	platform: PromotionPlanPlatformRow;
 	index: number;
+	isFirst: boolean;
+	isLast: boolean;
 	content: PromotionPlanContentRow[];
 	objective: string;
 	dailyBudget: number;
 	onRemove: () => void;
-	onUpdate: (patch: { name?: string; followers?: number }) => void;
+	onUpdate: (patch: { name?: string; followers?: number; position?: number }) => void;
+	onMove: (direction: "up" | "down") => void;
 	onAddContent: () => void;
 	onUpdateContent: (id: string, patch: Partial<PromotionPlanContentRow>) => Promise<void>;
 	onRemoveContent: (id: string) => Promise<void>;
+	onMoveContent: (id: string, direction: "up" | "down") => void;
 	commentBuckets: PromotionPlanDetail["contentComments"];
 	submitContentComment: (contentId: string, kind: "post" | "ad", body: string) => Promise<void>;
 }
@@ -977,34 +1183,64 @@ function PlatformCard(props: PlatformCardProps) {
 	const {
 		platform,
 		index,
+		isFirst,
+		isLast,
 		content,
 		objective,
 		dailyBudget,
 		onRemove,
 		onUpdate,
+		onMove,
 		onAddContent,
 		onUpdateContent,
 		onRemoveContent,
+		onMoveContent,
 		commentBuckets,
 		submitContentComment,
 	} = props;
 	const platInfo = PLATFORMS.find((p) => p.name === platform.name);
 	const Icon = platInfo?.icon ?? Target;
+	const [name, setName] = useState(platform.name);
 	const [followers, setFollowers] = useState(platform.followers);
+	useEffect(() => setName(platform.name), [platform.name]);
 	useEffect(() => setFollowers(platform.followers), [platform.followers]);
 
 	return (
 		<div className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
 			<div className="bg-white p-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-				<div className="flex items-center gap-4">
+				<div className="flex items-center gap-4 min-w-0 flex-1">
+					<ReorderControls
+						isFirst={isFirst}
+						isLast={isLast}
+						onMove={onMove}
+						label={`platform ${platform.name}`}
+					/>
 					<div className="bg-emerald-50 p-3 rounded-xl shrink-0">
 						<Icon className="w-6 h-6 text-emerald-600" />
 					</div>
-					<div>
-						<p className="font-bold text-lg text-slate-800">
-							{platform.name}{" "}
-							<span className="text-slate-400 font-normal text-sm ml-2">Profile {index + 1}</span>
-						</p>
+					<div className="min-w-0 flex-1">
+						<div className="flex items-baseline gap-2">
+							<input
+								type="text"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								onBlur={() => {
+									const trimmed = name.trim();
+									if (!trimmed) {
+										setName(platform.name);
+										return;
+									}
+									if (trimmed !== platform.name) onUpdate({ name: trimmed });
+								}}
+								onKeyDown={(e) => {
+									if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+								}}
+								className="font-bold text-lg text-slate-800 bg-transparent outline-none focus:ring-2 focus:ring-emerald-500 rounded px-1 -mx-1 min-w-0"
+							/>
+							<span className="text-slate-400 font-normal text-sm shrink-0">
+								Profile {index + 1}
+							</span>
+						</div>
 						<div className="flex items-center gap-2 mt-1">
 							<label className="text-xs text-slate-500 font-medium">Followers:</label>
 							<input
@@ -1019,7 +1255,7 @@ function PlatformCard(props: PlatformCardProps) {
 						</div>
 					</div>
 				</div>
-				<div className="flex items-center gap-3">
+				<div className="flex items-center gap-3 shrink-0">
 					<button
 						type="button"
 						onClick={onAddContent}
@@ -1044,12 +1280,15 @@ function PlatformCard(props: PlatformCardProps) {
 						key={c.id}
 						content={c}
 						index={cIdx}
+						isFirst={cIdx === 0}
+						isLast={cIdx === content.length - 1}
 						platformName={platform.name}
 						objective={objective}
 						dailyBudget={dailyBudget}
 						commentBucket={commentBuckets[c.id] ?? { post: [], ad: [] }}
 						onUpdate={(patch) => onUpdateContent(c.id, patch)}
 						onRemove={() => onRemoveContent(c.id)}
+						onMove={(direction) => onMoveContent(c.id, direction)}
 						submitComment={(kind, body) => submitContentComment(c.id, kind, body)}
 					/>
 				))}
@@ -1061,6 +1300,46 @@ function PlatformCard(props: PlatformCardProps) {
 					</div>
 				) : null}
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Vertical pair of up/down chevrons used to reorder both platforms and
+ * content rows. Buttons at the boundary are visually disabled so the
+ * affordance is obvious without removing them from the layout.
+ */
+function ReorderControls({
+	isFirst,
+	isLast,
+	onMove,
+	label,
+}: {
+	isFirst: boolean;
+	isLast: boolean;
+	onMove: (direction: "up" | "down") => void;
+	label: string;
+}) {
+	return (
+		<div className="flex flex-col gap-0.5 shrink-0">
+			<button
+				type="button"
+				onClick={() => onMove("up")}
+				disabled={isFirst}
+				aria-label={`Move ${label} up`}
+				className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+			>
+				<ChevronUp className="w-4 h-4" />
+			</button>
+			<button
+				type="button"
+				onClick={() => onMove("down")}
+				disabled={isLast}
+				aria-label={`Move ${label} down`}
+				className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+			>
+				<ChevronDown className="w-4 h-4" />
+			</button>
 		</div>
 	);
 }
@@ -1198,15 +1477,92 @@ function ContentPayloadEditor({ content, onUpdate }: ContentPayloadEditorProps) 
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Ad-targeting fields with local state + blur-commit (was firing a PATCH
+// on every keystroke before — this batches each field into a single save
+// when the user tabs / clicks away).
+// ---------------------------------------------------------------------------
+
+const TARGETING_FIELDS: ReadonlyArray<{
+	key: keyof PromotionPlanContentRow["targeting"];
+	label: string;
+	placeholder: string;
+	type?: "select";
+}> = [
+	{ key: "age", label: "Age Range", placeholder: "e.g. 18-35" },
+	{ key: "gender", label: "Gender", placeholder: "All Genders", type: "select" },
+	{ key: "location", label: "Location", placeholder: "e.g. Nationwide, New York" },
+	{ key: "interests", label: "Interests", placeholder: "e.g. Technology, Fitness" },
+];
+
+function TargetingFields({
+	targeting,
+	onUpdate,
+}: {
+	targeting: PromotionPlanContentRow["targeting"];
+	onUpdate: (patch: Partial<PromotionPlanContentRow>) => Promise<void>;
+}) {
+	// Mirror server state in local state so typing doesn't trigger a save
+	// on every keystroke. Reset whenever the server value changes (e.g.
+	// after a successful PATCH or someone else's edit).
+	const [local, setLocal] = useState(targeting);
+	useEffect(() => setLocal(targeting), [targeting]);
+
+	const flush = (key: keyof PromotionPlanContentRow["targeting"]) => {
+		if ((local[key] ?? "") === (targeting[key] ?? "")) return;
+		onUpdate({ targeting: { ...targeting, ...local } });
+	};
+
+	return (
+		<div className="space-y-3">
+			{TARGETING_FIELDS.map((field) => (
+				<div key={field.key}>
+					<label className="block text-[10px] font-bold text-slate-500 uppercase">
+						{field.label}
+					</label>
+					{field.type === "select" ? (
+						<select
+							value={local[field.key] ?? "All"}
+							onChange={(e) => {
+								const next = { ...local, [field.key]: e.target.value };
+								setLocal(next);
+								// Selects commit immediately — no "typing" intermediate state.
+								onUpdate({ targeting: { ...targeting, ...next } });
+							}}
+							className="w-full p-1.5 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-blue-500"
+						>
+							<option value="All">All Genders</option>
+							<option value="Men">Men</option>
+							<option value="Women">Women</option>
+						</select>
+					) : (
+						<input
+							type="text"
+							placeholder={field.placeholder}
+							value={local[field.key] ?? ""}
+							onChange={(e) => setLocal((prev) => ({ ...prev, [field.key]: e.target.value }))}
+							onBlur={() => flush(field.key)}
+							className="w-full p-1.5 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-blue-500"
+						/>
+					)}
+				</div>
+			))}
+		</div>
+	);
+}
+
 interface ContentRowProps {
 	content: PromotionPlanContentRow;
 	index: number;
+	isFirst: boolean;
+	isLast: boolean;
 	platformName: string;
 	objective: string;
 	dailyBudget: number;
 	commentBucket: { post: PromotionPlanCommentRow[]; ad: PromotionPlanCommentRow[] };
 	onUpdate: (patch: Partial<PromotionPlanContentRow>) => Promise<void>;
 	onRemove: () => Promise<void>;
+	onMove: (direction: "up" | "down") => void;
 	submitComment: (kind: "post" | "ad", body: string) => Promise<void>;
 }
 
@@ -1214,12 +1570,15 @@ function ContentRow(props: ContentRowProps) {
 	const {
 		content: c,
 		index,
+		isFirst,
+		isLast,
 		platformName,
 		objective,
 		dailyBudget,
 		commentBucket,
 		onUpdate,
 		onRemove,
+		onMove,
 		submitComment,
 	} = props;
 
@@ -1227,13 +1586,6 @@ function ContentRow(props: ContentRowProps) {
 	const [adDraft, setAdDraft] = useState("");
 	const [adAmount, setAdAmount] = useState<number>(c.ad_budget_amount);
 	useEffect(() => setAdAmount(c.ad_budget_amount), [c.ad_budget_amount]);
-
-	const targetingFields: ReadonlyArray<{ key: keyof PromotionPlanContentRow["targeting"]; label: string; placeholder: string; type?: "select" }> = [
-		{ key: "age", label: "Age Range", placeholder: "e.g. 18-35" },
-		{ key: "gender", label: "Gender", placeholder: "All Genders", type: "select" },
-		{ key: "location", label: "Location", placeholder: "e.g. Nationwide, New York" },
-		{ key: "interests", label: "Interests", placeholder: "e.g. Technology, Fitness" },
-	];
 
 	return (
 		<div className="p-6 flex flex-col xl:flex-row gap-8 items-start bg-slate-50/50">
@@ -1247,8 +1599,16 @@ function ContentRow(props: ContentRowProps) {
 			</div>
 
 			<div className="flex-1 w-full space-y-6">
-				<div className="flex justify-between items-center border-b border-slate-200 pb-3">
-					<h3 className="font-bold text-slate-800">Content</h3>
+				<div className="flex justify-between items-center border-b border-slate-200 pb-3 gap-4">
+					<div className="flex items-center gap-3">
+						<ReorderControls
+							isFirst={isFirst}
+							isLast={isLast}
+							onMove={onMove}
+							label={`content item ${index + 1}`}
+						/>
+						<h3 className="font-bold text-slate-800">Content</h3>
+					</div>
 					<button
 						type="button"
 						onClick={onRemove}
@@ -1354,38 +1714,7 @@ function ContentRow(props: ContentRowProps) {
 									</div>
 								) : null}
 							</div>
-							<div className="space-y-3">
-								{targetingFields.map((field) => (
-									<div key={field.key}>
-										<label className="block text-[10px] font-bold text-slate-500 uppercase">
-											{field.label}
-										</label>
-										{field.type === "select" ? (
-											<select
-												value={c.targeting?.[field.key] ?? "All"}
-												onChange={(e) =>
-													onUpdate({ targeting: { ...c.targeting, [field.key]: e.target.value } })
-												}
-												className="w-full p-1.5 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-blue-500"
-											>
-												<option value="All">All Genders</option>
-												<option value="Men">Men</option>
-												<option value="Women">Women</option>
-											</select>
-										) : (
-											<input
-												type="text"
-												placeholder={field.placeholder}
-												value={c.targeting?.[field.key] ?? ""}
-												onChange={(e) =>
-													onUpdate({ targeting: { ...c.targeting, [field.key]: e.target.value } })
-												}
-												className="w-full p-1.5 text-sm border-b border-slate-300 bg-transparent outline-none focus:border-blue-500"
-											/>
-										)}
-									</div>
-								))}
-							</div>
+							<TargetingFields targeting={c.targeting} onUpdate={onUpdate} />
 						</div>
 					</div>
 				) : null}

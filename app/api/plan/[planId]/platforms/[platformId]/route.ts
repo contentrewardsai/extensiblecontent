@@ -32,9 +32,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 		.maybeSingle();
 	if (!plan) return Response.json({ error: "Plan not found" }, { status: 404 });
 
-	let body: { name?: unknown; followers?: unknown };
+	let body: { name?: unknown; followers?: unknown; position?: unknown };
 	try {
-		body = (await request.json()) as { name?: unknown; followers?: unknown };
+		body = (await request.json()) as typeof body;
 	} catch {
 		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
@@ -52,6 +52,13 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 			return Response.json({ error: "followers must be a non-negative integer" }, { status: 400 });
 		}
 		updates.followers = n;
+	}
+	if (body.position !== undefined) {
+		const n = Number(body.position);
+		if (!Number.isFinite(n)) {
+			return Response.json({ error: "position must be a finite number" }, { status: 400 });
+		}
+		updates.position = n;
 	}
 	if (Object.keys(updates).length === 0) {
 		return Response.json({ error: "No fields to update" }, { status: 400 });

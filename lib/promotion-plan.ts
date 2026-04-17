@@ -144,6 +144,8 @@ export function detectMediaKind(rawUrl: string): MediaKind {
 export interface PromotionPlanRow {
 	id: string;
 	admin_user_id: string | null;
+	/** Free-form display title; falls back to the slug (`id`) when empty. */
+	title: string;
 	intro: string;
 	objective: PlanObjective | string;
 	objective_description: string;
@@ -238,7 +240,7 @@ export async function getPlanWithDetails(
 	const { data: plan, error: planErr } = await supabase
 		.from("promotion_plans")
 		.select(
-			"id, admin_user_id, intro, objective, objective_description, budget_type, daily_budget, end_date, estimates, shotstack_template_id, created_at, updated_at",
+			"id, admin_user_id, title, intro, objective, objective_description, budget_type, daily_budget, end_date, estimates, shotstack_template_id, created_at, updated_at",
 		)
 		.eq("id", planId)
 		.maybeSingle();

@@ -140,6 +140,14 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 		updates.cta_url = body.cta_url.slice(0, 2048);
 	}
 
+	if (body.position !== undefined) {
+		const n = Number(body.position);
+		if (!Number.isFinite(n)) {
+			return Response.json({ error: "position must be a finite number" }, { status: 400 });
+		}
+		updates.position = n;
+	}
+
 	if (Object.keys(updates).length === 0) {
 		return Response.json({ error: "No fields to update" }, { status: 400 });
 	}
