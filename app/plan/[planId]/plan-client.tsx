@@ -1148,14 +1148,15 @@ function DistributionComparison({
 						<label className="text-[10px] font-bold text-slate-500 uppercase text-center mb-1">
 							Funnel Strategy
 						</label>
-						<div className="flex bg-slate-200 rounded-lg p-1">
+						<div className="flex bg-slate-200 rounded-lg p-1 gap-1">
 							<button
 								type="button"
 								onClick={() => commit({ ...local, funnel_type: "leads" })}
+								aria-pressed={local.funnel_type === "leads"}
 								className={`flex-1 text-xs py-1.5 px-2 rounded-md font-semibold transition-all ${
 									local.funnel_type === "leads"
-										? "bg-white text-emerald-600 shadow-sm"
-										: "text-slate-500 hover:text-slate-700"
+										? "bg-white text-emerald-600 shadow ring-1 ring-emerald-200"
+										: "bg-transparent text-slate-600 hover:bg-white/50 hover:text-slate-800"
 								}`}
 							>
 								Capture Leads
@@ -1163,10 +1164,11 @@ function DistributionComparison({
 							<button
 								type="button"
 								onClick={() => commit({ ...local, funnel_type: "sales" })}
+								aria-pressed={local.funnel_type === "sales"}
 								className={`flex-1 text-xs py-1.5 px-2 rounded-md font-semibold transition-all ${
 									local.funnel_type === "sales"
-										? "bg-white text-blue-600 shadow-sm"
-										: "text-slate-500 hover:text-slate-700"
+										? "bg-white text-blue-600 shadow ring-1 ring-blue-200"
+										: "bg-transparent text-slate-600 hover:bg-white/50 hover:text-slate-800"
 								}`}
 							>
 								Direct to Sales

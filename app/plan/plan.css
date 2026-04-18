@@ -21,14 +21,19 @@
  * Native form controls inside the plan page. Frosted UI sets
  * `color: inherit; background-color: transparent;` on inputs, which
  * normally inherits a sane colour — but inside dark Whop surfaces it
- * can cascade as white. We pin everything to slate explicitly. Tailwind
- * utility classes still win because they have higher specificity for
- * the properties they set.
+ * can cascade as white. We pin everything to slate explicitly.
+ *
+ * Buttons are NOT included here on purpose: many of the plan's
+ * buttons rely on Tailwind text-color utilities (`text-white`,
+ * `text-emerald-600`, etc.). Anything we set via this element
+ * selector wins on specificity and would defeat those utilities,
+ * producing slate-on-slate "selected" toggles. Tailwind's text
+ * utilities are sufficient; the few raw <button>s without one will
+ * fall through to the `[data-plan-root]` `color` set above.
  */
 [data-plan-root] input,
 [data-plan-root] select,
-[data-plan-root] textarea,
-[data-plan-root] button {
+[data-plan-root] textarea {
 	color: #1e293b;
 	-webkit-text-fill-color: #1e293b;
 }
@@ -52,13 +57,3 @@
 	background-color: #ffffff;
 }
 
-/*
- * Some Frosted UI button rules try to apply the framework's button
- * background to *every* native <button>. We don't want any of that
- * inside the plan page — Tailwind handles the look. Reset to neutral
- * so the Tailwind classes on the buttons aren't fighting framework
- * defaults.
- */
-[data-plan-root] button {
-	background-color: transparent;
-}
