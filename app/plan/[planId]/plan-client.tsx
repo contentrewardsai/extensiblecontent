@@ -754,7 +754,7 @@ function HeaderBar({ planId, title, onRenameTitle, onRefresh, saveStatus }: Head
 					<p className="text-xs uppercase tracking-wider text-slate-400">Promotion Plan</p>
 					<input
 						type="text"
-						placeholder={`/plan/${planId}`}
+						placeholder="Untitled plan"
 						value={localTitle}
 						onChange={(e) => setLocalTitle(e.target.value)}
 						onBlur={() => {
@@ -765,7 +765,15 @@ function HeaderBar({ planId, title, onRenameTitle, onRefresh, saveStatus }: Head
 						}}
 						className="w-full bg-transparent text-xl font-bold text-slate-800 leading-tight outline-none focus:ring-2 focus:ring-emerald-500 rounded px-1 -mx-1 placeholder:text-slate-300"
 					/>
-					<p className="text-[11px] text-slate-400 mt-0.5">/plan/{planId}</p>
+					<a
+						href={`https://www.extensiblecontent.com/plan/${planId}`}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="text-[11px] text-slate-400 hover:text-emerald-600 mt-0.5 truncate block"
+						title="Open plan in a new tab"
+					>
+						https://www.extensiblecontent.com/plan/{planId}
+					</a>
 				</div>
 			</div>
 			<div className="flex items-center gap-3 shrink-0">
