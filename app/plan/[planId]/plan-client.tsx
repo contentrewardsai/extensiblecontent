@@ -564,7 +564,6 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 			}
 		}
 		for (const [name, info] of lowByPlatform) {
-			const suggested = Math.max(10, Math.min(20, plan.daily_budget / 2));
 			const isYouTube = SUBSCRIBER_PLATFORMS.has(name);
 			const audienceWord = isYouTube ? "subscribers" : "followers";
 			const summary =
@@ -575,8 +574,8 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 				? `Grow ${name} Subscribers`
 				: `Audience Building for ${name}`;
 			const action = isYouTube
-				? `We recommend allocating $${suggested.toFixed(2)}/day towards a YouTube subscriber-growth campaign (Video Views + channel-subscription CTAs) to build an initial foundation.`
-				: `We recommend allocating $${suggested.toFixed(2)}/day from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.`;
+				? "We recommend allocating up to $20.00 from your budget towards a YouTube subscriber-growth campaign (Video Views + channel-subscription CTAs) to build an initial foundation."
+				: "We recommend allocating up to $20.00 from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.";
 			recs.push({
 				type: "ad",
 				message,
@@ -607,7 +606,7 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 			});
 		}
 		return recs;
-	}, [detail.platforms, plan.daily_budget]);
+	}, [detail.platforms]);
 
 	const totalBudgetLabel = useMemo(() => {
 		if (plan.budget_type === "monthly") {
