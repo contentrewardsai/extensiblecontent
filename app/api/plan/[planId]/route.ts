@@ -84,7 +84,7 @@ export async function PUT(_request: NextRequest, { params }: RouteContext) {
 		objective: "Leads",
 		objective_description: "",
 		budget_type: "monthly",
-		daily_budget: 50,
+		daily_budget: 10,
 		estimates: { views: 25000, clicks: 1200, lpViews: 600, leads: 45, sales: 3 },
 		comparison: defaultComparison(),
 	});

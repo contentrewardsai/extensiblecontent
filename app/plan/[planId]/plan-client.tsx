@@ -307,7 +307,7 @@ function NotFoundView({ planId, creating, createError, onCreate }: NotFoundProps
 				</div>
 				<h1 className="text-xl font-bold text-slate-800 mb-1">No plan at /plan/{planId}</h1>
 				<p className="text-sm text-slate-600 mb-6">
-					This slug is available. Click below to spin up the plan — anyone with the link can then
+					This url is available. Click below to spin up the plan — anyone with the link can then
 					view it, edit it, comment, and approve / reject content.
 				</p>
 				{createError ? <p className="text-sm text-red-600 mb-4">{createError}</p> : null}
