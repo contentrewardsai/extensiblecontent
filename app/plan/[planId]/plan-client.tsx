@@ -1,7 +1,9 @@
 "use client";
 
 import {
+	ArrowDown,
 	AtSign,
+	BarChart,
 	Bird,
 	Briefcase,
 	Calendar,
@@ -12,11 +14,14 @@ import {
 	DollarSign,
 	Globe,
 	type LucideIcon,
+	Megaphone,
 	MessageCircle,
 	Music,
 	Pin,
 	Plus,
+	Scissors,
 	Send,
+	Share2,
 	Smartphone,
 	Store,
 	Target,
@@ -31,12 +36,15 @@ import {
 	ALLOWED_MEDIA_KINDS,
 	ALLOWED_OBJECTIVES,
 	detectMediaKind,
+	type FunnelRates,
 	type MediaKind,
 	type PromotionPlanCommentRow,
+	type PromotionPlanComparison,
 	type PromotionPlanContentRow,
 	type PromotionPlanDetail,
 	type PromotionPlanPlatformRow,
 	type PromotionPlanRow,
+	sanitiseComparison,
 } from "@/lib/promotion-plan";
 
 // ---------------------------------------------------------------------------
@@ -64,16 +72,6 @@ const PLATFORMS: ReadonlyArray<{ name: string; icon: LucideIcon; type: "vertical
 interface PlanApiResponse extends PromotionPlanDetail {
 	isAdmin: boolean;
 	viewer: { user_id: string; email: string } | null;
-}
-
-const DEFAULT_ESTIMATES = { views: 25000, clicks: 1200, lpViews: 600, leads: 45, sales: 3 };
-
-function ensureEstimates(estimates: Record<string, number> | undefined | null): Record<string, number> {
-	const merged: Record<string, number> = { ...DEFAULT_ESTIMATES };
-	for (const [k, v] of Object.entries(estimates ?? {})) {
-		if (Number.isFinite(Number(v))) merged[k] = Number(v);
-	}
-	return merged;
 }
 
 const jsonHeaders = { "Content-Type": "application/json" } as const;
@@ -521,16 +519,43 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	// ---- Recommendations (derived) -------------------------------------
 	const recommendations = useMemo(() => {
 		const recs: { type: "ad" | "software"; message: string; detail: string }[] = [];
+
+		// Group low-follower profiles by platform name so we emit a single
+		// "Audience Building for <Platform>" recommendation per platform,
+		// even if there are several profiles for the same platform that
+		// each individually fall below the threshold.
+		const lowFollowerByPlatform = new Map<
+			string,
+			{ count: number; totalFollowers: number; minFollowers: number }
+		>();
 		for (const p of detail.platforms) {
-			if (p.followers < 200) {
-				const suggested = Math.max(10, Math.min(20, plan.daily_budget / 2));
-				recs.push({
-					type: "ad",
-					message: `Audience Building for ${p.name}`,
-					detail: `Current followers (${p.followers}) are below 200. We recommend allocating $${suggested.toFixed(2)}/day from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.`,
+			if (p.followers >= 200) continue;
+			const entry = lowFollowerByPlatform.get(p.name);
+			if (entry) {
+				entry.count += 1;
+				entry.totalFollowers += p.followers;
+				entry.minFollowers = Math.min(entry.minFollowers, p.followers);
+			} else {
+				lowFollowerByPlatform.set(p.name, {
+					count: 1,
+					totalFollowers: p.followers,
+					minFollowers: p.followers,
 				});
 			}
 		}
+		for (const [name, info] of lowFollowerByPlatform) {
+			const suggested = Math.max(10, Math.min(20, plan.daily_budget / 2));
+			const summary =
+				info.count === 1
+					? `Current followers (${info.minFollowers}) are below 200.`
+					: `${info.count} profiles are below 200 followers (lowest ${info.minFollowers}, ${info.totalFollowers} combined).`;
+			recs.push({
+				type: "ad",
+				message: `Audience Building for ${name}`,
+				detail: `${summary} We recommend allocating $${suggested.toFixed(2)}/day from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.`,
+			});
+		}
+
 		const counts: Record<string, number> = {};
 		for (const p of detail.platforms) counts[p.name] = (counts[p.name] ?? 0) + 1;
 		const maxProfiles = Math.max(0, ...Object.values(counts));
@@ -570,8 +595,6 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 		return `$${(plan.daily_budget * days).toLocaleString()}`;
 	}, [plan.budget_type, plan.daily_budget, plan.end_date]);
 
-	const estimates = ensureEstimates(plan.estimates);
-
 	return (
 		<div
 			data-plan-root
@@ -599,14 +622,40 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 
 						<ObjectiveBudget
 							plan={plan}
-							onPatch={patchPlan}
+							onPatch={(next) => {
+								// When the daily budget changes we also re-shape the
+								// Distribution Comparison split so the three columns
+								// stay in sync with the headline number. The split
+								// rules mirror the prototype:
+								//   < $2/day      → 1-account organic tier ($0.33/day)
+								//   $2 – $30/day  → 10-account organic tier ($1.33/day)
+								//   > $30/day     → 25-account organic tier ($3.33/day)
+								// remainder is split 50/50 between Clippers and Ads.
+								if (typeof next.daily_budget === "number") {
+									const newDaily = next.daily_budget;
+									let tier = 1.33;
+									if (newDaily < 2) tier = 0.33;
+									else if (newDaily > 30) tier = 3.33;
+									const remaining = Math.max(0, newDaily - tier);
+									const clippersBudget = Number((remaining / 2).toFixed(2));
+									const adsBudget = Number((remaining - clippersBudget).toFixed(2));
+									const nextComparison: PromotionPlanComparison = {
+										...plan.comparison,
+										organic: { ...plan.comparison.organic, tier },
+										clippers: { ...plan.comparison.clippers, budget: clippersBudget },
+										ads: { ...plan.comparison.ads, budget: adsBudget },
+									};
+									return patchPlan({ ...next, comparison: nextComparison });
+								}
+								return patchPlan(next);
+							}}
 							totalBudgetLabel={totalBudgetLabel}
 						/>
 
-						<ProjectedOutcomes
-							estimates={estimates}
+						<DistributionComparison
+							comparison={plan.comparison}
 							dailyBudget={plan.daily_budget}
-							onPatch={(next) => patchPlan({ estimates: next })}
+							onPatch={(next) => patchPlan({ comparison: next })}
 						/>
 					</div>
 
@@ -712,7 +761,7 @@ function SaveStatusPip({ status }: { status: SaveStatus }) {
 		idle: {
 			dot: "bg-slate-300",
 			text: "text-slate-400",
-			label: "Open document — autosaves as you type",
+			label: "Autosaves",
 		},
 		saving: { dot: "bg-amber-400 animate-pulse", text: "text-amber-600", label: "Saving…" },
 		saved: { dot: "bg-emerald-500", text: "text-emerald-600", label: "Saved" },
@@ -940,52 +989,577 @@ function ObjectiveBudget({ plan, onPatch, totalBudgetLabel }: ObjectiveBudgetPro
 }
 
 // ---------------------------------------------------------------------------
-// Projected outcomes
+// Distribution Comparison
 // ---------------------------------------------------------------------------
 
-interface ProjectedOutcomesProps {
-	estimates: Record<string, number>;
+interface DistributionComparisonProps {
+	comparison: PromotionPlanComparison;
 	dailyBudget: number;
-	onPatch: (next: Record<string, number>) => Promise<void>;
+	onPatch: (next: PromotionPlanComparison) => Promise<void>;
 }
 
-function ProjectedOutcomes({ estimates, dailyBudget, onPatch }: ProjectedOutcomesProps) {
-	const [local, setLocal] = useState(estimates);
-	useEffect(() => setLocal(estimates), [estimates]);
-	const update = (key: string, value: number) => setLocal((prev) => ({ ...prev, [key]: value }));
-	const flush = () => {
-		const changed = Object.keys(local).some((k) => local[k] !== estimates[k]);
-		if (changed) onPatch(local);
+/**
+ * Side-by-side funnel comparison between the three distribution
+ * channels we offer: Organic on owned profiles, Paying Clippers, and
+ * Targeted Ads. Every numeric input is locally controlled and flushed
+ * to the server on blur (or immediately for selects/toggles), so the
+ * page doesn't autosave on every keystroke.
+ *
+ * The funnel maths is pure: `views * click% → clicks * lp% → lp views
+ * * (lead% then sale%, OR sale% directly when funnelType is "sales")`,
+ * with ROI = (sales × price × margin − channel cost) / channel cost.
+ */
+function DistributionComparison({
+	comparison,
+	dailyBudget,
+	onPatch,
+}: DistributionComparisonProps) {
+	// Local mirror so users can type freely; we only persist on blur /
+	// on discrete (select/toggle) changes via `commit`.
+	const [local, setLocal] = useState<PromotionPlanComparison>(comparison);
+	useEffect(() => setLocal(comparison), [comparison]);
+
+	const commit = useCallback(
+		(next: PromotionPlanComparison) => {
+			setLocal(next);
+			void onPatch(sanitiseComparison(next));
+		},
+		[onPatch],
+	);
+
+	const flushIfChanged = () => {
+		if (JSON.stringify(local) !== JSON.stringify(comparison)) {
+			void onPatch(sanitiseComparison(local));
+		}
 	};
+
+	const accountCount =
+		local.organic.tier === 3.33 ? 25 : local.organic.tier === 1.33 ? 10 : 1;
+	const organicViews =
+		local.organic.posts_per_day * local.organic.views_per_post * accountCount;
+	const clipperViews =
+		local.clippers.rate_per_1k > 0
+			? (local.clippers.budget / local.clippers.rate_per_1k) * 1000
+			: 0;
+	const adViews = local.ads.cpm > 0 ? (local.ads.budget / local.ads.cpm) * 1000 : 0;
+
+	const funnel = (
+		views: number,
+		rates: FunnelRates,
+		cost: number,
+	): {
+		views: number;
+		clicks: number;
+		lp: number;
+		leads: number;
+		salesDay: number;
+		salesMo: number;
+		roi: string;
+	} => {
+		const clicks = views * (rates.click / 100);
+		const lp = clicks * (rates.lp / 100);
+		const leads = local.funnel_type === "leads" ? lp * (rates.lead / 100) : 0;
+		const salesDay =
+			local.funnel_type === "leads"
+				? leads * (rates.sale / 100)
+				: lp * (rates.sale / 100);
+		const salesMo = salesDay * 30;
+		const grossDay = salesDay * local.product_price * (local.profit_margin / 100);
+		const netDay = grossDay - cost;
+		let roiLabel = "0%";
+		if (cost > 0) roiLabel = `${Math.round((netDay / cost) * 100)}%`;
+		else if (netDay > 0) roiLabel = "∞%";
+		return {
+			views: Math.round(views),
+			clicks: Math.round(clicks),
+			lp: Math.round(lp),
+			leads: Math.round(leads),
+			salesDay: Number(salesDay.toFixed(2)),
+			salesMo: Math.round(salesMo),
+			roi: roiLabel,
+		};
+	};
+
+	const data = {
+		organic: funnel(organicViews, local.organic.rates, local.organic.tier),
+		clippers: funnel(clipperViews, local.clippers.rates, local.clippers.budget),
+		ads: funnel(adViews, local.ads.rates, local.ads.budget),
+	};
+
+	const totalAllocated = local.organic.tier + local.clippers.budget + local.ads.budget;
+	const overspent = totalAllocated > dailyBudget + 0.005;
+
 	return (
 		<section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-			<h2 className="text-lg font-bold flex items-center gap-2 mb-4 border-b pb-2">
-				<TrendingUp className="w-5 h-5 text-emerald-500" /> Projected Outcomes
-			</h2>
-			<p className="text-xs text-slate-500 mb-4 leading-relaxed">
-				These estimates are based on your selected budget of ${dailyBudget}/day and current
-				objective. Adjust freely — saved on blur.
-			</p>
-			<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-				{Object.entries(local).map(([key, value]) => (
-					<div
-						key={key}
-						className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col group"
-					>
-						<span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-							{key.replace(/([A-Z])/g, " $1").trim()}
-						</span>
+			<div className="mb-6">
+				<h2 className="text-xl font-bold flex items-center gap-2 text-slate-800">
+					<BarChart className="w-6 h-6 text-emerald-500" /> Distribution Comparison
+				</h2>
+				<p className="text-sm text-slate-600 mt-2 leading-relaxed bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+					Compare how your daily budget scales across different distribution methods. Notice how
+					you get significantly more views for the same budget with <strong>Organic Posting</strong>{" "}
+					and <strong>Clippers</strong> compared to <strong>Ads</strong>. While ads offer highly
+					specific targeting, if your goal is mass-market reach, cheaper views from organic and
+					clipping strategies often push your message further and generate a wider funnel.
+				</p>
+
+				<div
+					className={`mt-4 p-3 rounded-xl border text-sm flex items-center justify-between ${
+						overspent
+							? "bg-red-50 border-red-200 text-red-800"
+							: "bg-slate-50 border-slate-200 text-slate-700"
+					}`}
+				>
+					<strong>Daily Allocation Check:</strong>
+					<span className="font-mono font-bold">
+						${totalAllocated.toFixed(2)} / ${dailyBudget.toFixed(2)}
+					</span>
+				</div>
+
+				<div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+					<div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col justify-center gap-1">
+						<label className="text-[10px] font-bold text-slate-500 uppercase text-center mb-1">
+							Funnel Strategy
+						</label>
+						<div className="flex bg-slate-200 rounded-lg p-1">
+							<button
+								type="button"
+								onClick={() => commit({ ...local, funnel_type: "leads" })}
+								className={`flex-1 text-xs py-1.5 px-2 rounded-md font-semibold transition-all ${
+									local.funnel_type === "leads"
+										? "bg-white text-emerald-600 shadow-sm"
+										: "text-slate-500 hover:text-slate-700"
+								}`}
+							>
+								Capture Leads
+							</button>
+							<button
+								type="button"
+								onClick={() => commit({ ...local, funnel_type: "sales" })}
+								className={`flex-1 text-xs py-1.5 px-2 rounded-md font-semibold transition-all ${
+									local.funnel_type === "sales"
+										? "bg-white text-blue-600 shadow-sm"
+										: "text-slate-500 hover:text-slate-700"
+								}`}
+							>
+								Direct to Sales
+							</button>
+						</div>
+					</div>
+					<div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
+						<label className="text-xs font-bold text-slate-600 uppercase">Product Price ($)</label>
 						<input
 							type="number"
-							className="w-full p-1 text-lg font-bold text-slate-800 bg-transparent border-b-2 border-transparent focus:border-emerald-500 outline-none transition-all group-hover:bg-white rounded"
-							value={value}
-							onChange={(e) => update(key, Number(e.target.value) || 0)}
-							onBlur={flush}
+							className="w-20 p-1.5 text-sm border border-slate-300 rounded outline-none focus:border-emerald-500 font-mono text-right"
+							value={local.product_price}
+							onChange={(e) =>
+								setLocal((prev) => ({ ...prev, product_price: Number(e.target.value) || 0 }))
+							}
+							onBlur={flushIfChanged}
 						/>
 					</div>
-				))}
+					<div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
+						<label className="text-xs font-bold text-slate-600 uppercase">Profit Margin (%)</label>
+						<input
+							type="number"
+							className="w-20 p-1.5 text-sm border border-slate-300 rounded outline-none focus:border-emerald-500 font-mono text-right"
+							value={local.profit_margin}
+							onChange={(e) =>
+								setLocal((prev) => ({ ...prev, profit_margin: Number(e.target.value) || 0 }))
+							}
+							onBlur={flushIfChanged}
+						/>
+					</div>
+				</div>
 			</div>
+
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+				<ComparisonColumn
+					title="Organic Own Profile(s)"
+					accent="emerald"
+					icon={<Share2 className="w-5 h-5" />}
+					controls={
+						<>
+							<div>
+								<label className="block text-[10px] font-bold text-slate-500 uppercase">
+									Automation Tier
+								</label>
+								<select
+									className="w-full p-2 text-sm border border-slate-200 rounded bg-white outline-none focus:ring-1 focus:ring-emerald-500"
+									value={String(local.organic.tier)}
+									onChange={(e) =>
+										commit({
+											...local,
+											organic: {
+												...local.organic,
+												tier: Number(e.target.value) || 0,
+											},
+										})
+									}
+								>
+									<option value="0.33">$10/mo ($0.33/day) — 1 Account</option>
+									<option value="1.33">$40/mo ($1.33/day) — 10 Accounts</option>
+									<option value="3.33">$100/mo ($3.33/day) — 25 Accounts</option>
+								</select>
+							</div>
+							<div className="grid grid-cols-2 gap-2">
+								<NumberField
+									label="Posts / Day"
+									value={local.organic.posts_per_day}
+									onChange={(n) =>
+										setLocal((prev) => ({
+											...prev,
+											organic: { ...prev.organic, posts_per_day: n },
+										}))
+									}
+									onBlur={flushIfChanged}
+								/>
+								<NumberField
+									label="Views / Post"
+									value={local.organic.views_per_post}
+									onChange={(n) =>
+										setLocal((prev) => ({
+											...prev,
+											organic: { ...prev.organic, views_per_post: n },
+										}))
+									}
+									onBlur={flushIfChanged}
+								/>
+							</div>
+						</>
+					}
+					funnel={data.organic}
+					rates={local.organic.rates}
+					funnelType={local.funnel_type}
+					onRateChange={(field, value) => {
+						setLocal((prev) => ({
+							...prev,
+							organic: {
+								...prev.organic,
+								rates: { ...prev.organic.rates, [field]: value },
+							},
+						}));
+					}}
+					onRateBlur={flushIfChanged}
+				/>
+
+				<ComparisonColumn
+					title="Paying Clippers"
+					accent="purple"
+					icon={<Scissors className="w-5 h-5" />}
+					controls={
+						<>
+							<MoneyField
+								label="Daily Budget Alloc."
+								value={local.clippers.budget}
+								onChange={(n) =>
+									setLocal((prev) => ({
+										...prev,
+										clippers: { ...prev.clippers, budget: n },
+									}))
+								}
+								onBlur={flushIfChanged}
+								focusRing="focus:ring-purple-500"
+							/>
+							<div className="grid grid-cols-2 gap-2">
+								<NumberField
+									label="Rate per 1k ($)"
+									step="0.1"
+									value={local.clippers.rate_per_1k}
+									onChange={(n) =>
+										setLocal((prev) => ({
+											...prev,
+											clippers: { ...prev.clippers, rate_per_1k: n },
+										}))
+									}
+									onBlur={flushIfChanged}
+								/>
+								<NumberField
+									label="Est. Posts / Day"
+									value={local.clippers.posts_per_day}
+									onChange={(n) =>
+										setLocal((prev) => ({
+											...prev,
+											clippers: { ...prev.clippers, posts_per_day: n },
+										}))
+									}
+									onBlur={flushIfChanged}
+								/>
+							</div>
+						</>
+					}
+					funnel={data.clippers}
+					rates={local.clippers.rates}
+					funnelType={local.funnel_type}
+					onRateChange={(field, value) => {
+						setLocal((prev) => ({
+							...prev,
+							clippers: {
+								...prev.clippers,
+								rates: { ...prev.clippers.rates, [field]: value },
+							},
+						}));
+					}}
+					onRateBlur={flushIfChanged}
+				/>
+
+				<ComparisonColumn
+					title="Targeted Ads"
+					accent="blue"
+					icon={<Megaphone className="w-5 h-5" />}
+					controls={
+						<>
+							<MoneyField
+								label="Daily Budget Alloc."
+								value={local.ads.budget}
+								onChange={(n) =>
+									setLocal((prev) => ({
+										...prev,
+										ads: { ...prev.ads, budget: n },
+									}))
+								}
+								onBlur={flushIfChanged}
+								focusRing="focus:ring-blue-500"
+							/>
+							<MoneyField
+								label="Est. CPM (Cost per 1k ad views)"
+								value={local.ads.cpm}
+								onChange={(n) =>
+									setLocal((prev) => ({
+										...prev,
+										ads: { ...prev.ads, cpm: n },
+									}))
+								}
+								onBlur={flushIfChanged}
+							/>
+						</>
+					}
+					funnel={data.ads}
+					rates={local.ads.rates}
+					funnelType={local.funnel_type}
+					onRateChange={(field, value) => {
+						setLocal((prev) => ({
+							...prev,
+							ads: {
+								...prev.ads,
+								rates: { ...prev.ads.rates, [field]: value },
+							},
+						}));
+					}}
+					onRateBlur={flushIfChanged}
+				/>
+			</div>
+
+			<p className="text-[10px] text-center text-slate-400 mt-6 uppercase tracking-wider font-bold">
+				Disclaimer: These funnels represent estimates and goals. Actual results are not guaranteed.
+			</p>
 		</section>
+	);
+}
+
+const ACCENT_STYLES: Record<
+	"emerald" | "purple" | "blue",
+	{ ring: string; iconBg: string; iconText: string }
+> = {
+	emerald: { ring: "bg-emerald-100", iconBg: "bg-emerald-100", iconText: "text-emerald-600" },
+	purple: { ring: "bg-purple-100", iconBg: "bg-purple-100", iconText: "text-purple-600" },
+	blue: { ring: "bg-blue-100", iconBg: "bg-blue-100", iconText: "text-blue-600" },
+};
+
+interface FunnelMetrics {
+	views: number;
+	clicks: number;
+	lp: number;
+	leads: number;
+	salesDay: number;
+	salesMo: number;
+	roi: string;
+}
+
+function ComparisonColumn({
+	title,
+	accent,
+	icon,
+	controls,
+	funnel,
+	rates,
+	funnelType,
+	onRateChange,
+	onRateBlur,
+}: {
+	title: string;
+	accent: "emerald" | "purple" | "blue";
+	icon: React.ReactNode;
+	controls: React.ReactNode;
+	funnel: FunnelMetrics;
+	rates: FunnelRates;
+	funnelType: "leads" | "sales";
+	onRateChange: (field: keyof FunnelRates, value: number) => void;
+	onRateBlur: () => void;
+}) {
+	const style = ACCENT_STYLES[accent];
+	return (
+		<div className="flex flex-col bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
+			<div className="bg-white p-4 border-b border-slate-200 flex flex-col items-center gap-2">
+				<div
+					className={`w-10 h-10 rounded-full flex items-center justify-center mb-1 ${style.iconBg} ${style.iconText}`}
+				>
+					{icon}
+				</div>
+				<h3 className="font-bold text-slate-800 text-center">{title}</h3>
+			</div>
+
+			<div className="p-4 space-y-3 flex-grow">
+				{controls}
+
+				<div className="pt-4 space-y-1">
+					<FunnelRow label="Est. Views/DAY" value={funnel.views} />
+					<FunnelRateRow
+						value={rates.click}
+						onChange={(n) => onRateChange("click", n)}
+						onBlur={onRateBlur}
+					/>
+					<FunnelRow label="Clicks/DAY" value={funnel.clicks} />
+					<FunnelRateRow
+						value={rates.lp}
+						onChange={(n) => onRateChange("lp", n)}
+						onBlur={onRateBlur}
+					/>
+					<FunnelRow label="LP Views/DAY" value={funnel.lp} />
+					{funnelType === "leads" ? (
+						<>
+							<FunnelRateRow
+								value={rates.lead}
+								onChange={(n) => onRateChange("lead", n)}
+								onBlur={onRateBlur}
+							/>
+							<FunnelRow label="Leads/DAY" value={funnel.leads} />
+						</>
+					) : null}
+					<FunnelRateRow
+						value={rates.sale}
+						onChange={(n) => onRateChange("sale", n)}
+						onBlur={onRateBlur}
+					/>
+					<FunnelRow label="Sales/Day" value={funnel.salesDay} highlight />
+					<FunnelRow label="Sales/Mo" value={funnel.salesMo} highlight />
+					<FunnelRow label="Est. ROI" value={funnel.roi} highlight />
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function FunnelRow({
+	label,
+	value,
+	highlight,
+}: {
+	label: string;
+	value: number | string;
+	highlight?: boolean;
+}) {
+	return (
+		<div
+			className={`flex justify-between items-center p-2 rounded-lg shadow-sm ${
+				highlight
+					? "bg-emerald-100 font-bold text-emerald-800"
+					: "bg-white border border-slate-100 text-slate-700"
+			}`}
+		>
+			<span className="text-xs uppercase tracking-wide font-semibold">{label}</span>
+			<span className="font-mono">
+				{typeof value === "number"
+					? value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+					: value}
+			</span>
+		</div>
+	);
+}
+
+function FunnelRateRow({
+	value,
+	onChange,
+	onBlur,
+}: {
+	value: number;
+	onChange: (n: number) => void;
+	onBlur: () => void;
+}) {
+	return (
+		<div className="flex justify-center -my-1.5 relative z-10">
+			<div className="bg-slate-50 rounded-full px-2 py-0.5 border border-slate-200 flex items-center gap-1 text-[10px] text-slate-500 shadow-sm hover:border-emerald-300 transition-colors">
+				<ArrowDown className="w-3 h-3 text-emerald-500" />
+				<input
+					type="number"
+					step="0.1"
+					value={value}
+					onChange={(e) => onChange(Number(e.target.value) || 0)}
+					onBlur={onBlur}
+					className="w-12 bg-transparent outline-none text-center font-bold text-slate-700"
+				/>
+				%
+			</div>
+		</div>
+	);
+}
+
+function NumberField({
+	label,
+	value,
+	onChange,
+	onBlur,
+	step,
+}: {
+	label: string;
+	value: number;
+	onChange: (n: number) => void;
+	onBlur: () => void;
+	step?: string;
+}) {
+	return (
+		<div>
+			<label className="block text-[10px] font-bold text-slate-500 uppercase">{label}</label>
+			<input
+				type="number"
+				step={step}
+				className="w-full p-2 text-sm border border-slate-200 rounded bg-white outline-none"
+				value={value}
+				onChange={(e) => onChange(Number(e.target.value) || 0)}
+				onBlur={onBlur}
+			/>
+		</div>
+	);
+}
+
+function MoneyField({
+	label,
+	value,
+	onChange,
+	onBlur,
+	focusRing,
+}: {
+	label: string;
+	value: number;
+	onChange: (n: number) => void;
+	onBlur: () => void;
+	focusRing?: string;
+}) {
+	return (
+		<div>
+			<label className="block text-[10px] font-bold text-slate-500 uppercase">{label}</label>
+			<div className="relative">
+				<span className="absolute left-3 top-2 text-slate-400 text-sm">$</span>
+				<input
+					type="number"
+					step="0.01"
+					className={`w-full pl-6 p-2 text-sm border border-slate-200 rounded bg-white outline-none ${focusRing ?? ""}`}
+					value={value}
+					onChange={(e) => onChange(Number(e.target.value) || 0)}
+					onBlur={onBlur}
+				/>
+			</div>
+		</div>
 	);
 }
 

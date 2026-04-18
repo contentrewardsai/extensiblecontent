@@ -1,9 +1,11 @@
 import type { NextRequest } from "next/server";
 import {
+	defaultComparison,
 	getPlanWithDetails,
 	isValidBudgetType,
 	isValidObjective,
 	parsePlanId,
+	sanitiseComparison,
 } from "@/lib/promotion-plan";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
@@ -29,6 +31,7 @@ const ALL_PLAN_FIELDS = new Set([
 	"daily_budget",
 	"end_date",
 	"estimates",
+	"comparison",
 	"shotstack_template_id",
 ]);
 
@@ -83,6 +86,7 @@ export async function PUT(_request: NextRequest, { params }: RouteContext) {
 		budget_type: "monthly",
 		daily_budget: 50,
 		estimates: { views: 25000, clicks: 1200, lpViews: 600, leads: 45, sales: 3 },
+		comparison: defaultComparison(),
 	});
 
 	if (insertErr) return Response.json({ error: insertErr.message }, { status: 500 });
@@ -166,6 +170,19 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 			if (Number.isFinite(n) && n >= 0) sanitised[k.slice(0, 32)] = n;
 		}
 		updates.estimates = sanitised;
+	}
+	if (body.comparison !== undefined) {
+		if (
+			!body.comparison ||
+			typeof body.comparison !== "object" ||
+			Array.isArray(body.comparison)
+		) {
+			return Response.json({ error: "comparison must be an object" }, { status: 400 });
+		}
+		// `sanitiseComparison` is the single source of truth — any
+		// extra keys are dropped, missing keys are filled in from the
+		// defaults, and all numeric fields are clamped to >= 0.
+		updates.comparison = sanitiseComparison(body.comparison);
 	}
 	if (body.shotstack_template_id !== undefined) {
 		if (body.shotstack_template_id === null) {

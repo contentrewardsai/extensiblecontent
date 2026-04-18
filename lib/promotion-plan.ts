@@ -35,6 +35,15 @@ export type ReviewStatus = (typeof ALLOWED_REVIEW_STATUSES)[number];
 export const ALLOWED_AD_BUDGET_MODES = ["dynamic", "fixed"] as const;
 export type AdBudgetMode = (typeof ALLOWED_AD_BUDGET_MODES)[number];
 
+export const ALLOWED_FUNNEL_TYPES = ["leads", "sales"] as const;
+export type FunnelType = (typeof ALLOWED_FUNNEL_TYPES)[number];
+
+export function isValidFunnelType(value: unknown): value is FunnelType {
+	return (
+		typeof value === "string" && (ALLOWED_FUNNEL_TYPES as readonly string[]).includes(value)
+	);
+}
+
 /**
  * Mirror of the `media_kind` CHECK constraint on `promotion_plan_content`.
  * `'embed'` is reserved for URLs the client converts to an iframe src
@@ -153,9 +162,147 @@ export interface PromotionPlanRow {
 	daily_budget: number;
 	end_date: string | null;
 	estimates: Record<string, number>;
+	/** Distribution Comparison editor state — see `PromotionPlanComparison`. */
+	comparison: PromotionPlanComparison;
 	shotstack_template_id: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Distribution Comparison
+// ---------------------------------------------------------------------------
+
+/** Per-channel funnel conversion rates, all stored as percentages (0-100). */
+export interface FunnelRates {
+	click: number;
+	lp: number;
+	lead: number;
+	sale: number;
+}
+
+export interface OrganicComparison {
+	/** Daily $ cost of the chosen automation tier (0.33, 1.33, or 3.33). */
+	tier: number;
+	posts_per_day: number;
+	views_per_post: number;
+	rates: FunnelRates;
+}
+
+export interface ClippersComparison {
+	/** Daily $ allocated to paid clippers. */
+	budget: number;
+	/** $ paid per 1000 views. */
+	rate_per_1k: number;
+	posts_per_day: number;
+	rates: FunnelRates;
+}
+
+export interface AdsComparison {
+	/** Daily $ allocated to paid ads. */
+	budget: number;
+	/** Estimated cost per 1000 ad views. */
+	cpm: number;
+	rates: FunnelRates;
+}
+
+export interface PromotionPlanComparison {
+	funnel_type: FunnelType;
+	product_price: number;
+	profit_margin: number;
+	organic: OrganicComparison;
+	clippers: ClippersComparison;
+	ads: AdsComparison;
+}
+
+/**
+ * Default comparison config for newly-created plans. Mirrors the SQL
+ * default in `20250425000000_promotion_plan_comparison.sql` so legacy
+ * rows that predate the column hydrate to the same shape on the
+ * client.
+ */
+export function defaultComparison(): PromotionPlanComparison {
+	return {
+		funnel_type: "leads",
+		product_price: 97,
+		profit_margin: 50,
+		organic: {
+			tier: 1.33,
+			posts_per_day: 5,
+			views_per_post: 500,
+			rates: { click: 0.5, lp: 80, lead: 30, sale: 2 },
+		},
+		clippers: {
+			budget: 4.34,
+			rate_per_1k: 1.0,
+			posts_per_day: 15,
+			rates: { click: 0.5, lp: 80, lead: 30, sale: 1 },
+		},
+		ads: {
+			budget: 4.33,
+			cpm: 20,
+			rates: { click: 2.0, lp: 85, lead: 30, sale: 3 },
+		},
+	};
+}
+
+/**
+ * Coerces an unknown JSON value (typically the `comparison` JSONB
+ * column or a request body) into a fully-typed `PromotionPlanComparison`,
+ * filling in any missing fields with the defaults. Used by both the
+ * server (PATCH validation) and the client (defensive hydration of
+ * pre-comparison plans loaded from the DB).
+ */
+export function sanitiseComparison(raw: unknown): PromotionPlanComparison {
+	const base = defaultComparison();
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
+	const r = raw as Record<string, unknown>;
+
+	const num = (v: unknown, fallback: number): number => {
+		const n = Number(v);
+		return Number.isFinite(n) ? n : fallback;
+	};
+	const nonNeg = (v: unknown, fallback: number): number => {
+		const n = num(v, fallback);
+		return n < 0 ? fallback : n;
+	};
+	const rates = (rawRates: unknown, fb: FunnelRates): FunnelRates => {
+		if (!rawRates || typeof rawRates !== "object") return fb;
+		const r = rawRates as Record<string, unknown>;
+		return {
+			click: nonNeg(r.click, fb.click),
+			lp: nonNeg(r.lp, fb.lp),
+			lead: nonNeg(r.lead, fb.lead),
+			sale: nonNeg(r.sale, fb.sale),
+		};
+	};
+
+	const rawOrganic = (r.organic ?? {}) as Record<string, unknown>;
+	const rawClippers = (r.clippers ?? {}) as Record<string, unknown>;
+	const rawAds = (r.ads ?? {}) as Record<string, unknown>;
+
+	return {
+		funnel_type: isValidFunnelType(r.funnel_type) ? r.funnel_type : base.funnel_type,
+		product_price: nonNeg(r.product_price, base.product_price),
+		profit_margin: nonNeg(r.profit_margin, base.profit_margin),
+		organic: {
+			tier: nonNeg(rawOrganic.tier, base.organic.tier),
+			posts_per_day: nonNeg(rawOrganic.posts_per_day, base.organic.posts_per_day),
+			views_per_post: nonNeg(rawOrganic.views_per_post, base.organic.views_per_post),
+			rates: rates(rawOrganic.rates, base.organic.rates),
+		},
+		clippers: {
+			budget: nonNeg(rawClippers.budget, base.clippers.budget),
+			rate_per_1k: nonNeg(rawClippers.rate_per_1k, base.clippers.rate_per_1k),
+			posts_per_day: nonNeg(rawClippers.posts_per_day, base.clippers.posts_per_day),
+			rates: rates(rawClippers.rates, base.clippers.rates),
+		},
+		ads: {
+			budget: nonNeg(rawAds.budget, base.ads.budget),
+			cpm: nonNeg(rawAds.cpm, base.ads.cpm),
+			rates: rates(rawAds.rates, base.ads.rates),
+		},
+	};
 }
 
 export interface PromotionPlanPlatformRow {
@@ -240,13 +387,22 @@ export async function getPlanWithDetails(
 	const { data: plan, error: planErr } = await supabase
 		.from("promotion_plans")
 		.select(
-			"id, admin_user_id, title, intro, objective, objective_description, budget_type, daily_budget, end_date, estimates, shotstack_template_id, created_at, updated_at",
+			"id, admin_user_id, title, intro, objective, objective_description, budget_type, daily_budget, end_date, estimates, comparison, shotstack_template_id, created_at, updated_at",
 		)
 		.eq("id", planId)
 		.maybeSingle();
 
 	if (planErr) throw new Error(planErr.message);
 	if (!plan) return null;
+
+	// Defensive hydration: rows that predate the `comparison` column
+	// have a default applied at the DB level, but if the column was
+	// somehow nulled out (or contains a partial object from a previous
+	// schema iteration) we rebuild it from defaults so the client
+	// always receives a fully-typed shape.
+	(plan as PromotionPlanRow).comparison = sanitiseComparison(
+		(plan as { comparison?: unknown }).comparison,
+	);
 
 	const [{ data: platforms }, { data: content }, { data: comments }] = await Promise.all([
 		supabase
