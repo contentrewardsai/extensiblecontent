@@ -520,39 +520,67 @@ function PlanView({ planId, detail, setDetail, refreshDetail }: PlanViewProps) {
 	const recommendations = useMemo(() => {
 		const recs: { type: "ad" | "software"; message: string; detail: string }[] = [];
 
+		// Audience-building recommendations are only meaningful for the
+		// platforms where a paid "page likes / followers / subscribers"
+		// campaign actually exists as an ad objective. Threads,
+		// Pinterest, Reddit, Google Business, and Bluesky don't have a
+		// comparable ad product, so we skip them entirely.
+		//
+		// YouTube is a special case: the unit of "audience" is
+		// subscribers (not followers / page likes), and YouTube's growth
+		// playbook leans on a different ad product, so we surface a
+		// distinct copy for it.
+		const AUDIENCE_AD_PLATFORMS: ReadonlySet<string> = new Set([
+			"TikTok",
+			"Instagram",
+			"LinkedIn",
+			"Facebook",
+			"X",
+		]);
+		const SUBSCRIBER_PLATFORMS: ReadonlySet<string> = new Set(["YouTube"]);
+
 		// Group low-follower profiles by platform name so we emit a single
 		// "Audience Building for <Platform>" recommendation per platform,
 		// even if there are several profiles for the same platform that
 		// each individually fall below the threshold.
-		const lowFollowerByPlatform = new Map<
+		const lowByPlatform = new Map<
 			string,
 			{ count: number; totalFollowers: number; minFollowers: number }
 		>();
 		for (const p of detail.platforms) {
 			if (p.followers >= 200) continue;
-			const entry = lowFollowerByPlatform.get(p.name);
+			if (!AUDIENCE_AD_PLATFORMS.has(p.name) && !SUBSCRIBER_PLATFORMS.has(p.name)) continue;
+			const entry = lowByPlatform.get(p.name);
 			if (entry) {
 				entry.count += 1;
 				entry.totalFollowers += p.followers;
 				entry.minFollowers = Math.min(entry.minFollowers, p.followers);
 			} else {
-				lowFollowerByPlatform.set(p.name, {
+				lowByPlatform.set(p.name, {
 					count: 1,
 					totalFollowers: p.followers,
 					minFollowers: p.followers,
 				});
 			}
 		}
-		for (const [name, info] of lowFollowerByPlatform) {
+		for (const [name, info] of lowByPlatform) {
 			const suggested = Math.max(10, Math.min(20, plan.daily_budget / 2));
+			const isYouTube = SUBSCRIBER_PLATFORMS.has(name);
+			const audienceWord = isYouTube ? "subscribers" : "followers";
 			const summary =
 				info.count === 1
-					? `Current followers (${info.minFollowers}) are below 200.`
-					: `${info.count} profiles are below 200 followers (lowest ${info.minFollowers}, ${info.totalFollowers} combined).`;
+					? `Current ${audienceWord} (${info.minFollowers}) are below 200.`
+					: `${info.count} profiles are below 200 ${audienceWord} (lowest ${info.minFollowers}, ${info.totalFollowers} combined).`;
+			const message = isYouTube
+				? `Grow ${name} Subscribers`
+				: `Audience Building for ${name}`;
+			const action = isYouTube
+				? `We recommend allocating $${suggested.toFixed(2)}/day towards a YouTube subscriber-growth campaign (Video Views + channel-subscription CTAs) to build an initial foundation.`
+				: `We recommend allocating $${suggested.toFixed(2)}/day from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.`;
 			recs.push({
 				type: "ad",
-				message: `Audience Building for ${name}`,
-				detail: `${summary} We recommend allocating $${suggested.toFixed(2)}/day from your budget towards an ad campaign specifically for page likes/followers to build an initial foundation.`,
+				message,
+				detail: `${summary} ${action}`,
 			});
 		}
 
