@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { getPlanWithDetails, parsePlanId } from "@/lib/promotion-plan";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import "../plan.css";
@@ -6,6 +7,34 @@ import { PlanClient } from "./plan-client";
 
 interface PlanPageProps {
 	params: Promise<{ planId: string }>;
+}
+
+const PLAN_PAGE_TITLE_FALLBACK = "Extensible Content - Promotion Plan";
+
+function buildPlanDocumentTitle(displayTitle: unknown): string {
+	const trimmed = typeof displayTitle === "string" ? displayTitle.trim() : "";
+	if (!trimmed) return PLAN_PAGE_TITLE_FALLBACK;
+	return `Extensible Content - ${trimmed}`;
+}
+
+export async function generateMetadata({ params }: PlanPageProps): Promise<Metadata> {
+	const { planId: rawPlanId } = await params;
+	const parsed = parsePlanId(rawPlanId);
+	if (!parsed.ok) {
+		return { title: PLAN_PAGE_TITLE_FALLBACK };
+	}
+
+	try {
+		const supabase = getServiceSupabase();
+		const { data: row } = await supabase
+			.from("promotion_plans")
+			.select("title")
+			.eq("id", parsed.id)
+			.maybeSingle();
+		return { title: buildPlanDocumentTitle(row?.title) };
+	} catch {
+		return { title: PLAN_PAGE_TITLE_FALLBACK };
+	}
 }
 
 /**
