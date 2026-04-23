@@ -81,11 +81,11 @@ function evpBytesToKey(
 	salt: Buffer,
 	keyLen: number,
 	ivLen: number,
-): { key: Buffer; iv: Buffer } {
+): { key: Buffer<ArrayBuffer>; iv: Buffer<ArrayBuffer> } {
 	const { createHash } = require("crypto") as typeof import("crypto");
 	const totalLen = keyLen + ivLen;
-	const result: Buffer[] = [];
-	let lastHash = Buffer.alloc(0);
+	const result: Buffer<ArrayBuffer>[] = [];
+	let lastHash: Buffer<ArrayBuffer> = Buffer.alloc(0);
 	let totalBytes = 0;
 
 	while (totalBytes < totalLen) {
@@ -93,14 +93,14 @@ function evpBytesToKey(
 		if (lastHash.length > 0) h.update(lastHash);
 		h.update(password, "utf8");
 		h.update(salt);
-		lastHash = h.digest();
+		lastHash = h.digest() as Buffer<ArrayBuffer>;
 		result.push(lastHash);
 		totalBytes += lastHash.length;
 	}
 
 	const combined = Buffer.concat(result);
 	return {
-		key: combined.subarray(0, keyLen),
-		iv: combined.subarray(keyLen, keyLen + ivLen),
+		key: combined.subarray(0, keyLen) as Buffer<ArrayBuffer>,
+		iv: combined.subarray(keyLen, keyLen + ivLen) as Buffer<ArrayBuffer>,
 	};
 }
