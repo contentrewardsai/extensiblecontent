@@ -122,6 +122,70 @@
 		});
 	}
 
+	// -----------------------------------------------------------------------
+	// GoHighLevel integration helpers
+	// -----------------------------------------------------------------------
+
+	/** List user's GHL connections and locations. */
+	async function ghlGetConnections() {
+		return safeApiFetch("/api/extension/ghl/connections");
+	}
+
+	/** Delete a GHL connection. */
+	async function ghlDeleteConnection(connectionId) {
+		return safeApiFetch("/api/extension/ghl/connections?id=" + encodeURIComponent(connectionId), {
+			method: "DELETE",
+		});
+	}
+
+	/** List media files in a GHL location's media library. */
+	async function ghlListMedia(locationId, opts) {
+		const params = new URLSearchParams({ locationId });
+		if (opts) {
+			for (const [k, v] of Object.entries(opts)) {
+				if (v != null) params.set(k, String(v));
+			}
+		}
+		return safeApiFetch("/api/extension/ghl/media?" + params.toString());
+	}
+
+	/** Upload a file to GHL media library (hosted URL). */
+	async function ghlUploadMedia(locationId, fileUrl, name) {
+		return safeApiFetch("/api/extension/ghl/media/upload", {
+			method: "POST",
+			body: JSON.stringify({ locationId, fileUrl, name }),
+		});
+	}
+
+	/** Delete a file from GHL media library. */
+	async function ghlDeleteMedia(locationId, fileId) {
+		const params = new URLSearchParams({ locationId, fileId });
+		return safeApiFetch("/api/extension/ghl/media?" + params.toString(), {
+			method: "DELETE",
+		});
+	}
+
+	/** List connected social accounts for a GHL location. */
+	async function ghlGetSocialAccounts(locationId) {
+		return safeApiFetch("/api/extension/ghl/social/accounts?locationId=" + encodeURIComponent(locationId));
+	}
+
+	/** List social posts for a GHL location. */
+	async function ghlListPosts(locationId, filters) {
+		return safeApiFetch("/api/extension/ghl/social/posts/list", {
+			method: "POST",
+			body: JSON.stringify(Object.assign({ locationId }, filters || {})),
+		});
+	}
+
+	/** Create a social post in GHL. */
+	async function ghlCreatePost(locationId, postData) {
+		return safeApiFetch("/api/extension/ghl/social/posts", {
+			method: "POST",
+			body: JSON.stringify(Object.assign({ locationId }, postData || {})),
+		});
+	}
+
 	global.ExtensionApi = {
 		getAppOrigin,
 		getAccessToken,
@@ -130,5 +194,13 @@
 		canAddConnectedProfile,
 		appendConnectedProfileIfUnderCap,
 		addSocialProfileIfAllowed,
+		ghlGetConnections,
+		ghlDeleteConnection,
+		ghlListMedia,
+		ghlUploadMedia,
+		ghlDeleteMedia,
+		ghlGetSocialAccounts,
+		ghlListPosts,
+		ghlCreatePost,
 	};
 })(typeof globalThis !== "undefined" ? globalThis : this);
