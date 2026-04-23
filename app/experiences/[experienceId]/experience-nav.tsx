@@ -9,6 +9,7 @@ const LINKS = [
 	{ segment: "uploads", label: "Uploads" },
 	{ segment: "shotstack", label: "ShotStack" },
 	{ segment: "upload-post", label: "Upload Post" },
+	{ segment: "integrations", label: "Integrations" },
 ] as const;
 
 export function ExperienceNav({ experienceId }: { experienceId: string }) {

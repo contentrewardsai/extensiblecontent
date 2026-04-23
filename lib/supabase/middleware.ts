@@ -25,6 +25,27 @@ export async function updateSession(request: NextRequest) {
 	if (request.nextUrl.pathname.startsWith("/extension/")) {
 		return NextResponse.next({ request });
 	}
+	// GHL Custom Page: allow iframe embedding, no Supabase session needed
+	if (request.nextUrl.pathname.startsWith("/ext/")) {
+		const response = NextResponse.next({ request });
+		response.headers.delete("X-Frame-Options");
+		response.headers.set(
+			"Content-Security-Policy",
+			"frame-ancestors https://*.gohighlevel.com https://*.leadconnectorhq.com https://*.msgsndr.com *",
+		);
+		return response;
+	}
+	// GHL API routes: CORS for iframe fetch calls
+	if (request.nextUrl.pathname.startsWith("/api/ghl/")) {
+		if (request.method === "OPTIONS") {
+			return new NextResponse(null, { status: 204, headers: EXTENSION_CORS_HEADERS });
+		}
+		const response = NextResponse.next({ request });
+		for (const [k, v] of Object.entries(EXTENSION_CORS_HEADERS)) {
+			response.headers.set(k, v);
+		}
+		return response;
+	}
 
 	const response = NextResponse.next({ request });
 
