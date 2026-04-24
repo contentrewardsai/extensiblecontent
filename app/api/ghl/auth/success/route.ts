@@ -3,12 +3,24 @@ import type { NextRequest } from "next/server";
 /**
  * GET /api/ghl/auth/success
  *
- * Simple success page after GHL OAuth completes for a direct sub-account install.
+ * Simple success page after GHL OAuth completes.
  */
 export async function GET(request: NextRequest) {
 	const locationId = request.nextUrl.searchParams.get("locationId") ?? "";
+	const pending = request.nextUrl.searchParams.get("pending") === "true";
 
-	const html = `<!DOCTYPE html>
+	const html = pending
+		? `<!DOCTYPE html>
+<html><head><title>App Installed</title>
+<style>body{font-family:system-ui;max-width:480px;margin:40px auto;padding:0 16px;text-align:center}
+.ok{color:#2563eb;font-size:1.25rem}</style></head>
+<body>
+<h1 class="ok">Extensible Content Installed</h1>
+<p>The app has been installed on your GoHighLevel account.</p>
+<p>To complete setup, connect your Whop account using a Connection Key from your Extensible Content dashboard.</p>
+<p>You can close this window.</p>
+</body></html>`
+		: `<!DOCTYPE html>
 <html><head><title>GHL Connected</title>
 <style>body{font-family:system-ui;max-width:480px;margin:40px auto;padding:0 16px;text-align:center}
 .ok{color:#16a34a;font-size:1.25rem}</style></head>

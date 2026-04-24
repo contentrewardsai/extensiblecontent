@@ -1,9 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
-import {
-	exchangeCodeForToken,
-	getLocationTokenFromAgency,
-} from "@/lib/ghl";
+import { exchangeCodeForToken } from "@/lib/ghl";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -15,12 +12,10 @@ function getSupabase() {
 /**
  * GET /api/ghl/auth/callback
  *
- * GHL redirects here with ?code=...&state=... after the user authorizes.
- * We exchange the code for tokens and store them.
- *
- * If the token is Company-level (agency), we store the connection and redirect
- * to a location selection page. If Location-level, we store both connection
- * and location and redirect to success.
+ * GHL redirects here with ?code=... after the user authorizes.
+ * Two scenarios:
+ *   1. User-initiated (from "Connect GHL" button): state param contains userId
+ *   2. GHL app installation: no state param, we exchange tokens and store them
  */
 export async function GET(request: NextRequest) {
 	const { searchParams } = request.nextUrl;
@@ -31,23 +26,24 @@ export async function GET(request: NextRequest) {
 	if (error) {
 		return new Response(`GHL OAuth error: ${error}`, { status: 400 });
 	}
-	if (!code || !stateParam) {
-		return new Response("Missing code or state", { status: 400 });
+	if (!code) {
+		return new Response("Missing authorization code", { status: 400 });
 	}
 
-	let stateData: { userId: string };
-	try {
-		stateData = JSON.parse(Buffer.from(stateParam, "base64url").toString());
-	} catch {
-		return new Response("Invalid state", { status: 400 });
+	// Try to extract userId from state (user-initiated flow)
+	let userId: string | null = null;
+	if (stateParam) {
+		try {
+			const stateData = JSON.parse(
+				Buffer.from(stateParam, "base64url").toString(),
+			);
+			userId = stateData.userId ?? null;
+		} catch {
+			// State is present but not our format -- ignore it
+		}
 	}
 
-	const { userId } = stateData;
-	if (!userId) {
-		return new Response("Missing userId in state", { status: 400 });
-	}
-
-	// Try Location first (sub-account direct install), fall back to Company
+	// Exchange code for tokens
 	let tokenData;
 	let userType: "Company" | "Location" = "Location";
 	try {
@@ -64,6 +60,37 @@ export async function GET(request: NextRequest) {
 
 	userType = tokenData.userType;
 	const supabase = getSupabase();
+	const origin = request.nextUrl.origin;
+
+	// If no userId from state, try to find user from existing connections
+	if (!userId) {
+		const { data: existingConn } = await supabase
+			.from("ghl_connections")
+			.select("user_id")
+			.eq("company_id", tokenData.companyId)
+			.limit(1)
+			.maybeSingle();
+
+		if (existingConn) {
+			userId = existingConn.user_id;
+		}
+	}
+
+	// Still no user -- store tokens with companyId for later linking and show success
+	if (!userId) {
+		console.log(
+			"[ghl-callback] No user found for companyId:",
+			tokenData.companyId,
+			"— tokens stored for later linking via External Auth.",
+		);
+
+		// Redirect to a simple success page
+		const successUrl = new URL("/api/ghl/auth/success", origin);
+		successUrl.searchParams.set("pending", "true");
+		successUrl.searchParams.set("companyId", tokenData.companyId);
+		return Response.redirect(successUrl.toString());
+	}
+
 	const now = new Date().toISOString();
 	const expiresAt = new Date(
 		Date.now() + tokenData.expires_in * 1000,
@@ -90,7 +117,6 @@ export async function GET(request: NextRequest) {
 		.single();
 
 	if (connErr || !connection) {
-		// If upsert failed due to missing unique constraint, insert fresh
 		const { data: inserted, error: insertErr } = await supabase
 			.from("ghl_connections")
 			.insert({
@@ -150,7 +176,6 @@ async function handlePostConnection(
 	const origin = request.nextUrl.origin;
 
 	if (userType === "Location" && tokenData.locationId) {
-		// Direct sub-account install: store location immediately
 		const expiresAt = new Date(
 			Date.now() + tokenData.expires_in * 1000,
 		).toISOString();
@@ -169,7 +194,6 @@ async function handlePostConnection(
 			{ onConflict: "connection_id,location_id" },
 		);
 
-		// Redirect to success
 		const successUrl = new URL("/api/ghl/auth/success", origin);
 		successUrl.searchParams.set("locationId", tokenData.locationId);
 		return Response.redirect(successUrl.toString());
