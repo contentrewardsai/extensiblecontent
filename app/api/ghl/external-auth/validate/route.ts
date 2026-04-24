@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
 
 	return Response.json({
 		ok: true,
+		userId: keyRow.user_id,
 		message: "Connection verified successfully",
 	});
 }

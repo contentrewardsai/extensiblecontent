@@ -114,43 +114,20 @@ export default function GhlSettingsPage() {
 	const connected = searchParams.get("connected");
 	const errorParam = searchParams.get("error");
 
-	const [ghlUser, setGhlUser] = useState<GhlUserContext | null>(null);
 	const [ctx, setCtx] = useState<PageContext | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [ssoError, setSsoError] = useState<string | null>(null);
+	const [needsLogin, setNeedsLogin] = useState(false);
 	const [fetchError, setFetchError] = useState<string | null>(null);
-
-	const decryptSso = useCallback(async () => {
-		try {
-			const encryptedPayload = await requestSsoKey();
-			const res = await fetch("/api/ghl/sso", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ payload: encryptedPayload }),
-			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({}));
-				throw new Error(
-					(err as Record<string, string>).error ||
-						`SSO decryption failed (${res.status})`,
-				);
-			}
-			const userContext = (await res.json()) as GhlUserContext;
-			setGhlUser(userContext);
-			return userContext;
-		} catch (err) {
-			setSsoError(
-				err instanceof Error ? err.message : "Failed to authenticate with GoHighLevel",
-			);
-			return null;
-		}
-	}, []);
+	const [keyInput, setKeyInput] = useState("");
+	const [keyLoading, setKeyLoading] = useState(false);
+	const [keyError, setKeyError] = useState<string | null>(null);
+	const [userId, setUserId] = useState<string | null>(null);
 
 	const loadPageContext = useCallback(
-		async (locationId: string) => {
+		async (uid: string) => {
 			try {
 				const res = await fetch(
-					`/api/ghl/page-context?locationId=${encodeURIComponent(locationId)}`,
+					`/api/ghl/page-context?userId=${encodeURIComponent(uid)}`,
 				);
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				const data = (await res.json()) as PageContext;
@@ -162,41 +139,115 @@ export default function GhlSettingsPage() {
 		[],
 	);
 
+	// Try SSO first, fall back to Connection Key login
 	useEffect(() => {
 		let cancelled = false;
 
 		async function init() {
 			setLoading(true);
 
-			const userContext = await decryptSso();
-			if (cancelled) return;
-
-			if (!userContext) {
-				setLoading(false);
+			// Check if we have a cached session
+			const cachedUserId = sessionStorage.getItem("ec_ghl_user_id");
+			if (cachedUserId) {
+				setUserId(cachedUserId);
+				await loadPageContext(cachedUserId);
+				if (!cancelled) setLoading(false);
 				return;
 			}
 
-			const locationId = userContext.activeLocation || userContext.companyId;
-			if (!locationId) {
-				setSsoError("No active location found in GHL context");
-				setLoading(false);
+			// Try SSO
+			try {
+				const encryptedPayload = await requestSsoKey();
+				const res = await fetch("/api/ghl/sso", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ payload: encryptedPayload }),
+				});
+				if (!res.ok) throw new Error("SSO decryption failed");
+				const userContext = (await res.json()) as GhlUserContext;
+
+				if (cancelled) return;
+
+				const locationId = userContext.activeLocation || userContext.companyId;
+				if (locationId) {
+					await loadPageContext(locationId);
+				}
+				if (!cancelled) setLoading(false);
 				return;
+			} catch {
+				// SSO failed -- fall back to Connection Key login
 			}
 
-			await loadPageContext(locationId);
-			if (!cancelled) setLoading(false);
+			if (!cancelled) {
+				setNeedsLogin(true);
+				setLoading(false);
+			}
 		}
 
 		init();
 		return () => {
 			cancelled = true;
 		};
-	}, [decryptSso, loadPageContext]);
+	}, [loadPageContext]);
+
+	const handleKeyLogin = async (e: React.FormEvent) => {
+		e.preventDefault();
+		if (!keyInput.trim()) return;
+
+		setKeyLoading(true);
+		setKeyError(null);
+
+		try {
+			const res = await fetch("/api/ext-login", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					connectionKey: keyInput.trim(),
+					redirectUri: "settings-page",
+					state: "settings-page",
+				}),
+			});
+
+			if (!res.ok) {
+				const data = (await res.json().catch(() => ({}))) as Record<string, string>;
+				throw new Error(data.error || "Invalid connection key");
+			}
+
+			// Key is valid -- get the userId from the validate endpoint
+			const validateRes = await fetch("/api/ext-validate", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ connectionKey: keyInput.trim() }),
+			});
+
+			if (!validateRes.ok) {
+				throw new Error("Connection key validation failed");
+			}
+
+			const validateData = (await validateRes.json()) as { userId?: string };
+			const uid = validateData.userId;
+
+			if (!uid) {
+				throw new Error("Could not identify user");
+			}
+
+			sessionStorage.setItem("ec_ghl_user_id", uid);
+			setUserId(uid);
+			setNeedsLogin(false);
+			setLoading(true);
+			await loadPageContext(uid);
+			setLoading(false);
+		} catch (err) {
+			setKeyError(err instanceof Error ? err.message : "Login failed");
+		} finally {
+			setKeyLoading(false);
+		}
+	};
 
 	const handleConnectWhop = () => {
-		const locationId = ghlUser?.activeLocation || ghlUser?.companyId || "";
+		const locId = ctx?.locationId || "";
 		window.open(
-			`/api/ghl/connect-whop?locationId=${encodeURIComponent(locationId)}`,
+			`/api/ghl/connect-whop?locationId=${encodeURIComponent(locId)}`,
 			"_blank",
 			"width=600,height=700",
 		);
@@ -212,14 +263,37 @@ export default function GhlSettingsPage() {
 		);
 	}
 
-	if (ssoError) {
+	if (needsLogin) {
 		return (
 			<div style={styles.container}>
-				<div style={{ ...styles.card, ...styles.errorBanner }}>
-					<p style={{ margin: 0 }}>{ssoError}</p>
-					<p style={{ ...styles.muted, marginTop: 8 }}>
-						This page must be opened from within GoHighLevel.
+				<div style={styles.card}>
+					<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+						<div style={styles.logoCircle}>EC</div>
+						<h1 style={{ ...styles.title, fontSize: 18 }}>Extensible Content</h1>
+					</div>
+					<p style={styles.muted}>
+						Enter your Connection Key to view your settings. Generate a key from your
+						Extensible Content dashboard under Integrations.
 					</p>
+					<form onSubmit={handleKeyLogin} style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+						<input
+							type="password"
+							value={keyInput}
+							onChange={(e) => setKeyInput(e.target.value)}
+							placeholder="ec_..."
+							autoComplete="off"
+							style={{ fontSize: 14, padding: "10px 12px", borderRadius: 8, border: "1px solid #d0d5dd", fontFamily: "monospace" }}
+							disabled={keyLoading}
+						/>
+						{keyError && <p style={styles.errorBanner}>{keyError}</p>}
+						<button
+							type="submit"
+							disabled={keyLoading || !keyInput.trim()}
+							style={{ ...styles.primaryBtn, opacity: keyLoading || !keyInput.trim() ? 0.5 : 1 }}
+						>
+							{keyLoading ? "Verifying..." : "Connect"}
+						</button>
+					</form>
 				</div>
 			</div>
 		);
@@ -587,5 +661,18 @@ const styles: Record<string, React.CSSProperties> = {
 		fontSize: 13,
 		color: "#0969da",
 		textDecoration: "none",
+	},
+	logoCircle: {
+		width: 36,
+		height: 36,
+		borderRadius: "50%",
+		background: "#2563eb",
+		color: "#fff",
+		display: "flex",
+		alignItems: "center",
+		justifyContent: "center",
+		fontSize: 13,
+		fontWeight: 700,
+		flexShrink: 0,
 	},
 };

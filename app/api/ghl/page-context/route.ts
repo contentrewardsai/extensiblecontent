@@ -4,37 +4,48 @@ import { getSpendableCredits } from "@/lib/shotstack-ledger";
 
 /**
  * GET /api/ghl/page-context?locationId=...
+ * GET /api/ghl/page-context?userId=...
  *
  * Returns all user data for the GHL Custom Page settings view.
- * Looks up the user via ghl_locations → user_id.
+ * Looks up the user via ghl_locations → user_id, or directly by userId.
  */
 export async function GET(request: NextRequest) {
 	const locationId = request.nextUrl.searchParams.get("locationId");
-	if (!locationId) {
-		return Response.json({ error: "locationId is required" }, { status: 400 });
+	const directUserId = request.nextUrl.searchParams.get("userId");
+
+	if (!locationId && !directUserId) {
+		return Response.json({ error: "locationId or userId is required" }, { status: 400 });
 	}
 
 	const supabase = getServiceSupabase();
 
-	// Find linked location
-	const { data: loc } = await supabase
-		.from("ghl_locations")
-		.select("id, user_id, location_name, is_active")
-		.eq("location_id", locationId)
-		.eq("is_active", true)
-		.neq("access_token", "pending")
-		.limit(1)
-		.maybeSingle();
+	let userId: string;
+	let locationName: string | null = null;
 
-	if (!loc || !loc.user_id) {
-		return Response.json({
-			whopLinked: false,
-			locationId,
-			locationName: null,
-		});
+	if (directUserId) {
+		userId = directUserId;
+	} else {
+		// Find linked location
+		const { data: loc } = await supabase
+			.from("ghl_locations")
+			.select("id, user_id, location_name, is_active")
+			.eq("location_id", locationId!)
+			.eq("is_active", true)
+			.neq("access_token", "pending")
+			.limit(1)
+			.maybeSingle();
+
+		if (!loc || !loc.user_id) {
+			return Response.json({
+				whopLinked: false,
+				locationId,
+				locationName: null,
+			});
+		}
+
+		userId = loc.user_id;
+		locationName = loc.location_name;
 	}
-
-	const userId = loc.user_id;
 
 	// Load all data in parallel
 	const [userRes, workflowsRes, templatesRes, uploadPostCountRes, spendableCredits] =
@@ -69,15 +80,15 @@ export async function GET(request: NextRequest) {
 	if (!user) {
 		return Response.json({
 			whopLinked: false,
-			locationId,
-			locationName: loc.location_name,
+			locationId: locationId ?? null,
+			locationName,
 		});
 	}
 
 	return Response.json({
 		whopLinked: true,
-		locationId,
-		locationName: loc.location_name,
+		locationId: locationId ?? null,
+		locationName,
 		user: {
 			name: user.name,
 			email: user.email,
