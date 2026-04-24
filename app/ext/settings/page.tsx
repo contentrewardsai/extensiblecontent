@@ -60,19 +60,17 @@ function formatBytes(bytes: number): string {
 
 /**
  * Request SSO payload from the GHL parent window via postMessage.
- * Returns the encrypted base64 payload.
+ * Retries every 1.5s for up to 15s since GHL may not have its listener ready
+ * immediately when the iframe loads.
  */
 function requestSsoKey(): Promise<string> {
 	return new Promise<string>((resolve, reject) => {
-		window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
-
-		const timeout = setTimeout(() => {
-			window.removeEventListener("message", listener);
-			reject(new Error("SSO response timed out"));
-		}, 10_000);
+		let resolved = false;
 
 		function listener(event: MessageEvent) {
-			if (event.data?.message === "REQUEST_USER_DATA_RESPONSE") {
+			if (event.data?.message === "REQUEST_USER_DATA_RESPONSE" && !resolved) {
+				resolved = true;
+				clearInterval(retryInterval);
 				clearTimeout(timeout);
 				window.removeEventListener("message", listener);
 				resolve(event.data.payload);
@@ -80,6 +78,34 @@ function requestSsoKey(): Promise<string> {
 		}
 
 		window.addEventListener("message", listener);
+
+		// Send immediately, then retry every 1.5s
+		const targets = [window.parent, window.top].filter(
+			(w): w is Window => w !== null && w !== window,
+		);
+		function sendRequest() {
+			for (const target of targets) {
+				try {
+					target.postMessage({ message: "REQUEST_USER_DATA" }, "*");
+				} catch {
+					// cross-origin access error, ignore
+				}
+			}
+		}
+
+		sendRequest();
+		const retryInterval = setInterval(() => {
+			if (!resolved) sendRequest();
+		}, 1500);
+
+		const timeout = setTimeout(() => {
+			if (!resolved) {
+				resolved = true;
+				clearInterval(retryInterval);
+				window.removeEventListener("message", listener);
+				reject(new Error("SSO response timed out"));
+			}
+		}, 15_000);
 	});
 }
 
