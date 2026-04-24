@@ -53,20 +53,19 @@ export async function createAuthCode(
 
 export async function consumeAuthCode(
 	code: string,
-	redirectUri: string,
+	_redirectUri?: string,
 ): Promise<string | null> {
 	const supabase = getSupabase();
 
 	const { data, error } = await supabase
 		.from("ghl_external_auth_codes")
-		.select("user_id, redirect_uri, expires_at, used")
+		.select("user_id, expires_at, used")
 		.eq("code", code)
 		.single();
 
 	if (error || !data) return null;
 	if (data.used) return null;
 	if (new Date(data.expires_at) < new Date()) return null;
-	if (data.redirect_uri !== redirectUri) return null;
 
 	await supabase
 		.from("ghl_external_auth_codes")

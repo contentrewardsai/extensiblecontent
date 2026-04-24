@@ -18,6 +18,18 @@ const nextConfig: NextConfig = {
 			source: "/api/ext-hooks",
 			destination: "/api/ghl/webhooks",
 		},
+		{
+			source: "/api/ext-validate",
+			destination: "/api/ghl/external-auth/validate",
+		},
+		{
+			source: "/api/ext-callback",
+			destination: "/api/ghl/auth/callback",
+		},
+		{
+			source: "/api/ext-connect/:path*",
+			destination: "/api/ghl/auth/:path*",
+		},
 	],
 };
 

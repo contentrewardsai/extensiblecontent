@@ -1,6 +1,8 @@
 import { requireExperienceContext } from "@/lib/experience-context";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { GhlConnectButton } from "./ghl-connect-button";
+import { GhlConnectionKey } from "./ghl-connection-key";
+import { getActiveKeyInfo } from "./generate-key-action";
 
 export default async function IntegrationsPage({
 	params,
@@ -40,6 +42,7 @@ export default async function IntegrationsPage({
 
 	const hasConnections = (connections?.length ?? 0) > 0;
 	const activeLocations = locations.filter((l) => l.is_active);
+	const activeKeyInfo = await getActiveKeyInfo(internalUserId);
 
 	return (
 		<div className="flex flex-col gap-8">
@@ -61,6 +64,12 @@ export default async function IntegrationsPage({
 					</div>
 					<GhlConnectButton userId={internalUserId} />
 				</div>
+
+				<GhlConnectionKey
+					userId={internalUserId}
+					existingKeyPrefix={activeKeyInfo?.prefix ?? null}
+					existingKeyUsedAt={activeKeyInfo?.used_at ?? null}
+				/>
 
 				{hasConnections ? (
 					<div className="mt-4">

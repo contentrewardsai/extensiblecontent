@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "invalid_client" }, { status: 401 });
 	}
 
-	if (grant_type !== "authorization_code" || !code || !redirect_uri) {
+	if (grant_type !== "authorization_code" || !code) {
 		return Response.json(
 			{ error: "invalid_request", error_description: "Missing required parameters" },
 			{ status: 400 },
