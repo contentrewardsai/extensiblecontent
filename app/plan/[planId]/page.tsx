@@ -16,7 +16,8 @@ async function getBrandName(): Promise<string> {
 			.get("host")
 			?.replace(/:\d+$/, "")
 			.toLowerCase() ?? "";
-	return host.includes("contentrewardsai.com")
+	return host.includes("contentrewardsai.com") ||
+		host.includes("contentrewardsapp.com")
 		? "Content Rewards AI"
 		: "Extensible Content";
 }

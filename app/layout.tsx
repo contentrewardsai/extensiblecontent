@@ -21,7 +21,10 @@ export async function generateMetadata(): Promise<Metadata> {
 			?.replace(/:\d+$/, "")
 			.toLowerCase() ?? "";
 
-	if (host.includes("contentrewardsai.com")) {
+	if (
+		host.includes("contentrewardsai.com") ||
+		host.includes("contentrewardsapp.com")
+	) {
 		return {
 			title: "Content Rewards AI - Scale Your Clipping Campaigns",
 			description:

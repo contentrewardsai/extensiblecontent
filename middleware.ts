@@ -8,7 +8,10 @@ function getHost(request: NextRequest): string {
 }
 
 function isContentRewardsDomain(host: string): boolean {
-	return host.includes("contentrewardsai.com");
+	return (
+		host.includes("contentrewardsai.com") ||
+		host.includes("contentrewardsapp.com")
+	);
 }
 
 export async function middleware(request: NextRequest) {
