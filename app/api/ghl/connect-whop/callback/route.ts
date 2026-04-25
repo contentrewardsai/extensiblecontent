@@ -1,12 +1,13 @@
 import type { NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase-service";
+import { ensureInternalUserFromWhop } from "@/lib/whop-app-user";
 
 /**
  * GET /api/ghl/connect-whop/callback
  *
- * Whop redirects here after the GHL user authenticates.
- * We exchange the code for user info, ensure the user exists,
- * and link the ghl_locations row to this user.
+ * Whop redirects here after the user authenticates. We exchange the
+ * code for user info, link the GHL company/location to the Whop user
+ * in the database, and close the popup.
  */
 export async function GET(request: NextRequest) {
 	const { searchParams } = request.nextUrl;
@@ -15,24 +16,24 @@ export async function GET(request: NextRequest) {
 	const error = searchParams.get("error");
 
 	if (error) {
-		return redirectToSettings(request, null, `error=${encodeURIComponent(error)}`);
+		return closePopup({ error });
 	}
 	if (!code || !stateParam) {
-		return redirectToSettings(request, null, "error=missing_params");
+		return closePopup({ error: "missing_params" });
 	}
 
-	let stateData: { locationId: string };
+	let stateData: { companyId?: string; locationId?: string };
 	try {
 		stateData = JSON.parse(Buffer.from(stateParam, "base64url").toString());
 	} catch {
-		return redirectToSettings(request, null, "error=invalid_state");
+		return closePopup({ error: "invalid_state" });
 	}
 
-	const { locationId } = stateData;
+	const { companyId, locationId } = stateData;
 	const origin = request.nextUrl.origin;
 	const callbackUrl = `${origin}/api/ghl/connect-whop/callback`;
 
-	// Exchange Whop code for access token (public client)
+	// Exchange Whop code for access token
 	const tokenRes = await fetch("https://api.whop.com/oauth/token", {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -45,8 +46,11 @@ export async function GET(request: NextRequest) {
 	});
 
 	if (!tokenRes.ok) {
-		console.error("[ghl-connect-whop] Whop token exchange failed:", await tokenRes.text());
-		return redirectToSettings(request, locationId, "error=whop_auth_failed");
+		console.error(
+			"[ghl-connect-whop] Whop token exchange failed:",
+			await tokenRes.text(),
+		);
+		return closePopup({ error: "whop_auth_failed" });
 	}
 
 	const tokenData = (await tokenRes.json()) as { access_token: string };
@@ -56,7 +60,7 @@ export async function GET(request: NextRequest) {
 		headers: { Authorization: `Bearer ${tokenData.access_token}` },
 	});
 	if (!userinfoRes.ok) {
-		return redirectToSettings(request, locationId, "error=userinfo_failed");
+		return closePopup({ error: "userinfo_failed" });
 	}
 
 	const userinfo = (await userinfoRes.json()) as {
@@ -66,65 +70,78 @@ export async function GET(request: NextRequest) {
 		preferred_username?: string;
 	};
 	if (!userinfo?.sub) {
-		return redirectToSettings(request, locationId, "error=invalid_user");
+		return closePopup({ error: "invalid_user" });
 	}
+
+	// Ensure user exists in our database
+	const userId = await ensureInternalUserFromWhop(userinfo.sub, {
+		email: userinfo.email,
+		name: userinfo.name,
+		username: userinfo.preferred_username,
+	});
 
 	const supabase = getServiceSupabase();
+	const now = new Date().toISOString();
 
-	// Ensure user exists
-	let userId: string;
-	const { data: existing } = await supabase
-		.from("users")
-		.select("id")
-		.eq("whop_user_id", userinfo.sub)
-		.maybeSingle();
+	// Link the GHL company to this Whop user
+	if (companyId) {
+		await supabase
+			.from("ghl_connections")
+			.update({ user_id: userId, updated_at: now })
+			.eq("company_id", companyId)
+			.is("user_id", null);
 
-	if (existing) {
-		userId = existing.id;
-	} else {
-		const email = userinfo.email || `${userinfo.sub}@whop.placeholder`;
-		const { data: upserted } = await supabase
-			.from("users")
-			.upsert(
-				{
-					email,
-					whop_user_id: userinfo.sub,
-					name: userinfo.name ?? userinfo.preferred_username ?? null,
-					updated_at: new Date().toISOString(),
-				},
-				{ onConflict: "email" },
-			)
+		// Also update child locations for this company
+		const { data: conn } = await supabase
+			.from("ghl_connections")
 			.select("id")
-			.single();
-		if (!upserted) {
-			return redirectToSettings(request, locationId, "error=user_create_failed");
+			.eq("company_id", companyId)
+			.maybeSingle();
+
+		if (conn) {
+			await supabase
+				.from("ghl_locations")
+				.update({ user_id: userId, updated_at: now })
+				.eq("connection_id", conn.id)
+				.is("user_id", null);
 		}
-		userId = upserted.id;
 	}
 
-	// Link the GHL location to this user
-	const { error: updateErr } = await supabase
-		.from("ghl_locations")
-		.update({ user_id: userId, updated_at: new Date().toISOString() })
-		.eq("location_id", locationId)
-		.eq("is_active", true);
-
-	// Also update the parent connection if it has no user_id
-	await supabase
-		.from("ghl_connections")
-		.update({ user_id: userId, updated_at: new Date().toISOString() })
-		.is("user_id", null);
-
-	if (updateErr) {
-		console.error("[ghl-connect-whop] Link failed:", updateErr);
-		return redirectToSettings(request, locationId, "error=link_failed");
+	// Also link specific location if provided
+	if (locationId) {
+		await supabase
+			.from("ghl_locations")
+			.update({ user_id: userId, updated_at: now })
+			.eq("location_id", locationId)
+			.is("user_id", null);
 	}
 
-	return redirectToSettings(request, locationId, "connected=true");
+	console.log(
+		`[ghl-connect-whop] Linked companyId=${companyId ?? "?"} locationId=${locationId ?? "?"} to userId=${userId}`,
+	);
+
+	return closePopup({ success: true });
 }
 
-function redirectToSettings(request: NextRequest, locationId: string | null, query: string) {
-	const origin = request.nextUrl.origin;
-	const locParam = locationId ? `location_id=${encodeURIComponent(locationId)}&` : "";
-	return Response.redirect(`${origin}/ext/settings?${locParam}${query}`);
+/**
+ * Returns an HTML page that notifies the parent window and closes the popup.
+ */
+function closePopup(result: { success?: boolean; error?: string }) {
+	const html = `<!DOCTYPE html>
+<html><head><title>Linking...</title></head>
+<body>
+<p>${result.success ? "Account linked! This window will close..." : `Error: ${result.error}`}</p>
+<script>
+if (window.opener) {
+  window.opener.postMessage(${JSON.stringify({ type: "whop-link-result", ...result })}, "*");
+  setTimeout(() => window.close(), 1000);
+} else {
+  document.querySelector("p").textContent += " You can close this tab.";
+}
+</script>
+</body></html>`;
+
+	return new Response(html, {
+		headers: { "Content-Type": "text/html" },
+	});
 }

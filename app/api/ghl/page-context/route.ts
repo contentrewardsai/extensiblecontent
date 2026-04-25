@@ -3,48 +3,102 @@ import { getServiceSupabase } from "@/lib/supabase-service";
 import { getSpendableCredits } from "@/lib/shotstack-ledger";
 
 /**
+ * GET /api/ghl/page-context?companyId=...
  * GET /api/ghl/page-context?locationId=...
  * GET /api/ghl/page-context?userId=...
  *
  * Returns all user data for the GHL Custom Page settings view.
- * Looks up the user via ghl_locations → user_id, or directly by userId.
+ * Resolves the Whop userId from whichever GHL identifier is provided
+ * by looking up the backend link in ghl_connections / ghl_locations.
  */
 export async function GET(request: NextRequest) {
+	const companyId = request.nextUrl.searchParams.get("companyId");
 	const locationId = request.nextUrl.searchParams.get("locationId");
 	const directUserId = request.nextUrl.searchParams.get("userId");
 
-	if (!locationId && !directUserId) {
-		return Response.json({ error: "locationId or userId is required" }, { status: 400 });
+	if (!companyId && !locationId && !directUserId) {
+		return Response.json(
+			{ error: "companyId, locationId, or userId is required" },
+			{ status: 400 },
+		);
 	}
 
 	const supabase = getServiceSupabase();
 
-	let userId: string;
+	let userId: string | null = null;
 	let locationName: string | null = null;
 
 	if (directUserId) {
 		userId = directUserId;
-	} else {
-		// Find linked location
-		const { data: loc } = await supabase
-			.from("ghl_locations")
-			.select("id, user_id, location_name, is_active")
-			.eq("location_id", locationId!)
-			.eq("is_active", true)
-			.neq("access_token", "pending")
-			.limit(1)
+	} else if (companyId) {
+		// Look up the linked Whop user via the ghl_connections table
+		const { data: conn } = await supabase
+			.from("ghl_connections")
+			.select("user_id")
+			.eq("company_id", companyId)
 			.maybeSingle();
 
-		if (!loc || !loc.user_id) {
+		if (conn?.user_id) {
+			userId = conn.user_id;
+		} else {
 			return Response.json({
 				whopLinked: false,
-				locationId,
+				companyId,
+				locationId: null,
 				locationName: null,
 			});
 		}
+	} else if (locationId) {
+		// Look up via ghl_locations
+		const { data: loc } = await supabase
+			.from("ghl_locations")
+			.select("id, user_id, location_name, is_active")
+			.eq("location_id", locationId)
+			.eq("is_active", true)
+			.not("access_token", "in", '("pending","pending-link")')
+			.limit(1)
+			.maybeSingle();
 
-		userId = loc.user_id;
-		locationName = loc.location_name;
+		if (loc?.user_id) {
+			userId = loc.user_id;
+			locationName = loc.location_name;
+		} else {
+			// Try via ghl_connections using location's parent connection
+			const { data: locAny } = await supabase
+				.from("ghl_locations")
+				.select("connection_id")
+				.eq("location_id", locationId)
+				.limit(1)
+				.maybeSingle();
+
+			if (locAny) {
+				const { data: conn } = await supabase
+					.from("ghl_connections")
+					.select("user_id")
+					.eq("id", locAny.connection_id)
+					.maybeSingle();
+
+				if (conn?.user_id) {
+					userId = conn.user_id;
+				}
+			}
+
+			if (!userId) {
+				return Response.json({
+					whopLinked: false,
+					locationId,
+					locationName: null,
+				});
+			}
+		}
+	}
+
+	if (!userId) {
+		return Response.json({
+			whopLinked: false,
+			locationId: locationId ?? null,
+			locationName: null,
+		});
 	}
 
 	// Load all data in parallel

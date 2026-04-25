@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { getPlanWithDetails, parsePlanId } from "@/lib/promotion-plan";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import "../plan.css";
@@ -9,19 +10,33 @@ interface PlanPageProps {
 	params: Promise<{ planId: string }>;
 }
 
-const PLAN_PAGE_TITLE_FALLBACK = "Extensible Content - Promotion Plan";
+async function getBrandName(): Promise<string> {
+	const host =
+		(await headers())
+			.get("host")
+			?.replace(/:\d+$/, "")
+			.toLowerCase() ?? "";
+	return host.includes("contentrewardsai.com")
+		? "Content Rewards AI"
+		: "Extensible Content";
+}
 
-function buildPlanDocumentTitle(displayTitle: unknown): string {
+function planTitleFallback(brand: string): string {
+	return `${brand} - Promotion Plan`;
+}
+
+function buildPlanDocumentTitle(displayTitle: unknown, brand: string): string {
 	const trimmed = typeof displayTitle === "string" ? displayTitle.trim() : "";
-	if (!trimmed) return PLAN_PAGE_TITLE_FALLBACK;
-	return `Extensible Content - ${trimmed}`;
+	if (!trimmed) return planTitleFallback(brand);
+	return `${brand} - ${trimmed}`;
 }
 
 export async function generateMetadata({ params }: PlanPageProps): Promise<Metadata> {
+	const brand = await getBrandName();
 	const { planId: rawPlanId } = await params;
 	const parsed = parsePlanId(rawPlanId);
 	if (!parsed.ok) {
-		return { title: PLAN_PAGE_TITLE_FALLBACK };
+		return { title: planTitleFallback(brand) };
 	}
 
 	try {
@@ -31,9 +46,9 @@ export async function generateMetadata({ params }: PlanPageProps): Promise<Metad
 			.select("title")
 			.eq("id", parsed.id)
 			.maybeSingle();
-		return { title: buildPlanDocumentTitle(row?.title) };
+		return { title: buildPlanDocumentTitle(row?.title, brand) };
 	} catch {
-		return { title: PLAN_PAGE_TITLE_FALLBACK };
+		return { title: planTitleFallback(brand) };
 	}
 }
 

@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
 			)
 			.in("connection_id", connIds)
 			.neq("access_token", "pending")
+			.neq("access_token", "pending-link")
 			.order("created_at", { ascending: false });
 
 		locations = locs ?? [];

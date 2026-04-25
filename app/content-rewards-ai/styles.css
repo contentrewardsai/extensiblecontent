@@ -1,0 +1,514 @@
+/* Content Rewards AI — Marketing landing page */
+
+:root {
+  --cra-bg: #0b0f1a;
+  --cra-surface: #131827;
+  --cra-card: #1a1f33;
+  --cra-border: #252b40;
+  --cra-text: #e8eaf0;
+  --cra-muted: #8b90a0;
+  --cra-accent: #6c63ff;
+  --cra-accent-light: #8b83ff;
+  --cra-green: #22c55e;
+  --cra-red: #ef4444;
+  --cra-gold: #facc15;
+}
+
+.cra-page {
+  min-height: 100vh;
+  background: var(--cra-bg);
+  color: var(--cra-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+/* ── Nav ──────────────────────────────────────────────────────────── */
+
+.cra-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 24px;
+}
+
+.cra-nav-brand {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  text-decoration: none;
+}
+
+.cra-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cra-nav-links a {
+  color: var(--cra-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.cra-nav-links a:hover {
+  color: #fff;
+}
+
+.cra-nav-cta {
+  padding: 8px 18px;
+  background: var(--cra-accent);
+  color: #fff !important;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  transition: background 0.15s;
+}
+
+.cra-nav-cta:hover {
+  background: var(--cra-accent-light);
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────── */
+
+.cra-hero {
+  text-align: center;
+  padding: 80px 24px 60px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.cra-hero-badge {
+  display: inline-block;
+  padding: 6px 16px;
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--cra-muted);
+  margin-bottom: 28px;
+  letter-spacing: 0.02em;
+}
+
+.cra-hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  font-weight: 800;
+  line-height: 1.15;
+  margin: 0 0 20px;
+  color: #fff;
+}
+
+.cra-hero h1 span {
+  background: linear-gradient(135deg, var(--cra-accent), #a78bfa, #ec4899);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.cra-hero p {
+  font-size: 1.1rem;
+  color: var(--cra-muted);
+  max-width: 600px;
+  margin: 0 auto 36px;
+  line-height: 1.6;
+}
+
+.cra-hero-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.cra-btn-primary {
+  display: inline-block;
+  padding: 14px 32px;
+  background: var(--cra-accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.cra-btn-primary:hover {
+  background: var(--cra-accent-light);
+  transform: translateY(-1px);
+}
+
+.cra-btn-outline {
+  display: inline-block;
+  padding: 14px 32px;
+  background: transparent;
+  color: var(--cra-text);
+  border: 1px solid var(--cra-border);
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.cra-btn-outline:hover {
+  border-color: var(--cra-accent);
+  color: #fff;
+}
+
+/* ── Section shared ───────────────────────────────────────────────── */
+
+.cra-section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 80px 24px;
+}
+
+.cra-section-label {
+  display: inline-block;
+  padding: 6px 14px;
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cra-accent-light);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 16px;
+}
+
+.cra-section h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 16px;
+  line-height: 1.2;
+}
+
+.cra-section > p {
+  color: var(--cra-muted);
+  font-size: 1.05rem;
+  max-width: 640px;
+  line-height: 1.6;
+}
+
+.cra-section-center {
+  text-align: center;
+}
+
+.cra-section-center > p {
+  margin: 0 auto 40px;
+}
+
+/* ── Comparison cards ─────────────────────────────────────────────── */
+
+.cra-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 40px;
+}
+
+.cra-compare-card {
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 16px;
+  padding: 32px 28px;
+}
+
+.cra-compare-card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 18px;
+  color: #fff;
+}
+
+.cra-compare-card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cra-compare-card ul li {
+  position: relative;
+  padding: 8px 0 8px 28px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--cra-muted);
+}
+
+.cra-compare-card ul li::before {
+  content: "✕";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  font-size: 0.85rem;
+  color: var(--cra-red);
+  font-weight: 700;
+}
+
+.cra-compare-card.cra-winner {
+  border-color: var(--cra-accent);
+  box-shadow: 0 0 40px rgba(108, 99, 255, 0.12);
+}
+
+.cra-winner-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--cra-accent);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 12px;
+}
+
+.cra-compare-card.cra-winner ul li::before {
+  content: "✓";
+  color: var(--cra-green);
+}
+
+/* ── Feature grid ─────────────────────────────────────────────────── */
+
+.cra-features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 40px;
+}
+
+.cra-feature-card {
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 16px;
+  padding: 28px 24px;
+}
+
+.cra-feature-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(108, 99, 255, 0.12);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  font-size: 1.4rem;
+}
+
+.cra-feature-card h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 10px;
+}
+
+.cra-feature-card p {
+  color: var(--cra-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ── SEO section ──────────────────────────────────────────────────── */
+
+.cra-seo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 40px;
+}
+
+.cra-seo-card {
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 16px;
+  padding: 28px 24px;
+}
+
+.cra-seo-card h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 10px;
+}
+
+.cra-seo-card p {
+  color: var(--cra-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ── Pricing ──────────────────────────────────────────────────────── */
+
+.cra-pricing-card {
+  max-width: 520px;
+  margin: 40px auto 0;
+  background: var(--cra-card);
+  border: 1px solid var(--cra-border);
+  border-radius: 20px;
+  padding: 44px 40px;
+  text-align: center;
+}
+
+.cra-pricing-amount {
+  font-size: 2.8rem;
+  font-weight: 800;
+  color: #fff;
+  margin: 0 0 4px;
+}
+
+.cra-pricing-sub {
+  font-size: 1rem;
+  color: var(--cra-muted);
+  margin: 0 0 28px;
+}
+
+.cra-pricing-perks {
+  list-style: none;
+  margin: 0 0 32px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  text-align: left;
+}
+
+.cra-pricing-perks li {
+  font-size: 0.9rem;
+  color: var(--cra-text);
+  padding-left: 24px;
+  position: relative;
+}
+
+.cra-pricing-perks li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--cra-green);
+  font-weight: 700;
+}
+
+.cra-pricing-note {
+  font-size: 0.8rem;
+  color: var(--cra-muted);
+  margin: 16px 0 0;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────── */
+
+.cra-footer {
+  border-top: 1px solid var(--cra-border);
+  padding: 40px 24px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.cra-footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+
+.cra-footer-brand {
+  font-weight: 700;
+  color: #fff;
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+
+.cra-footer-tagline {
+  font-size: 0.85rem;
+  color: var(--cra-muted);
+  max-width: 320px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cra-footer-cols {
+  display: flex;
+  gap: 56px;
+}
+
+.cra-footer-col h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cra-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 12px;
+}
+
+.cra-footer-col ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cra-footer-col ul li {
+  margin-bottom: 8px;
+}
+
+.cra-footer-col ul li a {
+  color: var(--cra-text);
+  text-decoration: none;
+  font-size: 0.88rem;
+  transition: color 0.15s;
+}
+
+.cra-footer-col ul li a:hover {
+  color: var(--cra-accent-light);
+}
+
+.cra-footer-copy {
+  text-align: center;
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid var(--cra-border);
+  font-size: 0.8rem;
+  color: var(--cra-muted);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .cra-nav-links {
+    display: none;
+  }
+
+  .cra-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .cra-features,
+  .cra-seo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cra-pricing-perks {
+    grid-template-columns: 1fr;
+  }
+
+  .cra-footer-inner {
+    flex-direction: column;
+  }
+
+  .cra-footer-cols {
+    flex-direction: column;
+    gap: 28px;
+  }
+}

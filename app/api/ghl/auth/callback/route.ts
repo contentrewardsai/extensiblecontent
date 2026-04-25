@@ -76,32 +76,18 @@ export async function GET(request: NextRequest) {
 		}
 	}
 
-	// Still no user -- store tokens with companyId for later linking and show success
-	if (!userId) {
-		console.log(
-			"[ghl-callback] No user found for companyId:",
-			tokenData.companyId,
-			"— tokens stored for later linking via External Auth.",
-		);
-
-		// Redirect to a simple success page
-		const successUrl = new URL("/api/ghl/auth/success", origin);
-		successUrl.searchParams.set("pending", "true");
-		successUrl.searchParams.set("companyId", tokenData.companyId);
-		return Response.redirect(successUrl.toString());
-	}
-
 	const now = new Date().toISOString();
 	const expiresAt = new Date(
 		Date.now() + tokenData.expires_in * 1000,
 	).toISOString();
 
-	// Upsert connection (one per user + companyId)
+	// Upsert connection (one per company_id). userId may be null for
+	// GHL-initiated installs — it gets set later via Connection Key linking.
 	const { data: connection, error: connErr } = await supabase
 		.from("ghl_connections")
 		.upsert(
 			{
-				user_id: userId,
+				...(userId ? { user_id: userId } : {}),
 				company_id: tokenData.companyId,
 				user_type: userType,
 				access_token: tokenData.access_token,
@@ -111,41 +97,26 @@ export async function GET(request: NextRequest) {
 				ghl_user_id: tokenData.userId ?? null,
 				updated_at: now,
 			},
-			{ onConflict: "user_id,company_id", ignoreDuplicates: false },
+			{ onConflict: "company_id", ignoreDuplicates: false },
 		)
 		.select("id")
 		.single();
 
 	if (connErr || !connection) {
-		const { data: inserted, error: insertErr } = await supabase
-			.from("ghl_connections")
-			.insert({
-				user_id: userId,
-				company_id: tokenData.companyId,
-				user_type: userType,
-				access_token: tokenData.access_token,
-				refresh_token: tokenData.refresh_token,
-				token_expires_at: expiresAt,
-				scopes: tokenData.scope,
-				ghl_user_id: tokenData.userId ?? null,
-				updated_at: now,
-			})
-			.select("id")
-			.single();
+		console.error("[ghl-callback] DB error:", connErr);
+		return new Response("Failed to store connection", { status: 500 });
+	}
 
-		if (insertErr || !inserted) {
-			console.error("[ghl-callback] DB error:", connErr, insertErr);
-			return new Response("Failed to store connection", { status: 500 });
-		}
-
-		return handlePostConnection(
-			request,
-			inserted.id,
-			userId,
-			tokenData,
-			userType,
-			supabase,
+	if (!userId) {
+		console.log(
+			"[ghl-callback] Stored tokens for companyId:",
+			tokenData.companyId,
+			"— awaiting Connection Key linking.",
 		);
+		const successUrl = new URL("/api/ghl/auth/success", origin);
+		successUrl.searchParams.set("pending", "true");
+		successUrl.searchParams.set("companyId", tokenData.companyId);
+		return Response.redirect(successUrl.toString());
 	}
 
 	return handlePostConnection(

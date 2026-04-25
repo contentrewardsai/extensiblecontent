@@ -40,6 +40,7 @@ The `extension/` folder contains a Chrome extension that connects to this Whop a
 1. **Whop OAuth**: In the [Whop developer dashboard](https://whop.com/dashboard/developer/) → your app → OAuth, add these redirect URIs:
 	- `http://localhost:3000/extension/login` (development)
 	- `https://your-production-domain.com/extension/login` (production)
+	- `https://your-production-domain.com/api/ghl/connect-whop/callback` (GHL → Whop linking)
 
 2. **Supabase migration**: Link your project (one-time) then run migrations:
 	```bash

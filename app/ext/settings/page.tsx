@@ -3,23 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-interface GhlUserContext {
-	userId: string;
-	companyId: string;
-	role: string;
-	type: "agency" | "location";
-	userName: string;
-	email: string;
-	isAgencyOwner: boolean;
-	activeLocation?: string;
-	versionId: string;
-	appStatus: string;
-}
-
 interface PageContext {
 	whopLinked: boolean;
 	locationId: string;
 	locationName: string | null;
+	companyId?: string;
 	user?: {
 		name: string | null;
 		email: string;
@@ -60,11 +48,13 @@ function formatBytes(bytes: number): string {
 
 /**
  * Request SSO payload from the GHL parent window via postMessage.
- * Retries every 1.5s for up to 15s since GHL may not have its listener ready
- * immediately when the iframe loads.
+ * Returns decrypted user context with companyId, activeLocation, etc.
  */
-function requestSsoKey(): Promise<string> {
-	return new Promise<string>((resolve, reject) => {
+function requestSsoContext(): Promise<{
+	companyId: string;
+	activeLocation?: string;
+}> {
+	return new Promise((resolve, reject) => {
 		let resolved = false;
 
 		function listener(event: MessageEvent) {
@@ -73,13 +63,23 @@ function requestSsoKey(): Promise<string> {
 				clearInterval(retryInterval);
 				clearTimeout(timeout);
 				window.removeEventListener("message", listener);
-				resolve(event.data.payload);
+
+				fetch("/api/ghl/sso", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ payload: event.data.payload }),
+				})
+					.then((res) => {
+						if (!res.ok) throw new Error("SSO decryption failed");
+						return res.json();
+					})
+					.then((data) => resolve(data))
+					.catch(reject);
 			}
 		}
 
 		window.addEventListener("message", listener);
 
-		// Send immediately, then retry every 1.5s
 		const targets = [window.parent, window.top].filter(
 			(w): w is Window => w !== null && w !== window,
 		);
@@ -88,7 +88,7 @@ function requestSsoKey(): Promise<string> {
 				try {
 					target.postMessage({ message: "REQUEST_USER_DATA" }, "*");
 				} catch {
-					// cross-origin access error, ignore
+					/* cross-origin */
 				}
 			}
 		}
@@ -103,9 +103,9 @@ function requestSsoKey(): Promise<string> {
 				resolved = true;
 				clearInterval(retryInterval);
 				window.removeEventListener("message", listener);
-				reject(new Error("SSO response timed out"));
+				reject(new Error("SSO timed out"));
 			}
-		}, 15_000);
+		}, 10_000);
 	});
 }
 
@@ -116,70 +116,87 @@ export default function GhlSettingsPage() {
 
 	const [ctx, setCtx] = useState<PageContext | null>(null);
 	const [loading, setLoading] = useState(true);
-	const [needsLogin, setNeedsLogin] = useState(false);
+	const [needsLink, setNeedsLink] = useState(false);
 	const [fetchError, setFetchError] = useState<string | null>(null);
+
+	// Connection Key fallback
+	const [showKeyForm, setShowKeyForm] = useState(false);
 	const [keyInput, setKeyInput] = useState("");
 	const [keyLoading, setKeyLoading] = useState(false);
 	const [keyError, setKeyError] = useState<string | null>(null);
-	const [userId, setUserId] = useState<string | null>(null);
+
+	// GHL identifiers from SSO
+	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(null);
+	const [ghlLocationId, setGhlLocationId] = useState<string | null>(null);
 
 	const loadPageContext = useCallback(
-		async (uid: string) => {
-			try {
-				const res = await fetch(
-					`/api/ghl/page-context?userId=${encodeURIComponent(uid)}`,
-				);
-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
-				const data = (await res.json()) as PageContext;
-				setCtx(data);
-			} catch (err) {
-				setFetchError(err instanceof Error ? err.message : "Failed to load data");
-			}
+		async (params: {
+			companyId?: string;
+			locationId?: string;
+			userId?: string;
+		}) => {
+			const qs = new URLSearchParams();
+			if (params.companyId) qs.set("companyId", params.companyId);
+			if (params.locationId) qs.set("locationId", params.locationId);
+			if (params.userId) qs.set("userId", params.userId);
+
+			const res = await fetch(`/api/ghl/page-context?${qs.toString()}`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			return (await res.json()) as PageContext;
 		},
 		[],
 	);
 
-	// Try SSO first, fall back to Connection Key login
+	// Init: SSO → backend lookup → show settings or link prompt
 	useEffect(() => {
 		let cancelled = false;
 
 		async function init() {
 			setLoading(true);
 
-			// Check if we have a cached session
-			const cachedUserId = sessionStorage.getItem("ec_ghl_user_id");
-			if (cachedUserId) {
-				setUserId(cachedUserId);
-				await loadPageContext(cachedUserId);
-				if (!cancelled) setLoading(false);
-				return;
+			let companyId: string | null = null;
+			let locationId: string | null = null;
+
+			try {
+				const sso = await requestSsoContext();
+				companyId = sso.companyId || null;
+				locationId = sso.activeLocation || null;
+			} catch {
+				// SSO not available
 			}
 
-			// Try SSO
-			try {
-				const encryptedPayload = await requestSsoKey();
-				const res = await fetch("/api/ghl/sso", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ payload: encryptedPayload }),
-				});
-				if (!res.ok) throw new Error("SSO decryption failed");
-				const userContext = (await res.json()) as GhlUserContext;
+			if (cancelled) return;
 
-				if (cancelled) return;
+			if (companyId) setGhlCompanyId(companyId);
+			if (locationId) setGhlLocationId(locationId);
 
-				const locationId = userContext.activeLocation || userContext.companyId;
-				if (locationId) {
-					await loadPageContext(locationId);
+			if (companyId || locationId) {
+				try {
+					const data = await loadPageContext({
+						companyId: companyId ?? undefined,
+						locationId: locationId ?? undefined,
+					});
+
+					if (cancelled) return;
+
+					if (data.whopLinked) {
+						setCtx(data);
+						setLoading(false);
+						return;
+					}
+				} catch (err) {
+					if (!cancelled) {
+						setFetchError(
+							err instanceof Error ? err.message : "Failed to load data",
+						);
+						setLoading(false);
+						return;
+					}
 				}
-				if (!cancelled) setLoading(false);
-				return;
-			} catch {
-				// SSO failed -- fall back to Connection Key login
 			}
 
 			if (!cancelled) {
-				setNeedsLogin(true);
+				setNeedsLink(true);
 				setLoading(false);
 			}
 		}
@@ -190,7 +207,47 @@ export default function GhlSettingsPage() {
 		};
 	}, [loadPageContext]);
 
-	const handleKeyLogin = async (e: React.FormEvent) => {
+	// Listen for popup close message from Whop OAuth
+	useEffect(() => {
+		function onMessage(event: MessageEvent) {
+			if (event.data?.type === "whop-link-result" && event.data.success) {
+				// Accounts linked — reload settings
+				setNeedsLink(false);
+				setLoading(true);
+				const params: Record<string, string> = {};
+				if (ghlCompanyId) params.companyId = ghlCompanyId;
+				if (ghlLocationId) params.locationId = ghlLocationId;
+				loadPageContext(params)
+					.then((data) => {
+						setCtx(data);
+						setLoading(false);
+					})
+					.catch((err) => {
+						setFetchError(
+							err instanceof Error ? err.message : "Failed to load data",
+						);
+						setLoading(false);
+					});
+			}
+		}
+
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [ghlCompanyId, ghlLocationId, loadPageContext]);
+
+	const handleWhopOAuth = () => {
+		const params = new URLSearchParams();
+		if (ghlCompanyId) params.set("companyId", ghlCompanyId);
+		if (ghlLocationId) params.set("locationId", ghlLocationId);
+
+		window.open(
+			`/api/ghl/connect-whop?${params.toString()}`,
+			"whop-link",
+			"width=600,height=700,popup=yes",
+		);
+	};
+
+	const handleKeyLink = async (e: React.FormEvent) => {
 		e.preventDefault();
 		if (!keyInput.trim()) return;
 
@@ -201,41 +258,33 @@ export default function GhlSettingsPage() {
 			const res = await fetch("/api/ext-validate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ connectionKey: keyInput.trim() }),
+				body: JSON.stringify({
+					connectionKey: keyInput.trim(),
+					...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
+				}),
 			});
 
 			if (!res.ok) {
-				const data = (await res.json().catch(() => ({}))) as Record<string, string>;
+				const data = (await res.json().catch(() => ({}))) as Record<
+					string,
+					string
+				>;
 				throw new Error(data.error || "Invalid connection key");
 			}
 
-			const data = (await res.json()) as { userId?: string };
-			const uid = data.userId;
+			const result = (await res.json()) as { userId?: string };
+			const uid = result.userId;
+			if (!uid) throw new Error("Could not identify user");
 
-			if (!uid) {
-				throw new Error("Could not identify user");
-			}
-
-			sessionStorage.setItem("ec_ghl_user_id", uid);
-			setUserId(uid);
-			setNeedsLogin(false);
-			setLoading(true);
-			await loadPageContext(uid);
-			setLoading(false);
+			const data = await loadPageContext({ userId: uid });
+			setCtx(data);
+			setNeedsLink(false);
+			setShowKeyForm(false);
 		} catch (err) {
-			setKeyError(err instanceof Error ? err.message : "Login failed");
+			setKeyError(err instanceof Error ? err.message : "Link failed");
 		} finally {
 			setKeyLoading(false);
 		}
-	};
-
-	const handleConnectWhop = () => {
-		const locId = ctx?.locationId || "";
-		window.open(
-			`/api/ghl/connect-whop?locationId=${encodeURIComponent(locId)}`,
-			"_blank",
-			"width=600,height=700",
-		);
 	};
 
 	if (loading) {
@@ -248,7 +297,7 @@ export default function GhlSettingsPage() {
 		);
 	}
 
-	if (needsLogin) {
+	if (needsLink) {
 		return (
 			<div style={styles.container}>
 				<div style={styles.card}>
@@ -256,29 +305,71 @@ export default function GhlSettingsPage() {
 						<div style={styles.logoCircle}>EC</div>
 						<h1 style={{ ...styles.title, fontSize: 18 }}>Extensible Content</h1>
 					</div>
-					<p style={styles.muted}>
-						Enter your Connection Key to view your settings. Generate a key from your
-						Extensible Content dashboard under Integrations.
+
+					<p style={styles.body}>
+						Link your Whop account to access your workflows, templates, credits,
+						and billing from within GoHighLevel.
 					</p>
-					<form onSubmit={handleKeyLogin} style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-						<input
-							type="password"
-							value={keyInput}
-							onChange={(e) => setKeyInput(e.target.value)}
-							placeholder="ec_..."
-							autoComplete="off"
-							style={{ fontSize: 14, padding: "10px 12px", borderRadius: 8, border: "1px solid #d0d5dd", fontFamily: "monospace" }}
-							disabled={keyLoading}
-						/>
-						{keyError && <p style={styles.errorBanner}>{keyError}</p>}
+
+					<button
+						type="button"
+						onClick={handleWhopOAuth}
+						style={{ ...styles.primaryBtn, marginTop: 16, width: "100%", padding: "12px 20px", fontSize: 15 }}
+					>
+						Link Whop Account
+					</button>
+
+					<div style={{ margin: "20px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
+						<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
+						<span style={{ fontSize: 12, color: "#888" }}>or</span>
+						<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
+					</div>
+
+					{!showKeyForm ? (
 						<button
-							type="submit"
-							disabled={keyLoading || !keyInput.trim()}
-							style={{ ...styles.primaryBtn, opacity: keyLoading || !keyInput.trim() ? 0.5 : 1 }}
+							type="button"
+							onClick={() => setShowKeyForm(true)}
+							style={styles.secondaryBtn}
 						>
-							{keyLoading ? "Verifying..." : "Connect"}
+							Use a Connection Key instead
 						</button>
-					</form>
+					) : (
+						<form
+							onSubmit={handleKeyLink}
+							style={{ display: "flex", flexDirection: "column", gap: 10 }}
+						>
+							<p style={styles.muted}>
+								Paste the Connection Key from your Extensible Content dashboard
+								(Integrations page).
+							</p>
+							<input
+								type="password"
+								value={keyInput}
+								onChange={(e) => setKeyInput(e.target.value)}
+								placeholder="ec_..."
+								autoComplete="off"
+								style={{
+									fontSize: 14,
+									padding: "10px 12px",
+									borderRadius: 8,
+									border: "1px solid #d0d5dd",
+									fontFamily: "monospace",
+								}}
+								disabled={keyLoading}
+							/>
+							{keyError && <p style={styles.errorBanner}>{keyError}</p>}
+							<button
+								type="submit"
+								disabled={keyLoading || !keyInput.trim()}
+								style={{
+									...styles.primaryBtn,
+									opacity: keyLoading || !keyInput.trim() ? 0.5 : 1,
+								}}
+							>
+								{keyLoading ? "Linking..." : "Link with Key"}
+							</button>
+						</form>
+					)}
 				</div>
 			</div>
 		);
@@ -305,16 +396,15 @@ export default function GhlSettingsPage() {
 
 			{connected === "true" && (
 				<div style={styles.successBanner}>
-					Whop account connected successfully. Reload this page if data doesn't appear.
+					Whop account connected successfully. Reload this page if data
+					doesn&apos;t appear.
 				</div>
 			)}
 			{errorParam && (
-				<div style={styles.errorBanner}>
-					Connection error: {errorParam}
-				</div>
+				<div style={styles.errorBanner}>Connection error: {errorParam}</div>
 			)}
 
-			{/* Section 1: Whop Account Connection */}
+			{/* Whop Account */}
 			<div style={styles.card}>
 				<h2 style={styles.sectionTitle}>Whop Account</h2>
 				{ctx?.whopLinked ? (
@@ -330,11 +420,14 @@ export default function GhlSettingsPage() {
 				) : (
 					<div>
 						<div style={styles.warningBanner}>
-							No Whop account linked to this location. Connect your account to view
-							your workflows, templates, credits, and billing.
+							No Whop account linked to this location.
 						</div>
-						<button type="button" onClick={handleConnectWhop} style={styles.primaryBtn}>
-							Connect Whop Account
+						<button
+							type="button"
+							onClick={handleWhopOAuth}
+							style={styles.primaryBtn}
+						>
+							Link Whop Account
 						</button>
 					</div>
 				)}
@@ -342,11 +435,13 @@ export default function GhlSettingsPage() {
 
 			{ctx?.whopLinked && (
 				<>
-					{/* Section 2: Workflows */}
+					{/* Workflows */}
 					<div style={styles.card}>
 						<h2 style={styles.sectionTitle}>Workflows</h2>
 						{!ctx.workflows?.length ? (
-							<p style={styles.muted}>No workflows yet. Create workflows in the Chrome extension.</p>
+							<p style={styles.muted}>
+								No workflows yet. Create workflows in the Chrome extension.
+							</p>
 						) : (
 							<div style={styles.tableWrap}>
 								<table style={styles.table}>
@@ -383,16 +478,20 @@ export default function GhlSettingsPage() {
 						)}
 					</div>
 
-					{/* Section 3: ShotStack */}
+					{/* ShotStack */}
 					<div style={styles.card}>
 						<h2 style={styles.sectionTitle}>ShotStack</h2>
 						<div style={styles.statsRow}>
 							<div style={styles.stat}>
-								<p style={styles.statValue}>{ctx.shotstack?.spendableCredits?.toFixed(2) ?? "0.00"}</p>
+								<p style={styles.statValue}>
+									{ctx.shotstack?.spendableCredits?.toFixed(2) ?? "0.00"}
+								</p>
 								<p style={styles.statLabel}>Spendable Credits</p>
 							</div>
 							<div style={styles.stat}>
-								<p style={styles.statValue}>{ctx.shotstack?.hasByok ? "Configured" : "Not Set"}</p>
+								<p style={styles.statValue}>
+									{ctx.shotstack?.hasByok ? "Configured" : "Not Set"}
+								</p>
 								<p style={styles.statLabel}>BYOK API Key</p>
 							</div>
 							<div style={styles.stat}>
@@ -417,7 +516,11 @@ export default function GhlSettingsPage() {
 											{ctx.templates.map((tpl) => (
 												<tr key={tpl.id}>
 													<td style={styles.td}>{tpl.name}</td>
-													<td style={styles.td}>{tpl.default_env === "v1" ? "Production" : "Staging"}</td>
+													<td style={styles.td}>
+														{tpl.default_env === "v1"
+															? "Production"
+															: "Staging"}
+													</td>
 													<td style={styles.tdMuted}>
 														{new Date(tpl.updated_at).toLocaleDateString()}
 													</td>
@@ -430,7 +533,7 @@ export default function GhlSettingsPage() {
 						)}
 					</div>
 
-					{/* Section 4: Billing and Plan */}
+					{/* Billing */}
 					<div style={styles.card}>
 						<h2 style={styles.sectionTitle}>Billing & Plan</h2>
 						<div style={styles.statsRow}>
@@ -446,7 +549,8 @@ export default function GhlSettingsPage() {
 							</div>
 							<div style={styles.stat}>
 								<p style={styles.statValue}>
-									{ctx.uploadPostAccounts ?? 0} / {ctx.user?.maxUploadPostAccounts ?? 0}
+									{ctx.uploadPostAccounts ?? 0} /{" "}
+									{ctx.user?.maxUploadPostAccounts ?? 0}
 								</p>
 								<p style={styles.statLabel}>Upload-Post Accounts</p>
 							</div>
@@ -576,6 +680,17 @@ const styles: Record<string, React.CSSProperties> = {
 		background: "#2563eb",
 		color: "#fff",
 		cursor: "pointer",
+	},
+	secondaryBtn: {
+		fontSize: 13,
+		fontWeight: 500,
+		padding: "8px 16px",
+		borderRadius: 6,
+		border: "1px solid #d0d5dd",
+		background: "#fff",
+		color: "#333",
+		cursor: "pointer",
+		width: "100%",
 	},
 	statsRow: {
 		display: "flex",

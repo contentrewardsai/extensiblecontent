@@ -26,11 +26,12 @@ export async function GET(request: NextRequest) {
 		Date.now() + 6 * 60 * 60 * 1000,
 	).toISOString();
 
-	// Refresh agency-level connection tokens
+	// Refresh agency-level connection tokens (skip placeholders)
 	const { data: connections } = await supabase
 		.from("ghl_connections")
 		.select("id, refresh_token, user_type, token_expires_at")
-		.lt("token_expires_at", sixHoursFromNow);
+		.lt("token_expires_at", sixHoursFromNow)
+		.neq("access_token", "pending-link");
 
 	let connRefreshed = 0;
 	const connErrors: string[] = [];
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
 		.select("id, refresh_token, token_expires_at")
 		.eq("is_active", true)
 		.neq("access_token", "pending")
+		.neq("access_token", "pending-link")
 		.lt("token_expires_at", sixHoursFromNow);
 
 	let locRefreshed = 0;

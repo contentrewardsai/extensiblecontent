@@ -36,6 +36,7 @@ export default async function IntegrationsPage({
 			.select("id, connection_id, location_id, location_name, is_active")
 			.in("connection_id", connIds)
 			.neq("access_token", "pending")
+			.neq("access_token", "pending-link")
 			.order("created_at", { ascending: false });
 		locations = locs ?? [];
 	}

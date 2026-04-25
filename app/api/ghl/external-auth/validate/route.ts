@@ -16,11 +16,16 @@ function hashKey(key: string): string {
 /**
  * POST /api/ghl/external-auth/validate
  *
- * GHL calls this during app installation (API Key/Basic Auth mode).
- * Receives the connection key the user pasted, validates it,
- * and links the GHL location(s) to the Whop user.
+ * One-time linking of a GHL company to a Whop user via Connection Key.
  *
- * Body from GHL: { connectionKey, companyId, approveAllLocations, locationId, excludedLocations }
+ * Body: { connectionKey, companyId? }
+ *
+ * When companyId is provided, updates the existing ghl_connections row
+ * (which already has real OAuth tokens from the GHL app install) to set
+ * user_id = the key owner. This permanently links the accounts so the
+ * Whop app can access GHL APIs through stored tokens.
+ *
+ * When companyId is omitted, just validates the key and returns the userId.
  */
 export async function POST(request: NextRequest) {
 	let body: Record<string, unknown>;
@@ -61,59 +66,64 @@ export async function POST(request: NextRequest) {
 		.update({ used_at: new Date().toISOString() })
 		.eq("id", keyRow.id);
 
-	// Store GHL install context if companyId is provided
-	const companyId = String(body.companyId || "");
+	const companyId = String(body.companyId || "").trim();
+
 	if (companyId) {
-		await supabase.from("ghl_connections").upsert(
-			{
-				user_id: keyRow.user_id,
-				company_id: companyId,
-				user_type: "Company",
-				access_token: "external-auth",
-				refresh_token: "external-auth",
-				token_expires_at: new Date(
-					Date.now() + 365 * 24 * 60 * 60 * 1000,
-				).toISOString(),
-				updated_at: new Date().toISOString(),
-			},
-			{ onConflict: "user_id,company_id" },
-		);
+		// Link the GHL company to this Whop user by updating the existing
+		// connection row (which already has real OAuth tokens from the install).
+		const { data: conn } = await supabase
+			.from("ghl_connections")
+			.select("id, user_id")
+			.eq("company_id", companyId)
+			.maybeSingle();
 
-		// Handle location IDs if provided
-		const locationIds = body.locationId as string[] | null;
-		if (Array.isArray(locationIds) && locationIds.length > 0) {
-			const { data: conn } = await supabase
-				.from("ghl_connections")
-				.select("id")
-				.eq("user_id", keyRow.user_id)
-				.eq("company_id", companyId)
-				.single();
+		if (conn) {
+			if (!conn.user_id) {
+				await supabase
+					.from("ghl_connections")
+					.update({
+						user_id: keyRow.user_id,
+						updated_at: new Date().toISOString(),
+					})
+					.eq("id", conn.id);
 
-			if (conn) {
-				for (const locId of locationIds) {
-					await supabase.from("ghl_locations").upsert(
-						{
-							connection_id: conn.id,
-							user_id: keyRow.user_id,
-							location_id: locId,
-							access_token: "external-auth",
-							refresh_token: "external-auth",
-							token_expires_at: new Date(
-								Date.now() + 365 * 24 * 60 * 60 * 1000,
-							).toISOString(),
-							is_active: true,
-							updated_at: new Date().toISOString(),
-						},
-						{ onConflict: "connection_id,location_id" },
-					);
-				}
+				// Also update any child locations
+				await supabase
+					.from("ghl_locations")
+					.update({
+						user_id: keyRow.user_id,
+						updated_at: new Date().toISOString(),
+					})
+					.eq("connection_id", conn.id);
+
+				console.log(
+					`[ghl-link] Linked companyId=${companyId} to userId=${keyRow.user_id}`,
+				);
 			}
+		} else {
+			// No connection row yet (install hasn't happened or was lost).
+			// Create a placeholder that will be updated when the install completes.
+			await supabase.from("ghl_connections").upsert(
+				{
+					user_id: keyRow.user_id,
+					company_id: companyId,
+					user_type: "Company",
+					access_token: "pending-link",
+					refresh_token: "pending-link",
+					token_expires_at: new Date().toISOString(),
+					updated_at: new Date().toISOString(),
+				},
+				{ onConflict: "company_id" },
+			);
 		}
 	}
 
 	return Response.json({
 		ok: true,
 		userId: keyRow.user_id,
-		message: "Connection verified successfully",
+		linked: !!companyId,
+		message: companyId
+			? "Accounts linked successfully"
+			: "Connection key verified",
 	});
 }
