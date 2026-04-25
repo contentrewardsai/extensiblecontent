@@ -198,14 +198,10 @@ export default function GhlSettingsPage() {
 		setKeyError(null);
 
 		try {
-			const res = await fetch("/api/ext-login", {
+			const res = await fetch("/api/ext-validate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					connectionKey: keyInput.trim(),
-					redirectUri: "settings-page",
-					state: "settings-page",
-				}),
+				body: JSON.stringify({ connectionKey: keyInput.trim() }),
 			});
 
 			if (!res.ok) {
@@ -213,19 +209,8 @@ export default function GhlSettingsPage() {
 				throw new Error(data.error || "Invalid connection key");
 			}
 
-			// Key is valid -- get the userId from the validate endpoint
-			const validateRes = await fetch("/api/ext-validate", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ connectionKey: keyInput.trim() }),
-			});
-
-			if (!validateRes.ok) {
-				throw new Error("Connection key validation failed");
-			}
-
-			const validateData = (await validateRes.json()) as { userId?: string };
-			const uid = validateData.userId;
+			const data = (await res.json()) as { userId?: string };
+			const uid = data.userId;
 
 			if (!uid) {
 				throw new Error("Could not identify user");
