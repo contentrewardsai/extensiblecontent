@@ -133,3 +133,73 @@ export function verifyState<T = unknown>(signed: string | null | undefined): T |
 		return null;
 	}
 }
+
+/**
+ * Name of the HTTP-only cookie we set on OAuth callback to remember which
+ * Whop user is "active" in this browser. Signed with GHL_SHARED_SECRET so it
+ * cannot be forged client-side.
+ */
+export const WHOP_USER_COOKIE = "ec_whop_user";
+
+/** 30 days. */
+export const WHOP_USER_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+
+export type WhopUserCookiePayload = {
+	userId: string;
+	/** Epoch ms at which this cookie should be considered expired. */
+	exp: number;
+};
+
+/**
+ * Sign the Whop user id into a string suitable for a cookie value.
+ */
+export function signWhopUserCookie(userId: string): string {
+	return signState({
+		userId,
+		exp: Date.now() + WHOP_USER_COOKIE_MAX_AGE * 1000,
+	} satisfies WhopUserCookiePayload);
+}
+
+/**
+ * Verify and extract the Whop user id from a cookie value. Returns null if
+ * the signature is invalid, the cookie is missing, or it has expired.
+ */
+export function readWhopUserCookie(
+	value: string | null | undefined,
+): string | null {
+	const data = verifyState<WhopUserCookiePayload>(value);
+	if (!data || !data.userId) return null;
+	if (data.exp && Date.now() > data.exp) return null;
+	return data.userId;
+}
+
+/**
+ * Serialize a `Set-Cookie` header value for the Whop user cookie.
+ *
+ * The cookie is set `SameSite=None; Secure` because this app is embedded in a
+ * GHL iframe served from a different origin, and cookies must be allowed in
+ * cross-site iframe contexts. `HttpOnly` prevents client-side JS from reading
+ * the signed value — the browser still sends it on fetches to our API.
+ */
+export function serializeWhopUserCookie(
+	value: string,
+	options: { maxAge?: number } = {},
+): string {
+	const maxAge = options.maxAge ?? WHOP_USER_COOKIE_MAX_AGE;
+	const parts = [
+		`${WHOP_USER_COOKIE}=${value}`,
+		"Path=/",
+		"HttpOnly",
+		"Secure",
+		"SameSite=None",
+		`Max-Age=${maxAge}`,
+	];
+	return parts.join("; ");
+}
+
+/**
+ * `Set-Cookie` header value to clear the Whop user cookie.
+ */
+export function clearWhopUserCookieHeader(): string {
+	return serializeWhopUserCookie("", { maxAge: 0 });
+}

@@ -1,25 +1,36 @@
 import type { NextRequest } from "next/server";
-import { verifyGhlSso } from "@/lib/ghl-sso";
+import {
+	WHOP_USER_COOKIE,
+	readWhopUserCookie,
+	verifyGhlSso,
+} from "@/lib/ghl-sso";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
 /**
- * GET /api/ghl/connected-users?companyId=...&userId=...
- * GET /api/ghl/connected-users?locationId=...&userId=...
+ * GET /api/ghl/connected-users?companyId=...  (or ?locationId=...)
  *
- * Returns all Whop users connected to a given GHL company or location.
- * The caller must authenticate one of two ways:
- *   1. `userId` query parameter of a Whop user who has a row in
- *      `ghl_connection_users` for this connection.
- *   2. `X-Ghl-Sso-Payload` header containing a valid encrypted GHL SSO
- *      payload for the caller (this proves they're viewing the iframe as an
- *      authenticated GHL user of the requested location — which is sufficient
- *      to list the Whop accounts they can switch to). This lets fresh
- *      browsers (no Whop session yet) still see available accounts.
+ * Returns all Whop users linked to a given GHL company or location.
+ *
+ * Authentication — any of these proves the caller is allowed to see the
+ * linked user list for this GHL context:
+ *
+ *   1. `userId` query param of a Whop user with a row in
+ *      `ghl_connection_users` for this connection (legacy; Whop app context).
+ *   2. `ec_whop_user` signed cookie of a user with the same access.
+ *   3. `X-Ghl-Sso-Payload` header containing an encrypted GHL SSO payload
+ *      that references the same company/location (proves the caller is an
+ *      authenticated GHL user viewing the Custom Page for this location).
+ *
+ * We consider the GHL-iframe context itself sufficient to list switchable
+ * Whop accounts: seeing "which Whop accounts are linked to this location"
+ * doesn't expose any Whop-owned data — it's the same list GHL would show.
  */
 export async function GET(request: NextRequest) {
 	const companyId = request.nextUrl.searchParams.get("companyId");
 	const locationId = request.nextUrl.searchParams.get("locationId");
-	const requesterId = request.nextUrl.searchParams.get("userId");
+	const requesterId =
+		request.nextUrl.searchParams.get("userId") ||
+		readWhopUserCookie(request.cookies.get(WHOP_USER_COOKIE)?.value);
 
 	if (!companyId && !locationId) {
 		return Response.json(

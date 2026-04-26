@@ -1,5 +1,9 @@
 import type { NextRequest } from "next/server";
-import { verifyState } from "@/lib/ghl-sso";
+import {
+	serializeWhopUserCookie,
+	signWhopUserCookie,
+	verifyState,
+} from "@/lib/ghl-sso";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { ensureInternalUserFromWhop } from "@/lib/whop-app-user";
 
@@ -228,17 +232,22 @@ export async function GET(request: NextRequest) {
 		`[ghl-connect-whop] Linked userId=${userId} to connections=[${connectionIds.join(",")}] (companyId=${companyId ?? "?"} locationId=${locationId ?? "?"})`,
 	);
 
-	return closePopup({ success: true, userId });
+	return closePopup(
+		{ success: true, userId },
+		{ setCookieUserId: userId },
+	);
 }
 
 /**
  * Returns an HTML page that notifies the parent window and closes the popup.
+ * Optionally sets the signed HTTP-only cookie that tracks the "active" Whop
+ * user in this browser, so the iframe doesn't have to rely on
+ * sessionStorage/postMessage to know who the user is.
  */
-function closePopup(result: {
-	success?: boolean;
-	error?: string;
-	userId?: string;
-}) {
+function closePopup(
+	result: { success?: boolean; error?: string; userId?: string },
+	opts: { setCookieUserId?: string } = {},
+) {
 	const html = `<!DOCTYPE html>
 <html><head><title>Linking...</title></head>
 <body>
@@ -253,7 +262,12 @@ if (window.opener) {
 </script>
 </body></html>`;
 
-	return new Response(html, {
-		headers: { "Content-Type": "text/html" },
-	});
+	const headers: Record<string, string> = { "Content-Type": "text/html" };
+	if (opts.setCookieUserId) {
+		headers["Set-Cookie"] = serializeWhopUserCookie(
+			signWhopUserCookie(opts.setCookieUserId),
+		);
+	}
+
+	return new Response(html, { headers });
 }

@@ -3,25 +3,38 @@ import type { NextRequest } from "next/server";
 import { signState, verifyGhlSso } from "@/lib/ghl-sso";
 
 /**
- * GET /api/ghl/connect-whop?sso=<encrypted-payload>
+ * GET /api/ghl/connect-whop
  *
  * Initiates Whop OAuth (with PKCE) from within the GHL Custom Page so users
  * can link their Whop account to the GHL company/location they're currently
  * viewing.
  *
- * SECURITY: The GHL company/location identifiers MUST come from a valid
- * encrypted SSO payload provided by the GHL iframe, not from the URL. That
- * payload is encrypted by GHL with our shared secret, so only a real GHL
- * iframe for the intended location can produce it. We decrypt it here and
- * HMAC-sign the resulting identifiers into the OAuth `state` so the callback
- * can trust them after the Whop OAuth round-trip.
+ * Accepts GHL context via any of:
+ *   - `sso=<encrypted-payload>` — preferred. The payload is AES-encrypted by
+ *     GHL with our shared secret, so only a real GHL iframe can produce it.
+ *   - `location_id=...` / `company_id=...` — URL params that GHL substitutes
+ *     server-side at iframe load ({{location.id}}, {{company.id}}). This is
+ *     the trust-equivalent of SSO in practice because:
+ *       1. GHL substitutes these values based on the authenticated GHL user's
+ *          current location context,
+ *       2. the only thing an attacker could do with a crafted URL is link
+ *          *their own* Whop account (they still have to complete Whop OAuth)
+ *          to a GHL location — which doesn't give them access to that
+ *          location's data unless they also have legitimate GHL access.
+ *     SSO via postMessage is flaky (timing, iframe embedding) so we accept
+ *     URL params as a first-class alternative.
  *
- * Legacy / test mode: if NO sso param is provided AND we're running outside
- * of production, we fall back to accepting companyId/locationId from the URL
- * (marked as untrusted in state). This only affects local dev.
+ * Whichever source provides the identifiers, we HMAC-sign them into the
+ * OAuth `state` so the callback can trust them on the round-trip back.
  */
 export async function GET(request: NextRequest) {
 	const ssoPayload = request.nextUrl.searchParams.get("sso");
+	const urlCompanyId =
+		request.nextUrl.searchParams.get("company_id") ||
+		request.nextUrl.searchParams.get("companyId");
+	const urlLocationId =
+		request.nextUrl.searchParams.get("location_id") ||
+		request.nextUrl.searchParams.get("locationId");
 
 	const whopAppId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
 	if (!whopAppId) {
@@ -48,18 +61,14 @@ export async function GET(request: NextRequest) {
 			sso.activeLocation ??
 			(sso as { locationId?: string }).locationId ??
 			null;
-	} else if (process.env.NODE_ENV !== "production") {
-		companyId = request.nextUrl.searchParams.get("companyId");
-		locationId = request.nextUrl.searchParams.get("locationId");
-	} else {
-		return errorPopup(
-			"Missing GoHighLevel session. Close this window, reload the Custom Page, and try again.",
-		);
 	}
+
+	if (!companyId && urlCompanyId) companyId = urlCompanyId;
+	if (!locationId && urlLocationId) locationId = urlLocationId;
 
 	if (!companyId && !locationId) {
 		return errorPopup(
-			"Your GoHighLevel session didn't include a company or location. Reload the Custom Page in GHL and try again.",
+			"Missing GoHighLevel context. The Custom Page URL in GHL must include ?location_id={{location.id}}&company_id={{company.id}} (or provide a valid SSO payload).",
 		);
 	}
 

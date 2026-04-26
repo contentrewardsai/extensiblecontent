@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-const WHOP_USER_STORAGE_KEY = "ec_whop_user_id";
 const KNOWN_USERS_STORAGE_KEY = "ec_known_whop_users";
 
 interface ConnectedUser {
@@ -126,61 +125,14 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Diagnostic log shared between `requestSsoContext()` and the UI. The UI
- * renders this when SSO fails to load so users can see exactly what's going
- * on without opening the iframe DevTools context.
- */
-type SsoDiagnostics = {
-	requestsSent: number;
-	messagesReceived: number;
-	lastMessagePreview: string | null;
-	inIframe: boolean;
-	origin: string;
-};
-const ssoDiagnostics: SsoDiagnostics = {
-	requestsSent: 0,
-	messagesReceived: 0,
-	lastMessagePreview: null,
-	inIframe: typeof window !== "undefined" ? window.top !== window : false,
-	origin: typeof window !== "undefined" ? window.location.origin : "",
-};
-
-// Early-capture the SSO response in case GHL sends it before React mounts
-// and `requestSsoContext()` registers its listener.
-let earlyCapturedPayload: string | null = null;
-if (typeof window !== "undefined") {
-	window.addEventListener("message", (event: MessageEvent) => {
-		ssoDiagnostics.messagesReceived += 1;
-		try {
-			ssoDiagnostics.lastMessagePreview =
-				typeof event.data === "string"
-					? event.data.slice(0, 200)
-					: JSON.stringify(event.data).slice(0, 200);
-		} catch {
-			ssoDiagnostics.lastMessagePreview = "[unserializable]";
-		}
-		console.log("[ext-settings] <- postMessage", event.origin, event.data);
-		if (
-			event.data?.message === "REQUEST_USER_DATA_RESPONSE" &&
-			typeof event.data.payload === "string"
-		) {
-			earlyCapturedPayload = event.data.payload;
-		}
-	});
-}
-
-export function getSsoDiagnostics(): SsoDiagnostics {
-	return { ...ssoDiagnostics };
-}
-
-/**
- * Request SSO payload from the GHL parent window via postMessage.
- * Returns decrypted user context with companyId, activeLocation, etc.
+ * Background SSO handshake. Runs if GHL provides a postMessage SSO payload
+ * but we DO NOT block the UI on it — URL params are the primary context
+ * source. SSO, when available, lets us upgrade the trust level of the
+ * link/OAuth flow (it's signed by GHL's shared secret).
  */
 function requestSsoContext(): Promise<{
-	companyId: string;
+	companyId?: string;
 	activeLocation?: string;
-	/** The raw encrypted SSO payload, reusable as an auth header for other endpoints. */
 	rawPayload: string;
 }> {
 	return new Promise((resolve, reject) => {
@@ -198,24 +150,13 @@ function requestSsoContext(): Promise<{
 					body: JSON.stringify({ payload: rawPayload }),
 				});
 				if (!res.ok) {
-					const txt = await res.text().catch(() => "");
-					throw new Error(
-						`SSO decryption failed (${res.status}): ${txt.slice(0, 200)}`,
-					);
+					throw new Error(`SSO decrypt failed (${res.status})`);
 				}
 				const data = await res.json();
 				resolve({ ...data, rawPayload });
 			} catch (err) {
 				reject(err);
 			}
-		}
-
-		// Handle an SSO response that arrived before React mounted.
-		if (earlyCapturedPayload) {
-			const p = earlyCapturedPayload;
-			earlyCapturedPayload = null;
-			void consumePayload(p);
-			return;
 		}
 
 		function listener(event: MessageEvent) {
@@ -233,17 +174,13 @@ function requestSsoContext(): Promise<{
 		const targets = [window.parent, window.top].filter(
 			(w): w is Window => w !== null && w !== window,
 		);
+
 		function sendRequest() {
-			ssoDiagnostics.requestsSent += 1;
-			console.log(
-				"[ext-settings] -> postMessage REQUEST_USER_DATA (targets=%d)",
-				targets.length,
-			);
 			for (const target of targets) {
 				try {
 					target.postMessage({ message: "REQUEST_USER_DATA" }, "*");
-				} catch (err) {
-					console.warn("[ext-settings] postMessage failed:", err);
+				} catch {
+					/* ignore */
 				}
 			}
 		}
@@ -251,7 +188,7 @@ function requestSsoContext(): Promise<{
 		sendRequest();
 		const retryInterval = setInterval(() => {
 			if (!resolved) sendRequest();
-		}, 1500);
+		}, 2000);
 
 		const timeout = setTimeout(() => {
 			if (!resolved) {
@@ -260,7 +197,7 @@ function requestSsoContext(): Promise<{
 				window.removeEventListener("message", listener);
 				reject(new Error("SSO timed out"));
 			}
-		}, 10_000);
+		}, 8000);
 	});
 }
 
@@ -268,6 +205,15 @@ export default function GhlSettingsPage() {
 	const searchParams = useSearchParams();
 	const connected = searchParams.get("connected");
 	const errorParam = searchParams.get("error");
+
+	// GHL context, read from URL params (primary) — GHL substitutes
+	// {{location.id}} / {{company.id}} at iframe load. SSO (when available)
+	// can upgrade/verify these, but the UI works without it.
+	const urlLocationId =
+		searchParams.get("location_id") || searchParams.get("locationId");
+	const urlCompanyId =
+		searchParams.get("company_id") || searchParams.get("companyId");
+	const urlLocationName = searchParams.get("location_name");
 
 	const [ctx, setCtx] = useState<PageContext | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -281,31 +227,27 @@ export default function GhlSettingsPage() {
 	const [keyLoading, setKeyLoading] = useState(false);
 	const [keyError, setKeyError] = useState<string | null>(null);
 
-	// GHL identifiers from SSO
-	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(null);
-	const [ghlLocationId, setGhlLocationId] = useState<string | null>(null);
-	// Raw encrypted SSO payload. We forward this as an auth header to
-	// server-side endpoints that need to verify GHL-side access without
-	// requiring a Whop user session (e.g. listing Whop accounts linked to the
-	// current GHL subaccount in a fresh browser).
+	// Effective GHL identifiers. Initialized from URL; upgraded by SSO if/when
+	// it arrives. The "Link Whop Account" button uses whichever is available.
+	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(
+		urlCompanyId || null,
+	);
+	const [ghlLocationId, setGhlLocationId] = useState<string | null>(
+		urlLocationId || null,
+	);
+	// Raw encrypted SSO payload if GHL's postMessage handshake succeeded.
+	// Sent as an `X-Ghl-Sso-Payload` header to APIs that need GHL-iframe
+	// proof. If null, we fall back to cookie / URL-param based auth.
 	const [ghlSsoPayload, setGhlSsoPayload] = useState<string | null>(null);
 
-	// Active Whop user viewing this page (from sessionStorage or OAuth popup)
+	// Active Whop user. Source of truth is the `ec_whop_user` HTTP-only
+	// cookie (set by the OAuth callback and read via /api/ghl/me). This
+	// persists across tabs, reloads, and iframe re-embeds.
 	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-	// Accounts the browser has already authenticated (for quick switching
-	// without re-OAuth). Kept in localStorage.
+	// Per-browser "known users" cache, for fast switching between accounts
+	// already OAuthed in this browser without hitting the backend first.
 	const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
-
-	// Diagnostic info about SSO handshake. Refreshed while SSO is still
-	// loading so the warning banner can show live values.
-	const [ssoDiag, setSsoDiag] = useState<SsoDiagnostics>(() =>
-		getSsoDiagnostics(),
-	);
-	useEffect(() => {
-		const id = setInterval(() => setSsoDiag(getSsoDiagnostics()), 1000);
-		return () => clearInterval(id);
-	}, []);
 
 	// Scheduled posts for the current location + active Whop user.
 	const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
@@ -313,8 +255,34 @@ export default function GhlSettingsPage() {
 	const [scheduledError, setScheduledError] = useState<string | null>(null);
 	const [cancellingId, setCancellingId] = useState<string | null>(null);
 
+	// Track whether we have any context at all so the UI can warn if the GHL
+	// Custom Page URL is misconfigured (no URL params + no SSO handshake).
+	const hasAnyContext =
+		!!ghlLocationId || !!ghlCompanyId || !!ghlSsoPayload || !!currentUserId;
+
 	useEffect(() => {
 		setKnownUsers(readKnownUsers());
+	}, []);
+
+	// Run SSO handshake in the background (non-blocking). If GHL responds,
+	// we upgrade ghlCompanyId/ghlLocationId + capture the encrypted payload.
+	useEffect(() => {
+		let cancelled = false;
+		requestSsoContext()
+			.then((sso) => {
+				if (cancelled) return;
+				if (sso.companyId) setGhlCompanyId((prev) => prev || sso.companyId!);
+				if (sso.activeLocation) {
+					setGhlLocationId((prev) => prev || sso.activeLocation!);
+				}
+				if (sso.rawPayload) setGhlSsoPayload(sso.rawPayload);
+			})
+			.catch(() => {
+				/* SSO unavailable; URL params / cookie will carry us */
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	const loadScheduledPosts = useCallback(
@@ -399,67 +367,65 @@ export default function GhlSettingsPage() {
 		[],
 	);
 
-	// Init: SSO → check sessionStorage for cached user → show settings or link prompt
+	// Initial load: resolve the active Whop user via the backend cookie
+	// (/api/ghl/me), then pull page context. Runs once on mount.
+	const initRan = useRef(false);
 	useEffect(() => {
+		if (initRan.current) return;
+		initRan.current = true;
+
 		let cancelled = false;
 
-		async function init() {
+		(async () => {
 			setLoading(true);
 
-			let companyId: string | null = null;
-			let locationId: string | null = null;
-
-			let rawSso: string | null = null;
+			let cookieUserId: string | null = null;
 			try {
-				const sso = await requestSsoContext();
-				companyId = sso.companyId || null;
-				locationId = sso.activeLocation || null;
-				rawSso = sso.rawPayload || null;
+				const res = await fetch("/api/ghl/me", { cache: "no-store" });
+				if (res.ok) {
+					const data = (await res.json()) as {
+						user?: { userId: string; name: string | null; email: string | null };
+					};
+					if (data.user?.userId) {
+						cookieUserId = data.user.userId;
+						rememberUser({
+							userId: data.user.userId,
+							name: data.user.name,
+							email: data.user.email,
+						});
+					}
+				}
 			} catch {
-				// SSO not available
+				/* ignore */
 			}
 
 			if (cancelled) return;
 
-			if (companyId) setGhlCompanyId(companyId);
-			if (locationId) setGhlLocationId(locationId);
-			if (rawSso) setGhlSsoPayload(rawSso);
-
-			// Check sessionStorage for a remembered Whop user in this browser tab.
-			// Many-to-many: multiple Whop users may be linked to the same GHL
-			// company, so the server can't auto-pick. The user picks once via
-			// OAuth, and we remember their choice for the tab.
-			const cachedUserId =
-				typeof sessionStorage !== "undefined"
-					? sessionStorage.getItem(WHOP_USER_STORAGE_KEY)
-					: null;
-
-			// If we have no context at all (SSO failed AND no cached user), skip
-			// the API call entirely -- it would 400. Show the link prompt.
-			if (!companyId && !locationId && !cachedUserId) {
-				if (!cancelled) {
-					setNeedsLink(true);
-					setLoading(false);
-				}
+			// No context at all: show link prompt. This should only happen if
+			// the GHL Custom Page URL is missing ?location_id={{location.id}}
+			// AND SSO hasn't responded yet AND there's no cookie.
+			if (!urlLocationId && !urlCompanyId && !cookieUserId) {
+				setNeedsLink(true);
+				setLoading(false);
 				return;
 			}
 
 			try {
 				const data = await loadPageContext({
-					companyId: companyId ?? undefined,
-					locationId: locationId ?? undefined,
-					userId: cachedUserId ?? undefined,
+					companyId: urlCompanyId ?? undefined,
+					locationId: urlLocationId ?? undefined,
+					userId: cookieUserId ?? undefined,
 				});
 
 				if (cancelled) return;
 
 				if (data.whopLinked) {
 					setCtx(data);
-					if (cachedUserId) {
-						setCurrentUserId(cachedUserId);
+					if (cookieUserId) {
+						setCurrentUserId(cookieUserId);
 						if (data.user) {
 							rememberUser({
-								userId: cachedUserId,
+								userId: cookieUserId,
 								name: data.user.name,
 								email: data.user.email,
 							});
@@ -469,18 +435,11 @@ export default function GhlSettingsPage() {
 					setLoading(false);
 					return;
 				}
-
-				// Cached user is no longer valid (revoked access, etc.) -- clear.
-				if (cachedUserId) {
-					sessionStorage.removeItem(WHOP_USER_STORAGE_KEY);
-				}
 			} catch (err) {
 				if (!cancelled) {
 					setFetchError(
 						err instanceof Error ? err.message : "Failed to load data",
 					);
-					setLoading(false);
-					return;
 				}
 			}
 
@@ -488,88 +447,77 @@ export default function GhlSettingsPage() {
 				setNeedsLink(true);
 				setLoading(false);
 			}
-		}
+		})();
 
-		init();
 		return () => {
 			cancelled = true;
 		};
-	}, [loadPageContext]);
+	}, [urlLocationId, urlCompanyId, loadPageContext]);
 
-	// Listen for popup close message from Whop OAuth
+	// Listen for popup close message from Whop OAuth.
 	useEffect(() => {
 		function onMessage(event: MessageEvent) {
-			if (event.data?.type === "whop-link-result") {
-				// Surface any error the popup sent so the user isn't left
-				// staring at an unchanged UI wondering what happened.
-				if (event.data.error) {
-					setFetchError(
-						`Whop link failed: ${String(event.data.error)}. Please try again.`,
-					);
-					return;
-				}
-				if (!event.data.success) return;
-				const newUserId = event.data.userId;
-				if (newUserId && typeof sessionStorage !== "undefined") {
-					sessionStorage.setItem(WHOP_USER_STORAGE_KEY, newUserId);
-				}
-				if (newUserId) setCurrentUserId(newUserId);
-				setNeedsLink(false);
-
-				// Need at least one identifier for page-context to work.
-				if (!ghlCompanyId && !ghlLocationId && !newUserId) {
-					setFetchError("Linked, but no context returned. Please reload.");
-					return;
-				}
-
-				setLoading(true);
-				const params: Record<string, string> = {};
-				if (ghlCompanyId) params.companyId = ghlCompanyId;
-				if (ghlLocationId) params.locationId = ghlLocationId;
-				if (newUserId) params.userId = newUserId;
-				loadPageContext(params)
-					.then((data) => {
-						setCtx(data);
-						setLoading(false);
-						// Remember this account for quick switching later.
-						if (newUserId && data.user) {
-							rememberUser({
-								userId: newUserId,
-								name: data.user.name,
-								email: data.user.email,
-							});
-							setKnownUsers(readKnownUsers());
-						}
-					})
-					.catch((err) => {
-						setFetchError(
-							err instanceof Error ? err.message : "Failed to load data",
-						);
-						setLoading(false);
-					});
+			if (event.data?.type !== "whop-link-result") return;
+			if (event.data.error) {
+				setFetchError(
+					`Whop link failed: ${String(event.data.error)}. Please try again.`,
+				);
+				return;
 			}
+			if (!event.data.success) return;
+			const newUserId = event.data.userId as string | undefined;
+			if (!newUserId) return;
+
+			setCurrentUserId(newUserId);
+			setNeedsLink(false);
+
+			setLoading(true);
+			const params: Record<string, string> = { userId: newUserId };
+			if (ghlCompanyId) params.companyId = ghlCompanyId;
+			if (ghlLocationId) params.locationId = ghlLocationId;
+			loadPageContext(params)
+				.then((data) => {
+					setCtx(data);
+					setLoading(false);
+					if (data.user) {
+						rememberUser({
+							userId: newUserId,
+							name: data.user.name,
+							email: data.user.email,
+						});
+						setKnownUsers(readKnownUsers());
+					}
+				})
+				.catch((err) => {
+					setFetchError(
+						err instanceof Error ? err.message : "Failed to load data",
+					);
+					setLoading(false);
+				});
 		}
 
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
 	}, [ghlCompanyId, ghlLocationId, loadPageContext]);
 
-	const handleSwitchAccount = () => {
-		if (typeof sessionStorage !== "undefined") {
-			sessionStorage.removeItem(WHOP_USER_STORAGE_KEY);
+	const handleSwitchAccount = useCallback(async () => {
+		// Clear the backend cookie so the next /ghl/me call returns null.
+		try {
+			await fetch("/api/ghl/me", { method: "DELETE" });
+		} catch {
+			/* best-effort */
 		}
 		setCtx(null);
 		setCurrentUserId(null);
-		// Intentionally KEEP the connectedUsers snapshot so the picker below
-		// can still offer every Whop account linked to this GHL subaccount —
+		// Intentionally KEEP the connectedUsers snapshot so the picker can
+		// still offer every Whop account linked to this GHL subaccount —
 		// even ones that were never OAuthed in this browser.
 		setNeedsLink(true);
-	};
+	}, []);
 
 	/**
 	 * Quick-switch to an already-authenticated Whop account without re-OAuth.
-	 * Uses the saved user list in localStorage. Server-side access is still
-	 * verified via the ghl_connection_users join table.
+	 * Access is verified server-side via ghl_connection_users.
 	 */
 	const handleQuickSwitch = useCallback(
 		async (userId: string) => {
@@ -582,7 +530,6 @@ export default function GhlSettingsPage() {
 					...(ghlLocationId ? { locationId: ghlLocationId } : {}),
 				});
 				if (!data.whopLinked) {
-					// User no longer has access to this GHL account.
 					forgetUser(userId);
 					setKnownUsers(readKnownUsers());
 					setFetchError(
@@ -590,9 +537,6 @@ export default function GhlSettingsPage() {
 					);
 					setLoading(false);
 					return;
-				}
-				if (typeof sessionStorage !== "undefined") {
-					sessionStorage.setItem(WHOP_USER_STORAGE_KEY, userId);
 				}
 				setCurrentUserId(userId);
 				setCtx(data);
@@ -621,14 +565,10 @@ export default function GhlSettingsPage() {
 		setKnownUsers(readKnownUsers());
 	};
 
-	// Load the list of all Whop users connected to this GHL company/location.
-	// We fetch as soon as we have *either* a signed SSO payload (proves
-	// GHL-side access to the subaccount) OR a currentUserId (proves backend
-	// access). That way a fresh browser with no Whop session yet can still
-	// see the list of switchable accounts.
+	// Load Whop users linked to this GHL company/location. We fetch when we
+	// have any identifier — server checks access via cookie/SSO/userId.
 	useEffect(() => {
 		if (!ghlCompanyId && !ghlLocationId) return;
-		if (!currentUserId && !ghlSsoPayload) return;
 
 		const qs = new URLSearchParams();
 		if (currentUserId) qs.set("userId", currentUserId);
@@ -653,27 +593,27 @@ export default function GhlSettingsPage() {
 		};
 	}, [currentUserId, ghlCompanyId, ghlLocationId, ghlSsoPayload]);
 
-	const handleWhopOAuth = () => {
-		if (!ghlSsoPayload) {
+	const handleWhopOAuth = useCallback(() => {
+		if (!ghlLocationId && !ghlCompanyId && !ghlSsoPayload) {
 			setFetchError(
-				"Could not read your GoHighLevel session. Please reload this page and try again.",
+				"Could not determine the GoHighLevel location. Make sure the Custom Page URL in GHL includes ?location_id={{location.id}}&company_id={{company.id}}.",
 			);
 			return;
 		}
 		const params = new URLSearchParams();
-		// Source of truth for the target GHL company/location is the signed
-		// SSO payload — the backend decrypts it to derive identifiers. We
-		// intentionally do NOT send unsigned companyId/locationId because an
-		// attacker could craft a URL that linked their Whop account to
-		// someone else's real GHL company.
-		params.set("sso", ghlSsoPayload);
+		// SSO payload is preferred (signed by GHL's shared secret), but we
+		// fall back to URL params — GHL substitutes them at iframe load, so
+		// they're effectively trust-equivalent for the link flow.
+		if (ghlSsoPayload) params.set("sso", ghlSsoPayload);
+		if (ghlCompanyId) params.set("company_id", ghlCompanyId);
+		if (ghlLocationId) params.set("location_id", ghlLocationId);
 
 		window.open(
 			`/api/ghl/connect-whop?${params.toString()}`,
 			"whop-link",
 			"width=600,height=700,popup=yes",
 		);
-	};
+	}, [ghlLocationId, ghlCompanyId, ghlSsoPayload]);
 
 	const handleKeyLink = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -704,10 +644,6 @@ export default function GhlSettingsPage() {
 			const uid = result.userId;
 			if (!uid) throw new Error("Could not identify user");
 
-			if (typeof sessionStorage !== "undefined") {
-				sessionStorage.setItem(WHOP_USER_STORAGE_KEY, uid);
-			}
-
 			const data = await loadPageContext({
 				userId: uid,
 				...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
@@ -736,16 +672,14 @@ export default function GhlSettingsPage() {
 		return (
 			<div style={styles.container}>
 				<div style={styles.card}>
-					<p style={styles.muted}>Loading settings...</p>
+					<p style={styles.muted}>Loading settings…</p>
 				</div>
 			</div>
 		);
 	}
 
 	if (needsLink) {
-		// Merge Known Users (per-browser cache) and Connected Users (every
-		// Whop account linked to this GHL subaccount) so users can switch to
-		// accounts they never OAuthed in this browser.
+		// Merge per-browser Known Users and backend-linked Connected Users.
 		const knownIds = new Set(knownUsers.map((u) => u.userId));
 		const pickerUsers: Array<{
 			userId: string;
@@ -769,7 +703,7 @@ export default function GhlSettingsPage() {
 				})),
 		];
 
-		const ssoReady = !!ghlSsoPayload;
+		const canLink = !!ghlLocationId || !!ghlCompanyId || !!ghlSsoPayload;
 
 		return (
 			<div style={styles.container}>
@@ -808,70 +742,25 @@ export default function GhlSettingsPage() {
 						</div>
 					)}
 
-					{!ssoReady && (
-						<div
-							style={{
-								...styles.warningBanner,
-								marginBottom: 12,
-								display: "flex",
-								flexDirection: "column",
-								gap: 8,
-							}}
-						>
+					{!canLink && (
+						<div style={{ ...styles.warningBanner, marginBottom: 12 }}>
+							<strong>GHL Custom Page URL needs updating.</strong> Go to
+							your GHL Marketplace app &rarr; Custom Page &rarr; Live URL and
+							set it to:
 							<div
 								style={{
-									display: "flex",
-									justifyContent: "space-between",
-									alignItems: "center",
-									gap: 8,
+									fontFamily: "monospace",
+									fontSize: 12,
+									marginTop: 8,
+									padding: 8,
+									background: "#fffbea",
+									border: "1px solid #f0db4f",
+									borderRadius: 4,
+									wordBreak: "break-all",
 								}}
 							>
-								<span>
-									Waiting for the GoHighLevel session. If this
-									message persists, reload the Custom Page from GHL.
-								</span>
-								<button
-									type="button"
-									onClick={() => window.location.reload()}
-									style={styles.switchBtn}
-								>
-									Reload
-								</button>
+								https://extensiblecontent.com/ext/settings?location_id={"{{"}location.id{"}}"}&amp;company_id={"{{"}company.id{"}}"}
 							</div>
-							<details>
-								<summary
-									style={{
-										cursor: "pointer",
-										fontSize: 11,
-										color: "#6a5600",
-									}}
-								>
-									Diagnostic info
-								</summary>
-								<div
-									style={{
-										fontSize: 11,
-										marginTop: 6,
-										fontFamily: "monospace",
-										whiteSpace: "pre-wrap",
-										wordBreak: "break-all",
-									}}
-								>
-									<div>In iframe: {String(ssoDiag.inIframe)}</div>
-									<div>Origin: {ssoDiag.origin}</div>
-									<div>
-										REQUEST_USER_DATA sent: {ssoDiag.requestsSent}
-									</div>
-									<div>
-										postMessage events received:{" "}
-										{ssoDiag.messagesReceived}
-									</div>
-									<div>
-										Last message:{" "}
-										{ssoDiag.lastMessagePreview ?? "(none)"}
-									</div>
-								</div>
-							</details>
 						</div>
 					)}
 
@@ -936,15 +825,15 @@ export default function GhlSettingsPage() {
 					<button
 						type="button"
 						onClick={handleWhopOAuth}
-						disabled={!ssoReady}
+						disabled={!canLink}
 						style={{
 							...styles.primaryBtn,
 							marginTop: 4,
 							width: "100%",
 							padding: "12px 20px",
 							fontSize: 15,
-							opacity: ssoReady ? 1 : 0.5,
-							cursor: ssoReady ? "pointer" : "not-allowed",
+							opacity: canLink ? 1 : 0.5,
+							cursor: canLink ? "pointer" : "not-allowed",
 						}}
 					>
 						{pickerUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
@@ -997,10 +886,24 @@ export default function GhlSettingsPage() {
 									opacity: keyLoading || !keyInput.trim() ? 0.5 : 1,
 								}}
 							>
-								{keyLoading ? "Linking..." : "Link with Key"}
+								{keyLoading ? "Linking…" : "Link with Key"}
 							</button>
 						</form>
 					)}
+
+					<p style={{ ...styles.muted, marginTop: 16, fontSize: 11 }}>
+						{hasAnyContext ? (
+							<>
+								Context:{" "}
+								{ghlLocationId ? `location ${ghlLocationId.slice(0, 8)}…` : null}
+								{ghlLocationId && ghlCompanyId ? " · " : null}
+								{ghlCompanyId ? `company ${ghlCompanyId.slice(0, 8)}…` : null}
+								{ghlSsoPayload ? " · sso" : null}
+							</>
+						) : (
+							"No GHL context detected."
+						)}
+					</p>
 				</div>
 			</div>
 		);
@@ -1020,8 +923,10 @@ export default function GhlSettingsPage() {
 		<div style={styles.container}>
 			<div style={styles.header}>
 				<h1 style={styles.title}>Extensible Content Settings</h1>
-				{ctx?.locationName && (
-					<span style={styles.badge}>{ctx.locationName}</span>
+				{(ctx?.locationName || urlLocationName) && (
+					<span style={styles.badge}>
+						{ctx?.locationName || urlLocationName}
+					</span>
 				)}
 			</div>
 
