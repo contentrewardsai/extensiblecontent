@@ -478,6 +478,56 @@ export default function GhlSettingsPage() {
 		[ghlCompanyId, ghlLocationId, loadPageContext],
 	);
 
+	/**
+	 * Remove a Whop account from this GHL subaccount's linked-users list.
+	 * Any teammate who is already linked can remove any other teammate
+	 * (or themselves). If the viewer removes themselves, the backend
+	 * clears the ec_whop_user cookie and we fall back to the picker.
+	 */
+	const handleDisconnectUser = useCallback(
+		async (userId: string, displayName: string) => {
+			const isSelf = userId === currentUserId;
+			const confirmMessage = isSelf
+				? `Disconnect your own Whop account (${displayName}) from this GoHighLevel location? You'll need to reconnect to access your workflows here.`
+				: `Remove ${displayName} from this GoHighLevel location? They'll need to reconnect through the Custom Page to regain access.`;
+			if (!window.confirm(confirmMessage)) return;
+
+			try {
+				const res = await fetch("/api/ghl/disconnect-user", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						userId,
+						...(ghlLocationId ? { locationId: ghlLocationId } : {}),
+						...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
+					}),
+				});
+				if (!res.ok) {
+					const data = (await res.json().catch(() => ({}))) as {
+						error?: string;
+					};
+					setFetchError(data.error || "Failed to disconnect account");
+					return;
+				}
+
+				// Optimistically drop from the list so the UI updates
+				// immediately, even before the next refetch.
+				setConnectedUsers((prev) => prev.filter((u) => u.userId !== userId));
+
+				if (isSelf) {
+					setCtx(null);
+					setCurrentUserId(null);
+					setNeedsLink(true);
+				}
+			} catch (err) {
+				setFetchError(
+					err instanceof Error ? err.message : "Failed to disconnect account",
+				);
+			}
+		},
+		[currentUserId, ghlCompanyId, ghlLocationId],
+	);
+
 	// Load all Whop users linked to this GHL location (or company). The
 	// endpoint is unauthenticated — the list of linked teammates is shared
 	// data for the GHL subaccount — so we fetch as soon as we have any
@@ -893,6 +943,29 @@ export default function GhlSettingsPage() {
 										Switch
 									</button>
 								)}
+								<button
+									type="button"
+									onClick={() =>
+										handleDisconnectUser(
+											u.userId,
+											u.name || u.email || u.userId,
+										)
+									}
+									style={styles.disconnectBtn}
+									disabled={loading}
+									title={
+										u.isSelf
+											? "Disconnect your account"
+											: `Remove ${u.name || u.email || "this account"}`
+									}
+									aria-label={
+										u.isSelf
+											? "Disconnect your account"
+											: `Remove ${u.name || u.email || "this account"}`
+									}
+								>
+									Disconnect
+								</button>
 							</li>
 						))}
 					</ul>
@@ -1427,6 +1500,17 @@ const styles: Record<string, React.CSSProperties> = {
 		border: "1px solid #d0d5dd",
 		background: "#fff",
 		color: "#111",
+		cursor: "pointer",
+	},
+	disconnectBtn: {
+		marginLeft: 8,
+		fontSize: 12,
+		fontWeight: 500,
+		padding: "6px 12px",
+		borderRadius: 6,
+		border: "1px solid #fecaca",
+		background: "#fff",
+		color: "#b91c1c",
 		cursor: "pointer",
 	},
 	scheduledList: {
