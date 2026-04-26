@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { queueShotstackRenderAction, type ShotstackRenderActionState } from "../experience-actions";
 
-type TemplateOpt = { id: string; name: string };
+type TemplateOpt = { id: string; name: string; isBuiltin?: boolean | null };
 
 export function ShotstackRenderForm({
 	experienceId,
@@ -33,7 +33,7 @@ export function ShotstackRenderForm({
 						<option value="">— Paste JSON below instead —</option>
 						{templates.map((t) => (
 							<option key={t.id} value={t.id}>
-								{t.name}
+								{t.isBuiltin ? `[Starter] ${t.name}` : t.name}
 							</option>
 						))}
 					</select>

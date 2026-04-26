@@ -1,5 +1,6 @@
 "use server";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ensureUserDefaultProjectId } from "@/lib/default-project";
@@ -31,6 +32,26 @@ import {
 import { createUploadPostAccount } from "@/lib/upload-post-account-create";
 import { forwardUploadPostMultipart } from "@/lib/upload-post-forward";
 import { getOrRefreshUploadPostConnectUrl } from "@/lib/upload-post-connect";
+
+async function getMemberProjectIds(supabase: SupabaseClient, userId: string): Promise<string[]> {
+	const { data: memberRows } = await supabase.from("project_members").select("project_id").eq("user_id", userId);
+	return Array.from(
+		new Set(
+			((memberRows ?? []) as Array<{ project_id: string | null }>)
+				.map((r) => r.project_id)
+				.filter((id): id is string => typeof id === "string" && id.length > 0),
+		),
+	);
+}
+
+/** Template visible for clone: owner, project-shared, or built-in starter. */
+function shotstackTemplateVisibleOrQuery(userId: string, memberProjectIds: string[]) {
+	const orParts: string[] = [`user_id.eq.${userId}`, "is_builtin.eq.true"];
+	if (memberProjectIds.length > 0) {
+		orParts.push(`project_id.in.(${memberProjectIds.join(",")})`);
+	}
+	return orParts.join(",");
+}
 
 export async function createShotstackTemplate(formData: FormData) {
 	const experienceId = String(formData.get("experienceId") ?? "");
@@ -79,8 +100,123 @@ export async function deleteShotstackTemplate(formData: FormData) {
 
 	const { internalUserId } = await requireExperienceActionUser(experienceId);
 	const supabase = getServiceSupabase();
-	await supabase.from("shotstack_templates").delete().eq("id", templateId).eq("user_id", internalUserId);
+	const { data: row } = await supabase
+		.from("shotstack_templates")
+		.select("id, is_builtin")
+		.eq("id", templateId)
+		.maybeSingle();
+	if (row?.is_builtin) {
+		redirect(`/experiences/${experienceId}/shotstack?err=builtin_readonly`);
+	}
+	await supabase
+		.from("shotstack_templates")
+		.delete()
+		.eq("id", templateId)
+		.eq("user_id", internalUserId)
+		.eq("is_builtin", false);
 	revalidatePath(`/experiences/${experienceId}/shotstack`);
+}
+
+export async function cloneShotstackTemplate(formData: FormData) {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const templateId = String(formData.get("templateId") ?? "");
+	if (!experienceId || !templateId) {
+		if (experienceId) {
+			redirect(`/experiences/${experienceId}/shotstack?err=missing_fields`);
+		}
+		redirect("/");
+	}
+	const { internalUserId } = await requireExperienceActionUser(experienceId);
+	const supabase = getServiceSupabase();
+	const memberProjectIds = await getMemberProjectIds(supabase, internalUserId);
+	const orFilter = shotstackTemplateVisibleOrQuery(internalUserId, memberProjectIds);
+	const { data: source, error: sourceErr } = await supabase
+		.from("shotstack_templates")
+		.select("id, name, edit, default_env")
+		.eq("id", templateId)
+		.or(orFilter)
+		.maybeSingle();
+	if (sourceErr || !source) {
+		redirect(`/experiences/${experienceId}/shotstack?err=not_found`);
+	}
+	const name = `${source.name} (copy)`;
+	const now = new Date().toISOString();
+	const { data: created, error } = await supabase
+		.from("shotstack_templates")
+		.insert({
+			user_id: internalUserId,
+			name,
+			edit: (source.edit ?? {}) as Record<string, unknown>,
+			default_env: source.default_env === "stage" ? "stage" : "v1",
+			is_builtin: false,
+			source_path: null,
+			updated_at: now,
+		})
+		.select("id")
+		.single();
+	if (error || !created?.id) {
+		redirect(`/experiences/${experienceId}/shotstack?err=save_failed`);
+	}
+	revalidatePath(`/experiences/${experienceId}/shotstack`);
+	redirect(`/experiences/${experienceId}/shotstack/editor/${created.id}`);
+}
+
+export async function updateShotstackTemplate(formData: FormData) {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const templateId = String(formData.get("templateId") ?? "");
+	if (!experienceId || !templateId) {
+		redirect(`/experiences/${experienceId}/shotstack?err=missing_fields`);
+	}
+	const nameRaw = String(formData.get("name") ?? "").trim();
+	const editRaw = String(formData.get("edit") ?? "").trim();
+	const defaultEnv = formData.get("default_env") === "stage" ? "stage" : "v1";
+
+	if (!editRaw) {
+		redirect(`/experiences/${experienceId}/shotstack?err=missing_fields`);
+	}
+	let edit: Record<string, unknown>;
+	try {
+		const parsed = JSON.parse(editRaw) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			redirect(`/experiences/${experienceId}/shotstack?err=bad_json`);
+		}
+		edit = parsed as Record<string, unknown>;
+	} catch {
+		redirect(`/experiences/${experienceId}/shotstack?err=bad_json`);
+	}
+	const { internalUserId } = await requireExperienceActionUser(experienceId);
+	const supabase = getServiceSupabase();
+	const { data: existing } = await supabase
+		.from("shotstack_templates")
+		.select("id, is_builtin")
+		.eq("id", templateId)
+		.eq("user_id", internalUserId)
+		.maybeSingle();
+	if (!existing) {
+		redirect(`/experiences/${experienceId}/shotstack?err=not_found`);
+	}
+	if (existing.is_builtin) {
+		redirect(`/experiences/${experienceId}/shotstack?err=builtin_readonly`);
+	}
+	const updates: Record<string, unknown> = {
+		edit,
+		default_env: defaultEnv,
+		updated_at: new Date().toISOString(),
+	};
+	if (nameRaw) {
+		updates.name = nameRaw;
+	}
+	const { error } = await supabase
+		.from("shotstack_templates")
+		.update(updates)
+		.eq("id", templateId)
+		.eq("user_id", internalUserId)
+		.eq("is_builtin", false);
+	if (error) {
+		redirect(`/experiences/${experienceId}/shotstack?err=save_failed`);
+	}
+	revalidatePath(`/experiences/${experienceId}/shotstack`);
+	redirect(`/experiences/${experienceId}/shotstack`);
 }
 
 export type ShotstackRenderActionState =
@@ -104,12 +240,14 @@ export async function queueShotstackRenderAction(
 
 		let edit: Record<string, unknown>;
 		if (templateId) {
+			const memberProjectIds = await getMemberProjectIds(supabase, internalUserId);
+			const orFilter = shotstackTemplateVisibleOrQuery(internalUserId, memberProjectIds);
 			const { data: row, error } = await supabase
 				.from("shotstack_templates")
 				.select("edit")
 				.eq("id", templateId)
-				.eq("user_id", internalUserId)
-				.single();
+				.or(orFilter)
+				.maybeSingle();
 			if (error || !row?.edit || typeof row.edit !== "object") {
 				return { ok: false, error: "Template not found" };
 			}

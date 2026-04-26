@@ -11,7 +11,8 @@
 		"db:migrate": "dotenv -e .env.local -- supabase db push",
 		"db:push": "dotenv -e .env.local -- supabase db push",
 		"db:reset": "dotenv -e .env.local -- supabase db reset",
-		"seed:shotstack-builtins": "dotenv -e .env.local -- node scripts/seed-shotstack-builtin-templates.mjs"
+		"seed:shotstack-builtins": "dotenv -e .env.local -- node scripts/seed-shotstack-builtin-templates.mjs",
+		"sync:generator-assets": "node scripts/sync-extension-assets.mjs"
 	},
 	"dependencies": {
 		"@supabase/ssr": "^0.9.0",
