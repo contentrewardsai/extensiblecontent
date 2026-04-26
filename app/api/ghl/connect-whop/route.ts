@@ -25,7 +25,12 @@ export async function GET(request: NextRequest) {
 
 	const whopAppId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
 	if (!whopAppId) {
-		return Response.json({ error: "OAuth not configured" }, { status: 500 });
+		return errorPopup("OAuth not configured on the server.");
+	}
+	if (!process.env.GHL_SHARED_SECRET) {
+		return errorPopup(
+			"GHL_SHARED_SECRET is not configured on the server. Set it in Vercel env vars and redeploy.",
+		);
 	}
 
 	let companyId: string | null = null;
@@ -34,9 +39,8 @@ export async function GET(request: NextRequest) {
 	if (ssoPayload) {
 		const sso = verifyGhlSso(ssoPayload);
 		if (!sso) {
-			return Response.json(
-				{ error: "Invalid or expired SSO payload" },
-				{ status: 400 },
+			return errorPopup(
+				"Invalid or expired GoHighLevel session. Close this window, reload the Custom Page in GHL, and try again.",
 			);
 		}
 		companyId = sso.companyId ?? null;
@@ -45,13 +49,17 @@ export async function GET(request: NextRequest) {
 			(sso as { locationId?: string }).locationId ??
 			null;
 	} else if (process.env.NODE_ENV !== "production") {
-		// Local/dev only: accept from URL to keep legacy tests working.
 		companyId = request.nextUrl.searchParams.get("companyId");
 		locationId = request.nextUrl.searchParams.get("locationId");
 	} else {
-		return Response.json(
-			{ error: "Missing SSO payload. Reload the GHL Custom Page." },
-			{ status: 400 },
+		return errorPopup(
+			"Missing GoHighLevel session. Close this window, reload the Custom Page, and try again.",
+		);
+	}
+
+	if (!companyId && !locationId) {
+		return errorPopup(
+			"Your GoHighLevel session didn't include a company or location. Reload the Custom Page in GHL and try again.",
 		);
 	}
 
@@ -63,7 +71,6 @@ export async function GET(request: NextRequest) {
 
 	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
-	// HMAC-signed state. The callback will refuse any tampered state.
 	const state = signState({
 		...(companyId ? { companyId } : {}),
 		...(locationId ? { locationId } : {}),
@@ -83,4 +90,26 @@ export async function GET(request: NextRequest) {
 	});
 
 	return Response.redirect(`https://api.whop.com/oauth/authorize?${params}`);
+}
+
+/**
+ * Returns an HTML page that posts the error back to the parent window so the
+ * GHL Custom Page can surface it, instead of showing raw JSON in the popup.
+ */
+function errorPopup(message: string): Response {
+	const html = `<!DOCTYPE html>
+<html><head><title>Linking failed</title></head>
+<body style="font-family:system-ui;padding:20px">
+<p>${message}</p>
+<script>
+if (window.opener) {
+  window.opener.postMessage(${JSON.stringify({ type: "whop-link-result", error: message })}, "*");
+  setTimeout(() => window.close(), 3000);
+}
+</script>
+</body></html>`;
+	return new Response(html, {
+		status: 400,
+		headers: { "Content-Type": "text/html" },
+	});
 }

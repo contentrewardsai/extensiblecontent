@@ -416,7 +416,16 @@ export default function GhlSettingsPage() {
 	// Listen for popup close message from Whop OAuth
 	useEffect(() => {
 		function onMessage(event: MessageEvent) {
-			if (event.data?.type === "whop-link-result" && event.data.success) {
+			if (event.data?.type === "whop-link-result") {
+				// Surface any error the popup sent so the user isn't left
+				// staring at an unchanged UI wondering what happened.
+				if (event.data.error) {
+					setFetchError(
+						`Whop link failed: ${String(event.data.error)}. Please try again.`,
+					);
+					return;
+				}
+				if (!event.data.success) return;
 				const newUserId = event.data.userId;
 				if (newUserId && typeof sessionStorage !== "undefined") {
 					sessionStorage.setItem(WHOP_USER_STORAGE_KEY, newUserId);
@@ -677,6 +686,8 @@ export default function GhlSettingsPage() {
 				})),
 		];
 
+		const ssoReady = !!ghlSsoPayload;
+
 		return (
 			<div style={styles.container}>
 				<div style={styles.card}>
@@ -684,6 +695,60 @@ export default function GhlSettingsPage() {
 						<div style={styles.logoCircle}>EC</div>
 						<h1 style={{ ...styles.title, fontSize: 18 }}>Extensible Content</h1>
 					</div>
+
+					{fetchError && (
+						<div
+							style={{
+								...styles.errorBanner,
+								marginBottom: 12,
+								display: "flex",
+								justifyContent: "space-between",
+								alignItems: "center",
+								gap: 8,
+							}}
+						>
+							<span>{fetchError}</span>
+							<button
+								type="button"
+								onClick={() => setFetchError(null)}
+								style={{
+									background: "transparent",
+									border: "none",
+									color: "inherit",
+									fontSize: 16,
+									cursor: "pointer",
+								}}
+								aria-label="Dismiss"
+							>
+								×
+							</button>
+						</div>
+					)}
+
+					{!ssoReady && (
+						<div
+							style={{
+								...styles.warningBanner,
+								marginBottom: 12,
+								display: "flex",
+								justifyContent: "space-between",
+								alignItems: "center",
+								gap: 8,
+							}}
+						>
+							<span>
+								Waiting for the GoHighLevel session. If this message
+								persists, reload the Custom Page from GHL.
+							</span>
+							<button
+								type="button"
+								onClick={() => window.location.reload()}
+								style={styles.switchBtn}
+							>
+								Reload
+							</button>
+						</div>
+					)}
 
 					{pickerUsers.length > 0 && (
 						<>
@@ -746,7 +811,16 @@ export default function GhlSettingsPage() {
 					<button
 						type="button"
 						onClick={handleWhopOAuth}
-						style={{ ...styles.primaryBtn, marginTop: 4, width: "100%", padding: "12px 20px", fontSize: 15 }}
+						disabled={!ssoReady}
+						style={{
+							...styles.primaryBtn,
+							marginTop: 4,
+							width: "100%",
+							padding: "12px 20px",
+							fontSize: 15,
+							opacity: ssoReady ? 1 : 0.5,
+							cursor: ssoReady ? "pointer" : "not-allowed",
+						}}
 					>
 						{pickerUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
 					</button>
