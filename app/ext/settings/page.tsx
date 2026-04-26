@@ -126,6 +126,54 @@ function formatBytes(bytes: number): string {
 }
 
 /**
+ * Diagnostic log shared between `requestSsoContext()` and the UI. The UI
+ * renders this when SSO fails to load so users can see exactly what's going
+ * on without opening the iframe DevTools context.
+ */
+type SsoDiagnostics = {
+	requestsSent: number;
+	messagesReceived: number;
+	lastMessagePreview: string | null;
+	inIframe: boolean;
+	origin: string;
+};
+const ssoDiagnostics: SsoDiagnostics = {
+	requestsSent: 0,
+	messagesReceived: 0,
+	lastMessagePreview: null,
+	inIframe: typeof window !== "undefined" ? window.top !== window : false,
+	origin: typeof window !== "undefined" ? window.location.origin : "",
+};
+
+// Early-capture the SSO response in case GHL sends it before React mounts
+// and `requestSsoContext()` registers its listener.
+let earlyCapturedPayload: string | null = null;
+if (typeof window !== "undefined") {
+	window.addEventListener("message", (event: MessageEvent) => {
+		ssoDiagnostics.messagesReceived += 1;
+		try {
+			ssoDiagnostics.lastMessagePreview =
+				typeof event.data === "string"
+					? event.data.slice(0, 200)
+					: JSON.stringify(event.data).slice(0, 200);
+		} catch {
+			ssoDiagnostics.lastMessagePreview = "[unserializable]";
+		}
+		console.log("[ext-settings] <- postMessage", event.origin, event.data);
+		if (
+			event.data?.message === "REQUEST_USER_DATA_RESPONSE" &&
+			typeof event.data.payload === "string"
+		) {
+			earlyCapturedPayload = event.data.payload;
+		}
+	});
+}
+
+export function getSsoDiagnostics(): SsoDiagnostics {
+	return { ...ssoDiagnostics };
+}
+
+/**
  * Request SSO payload from the GHL parent window via postMessage.
  * Returns decrypted user context with companyId, activeLocation, etc.
  */
@@ -138,25 +186,45 @@ function requestSsoContext(): Promise<{
 	return new Promise((resolve, reject) => {
 		let resolved = false;
 
-		function listener(event: MessageEvent) {
-			if (event.data?.message === "REQUEST_USER_DATA_RESPONSE" && !resolved) {
-				resolved = true;
-				clearInterval(retryInterval);
-				clearTimeout(timeout);
-				window.removeEventListener("message", listener);
-
-				const rawPayload: string = event.data.payload;
-				fetch("/api/ghl/sso", {
+		async function consumePayload(rawPayload: string) {
+			resolved = true;
+			clearInterval(retryInterval);
+			clearTimeout(timeout);
+			window.removeEventListener("message", listener);
+			try {
+				const res = await fetch("/api/ghl/sso", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ payload: rawPayload }),
-				})
-					.then((res) => {
-						if (!res.ok) throw new Error("SSO decryption failed");
-						return res.json();
-					})
-					.then((data) => resolve({ ...data, rawPayload }))
-					.catch(reject);
+				});
+				if (!res.ok) {
+					const txt = await res.text().catch(() => "");
+					throw new Error(
+						`SSO decryption failed (${res.status}): ${txt.slice(0, 200)}`,
+					);
+				}
+				const data = await res.json();
+				resolve({ ...data, rawPayload });
+			} catch (err) {
+				reject(err);
+			}
+		}
+
+		// Handle an SSO response that arrived before React mounted.
+		if (earlyCapturedPayload) {
+			const p = earlyCapturedPayload;
+			earlyCapturedPayload = null;
+			void consumePayload(p);
+			return;
+		}
+
+		function listener(event: MessageEvent) {
+			if (resolved) return;
+			if (
+				event.data?.message === "REQUEST_USER_DATA_RESPONSE" &&
+				typeof event.data.payload === "string"
+			) {
+				void consumePayload(event.data.payload);
 			}
 		}
 
@@ -166,11 +234,16 @@ function requestSsoContext(): Promise<{
 			(w): w is Window => w !== null && w !== window,
 		);
 		function sendRequest() {
+			ssoDiagnostics.requestsSent += 1;
+			console.log(
+				"[ext-settings] -> postMessage REQUEST_USER_DATA (targets=%d)",
+				targets.length,
+			);
 			for (const target of targets) {
 				try {
 					target.postMessage({ message: "REQUEST_USER_DATA" }, "*");
-				} catch {
-					/* cross-origin */
+				} catch (err) {
+					console.warn("[ext-settings] postMessage failed:", err);
 				}
 			}
 		}
@@ -223,6 +296,16 @@ export default function GhlSettingsPage() {
 	// Accounts the browser has already authenticated (for quick switching
 	// without re-OAuth). Kept in localStorage.
 	const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
+
+	// Diagnostic info about SSO handshake. Refreshed while SSO is still
+	// loading so the warning banner can show live values.
+	const [ssoDiag, setSsoDiag] = useState<SsoDiagnostics>(() =>
+		getSsoDiagnostics(),
+	);
+	useEffect(() => {
+		const id = setInterval(() => setSsoDiag(getSsoDiagnostics()), 1000);
+		return () => clearInterval(id);
+	}, []);
 
 	// Scheduled posts for the current location + active Whop user.
 	const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
@@ -731,22 +814,64 @@ export default function GhlSettingsPage() {
 								...styles.warningBanner,
 								marginBottom: 12,
 								display: "flex",
-								justifyContent: "space-between",
-								alignItems: "center",
+								flexDirection: "column",
 								gap: 8,
 							}}
 						>
-							<span>
-								Waiting for the GoHighLevel session. If this message
-								persists, reload the Custom Page from GHL.
-							</span>
-							<button
-								type="button"
-								onClick={() => window.location.reload()}
-								style={styles.switchBtn}
+							<div
+								style={{
+									display: "flex",
+									justifyContent: "space-between",
+									alignItems: "center",
+									gap: 8,
+								}}
 							>
-								Reload
-							</button>
+								<span>
+									Waiting for the GoHighLevel session. If this
+									message persists, reload the Custom Page from GHL.
+								</span>
+								<button
+									type="button"
+									onClick={() => window.location.reload()}
+									style={styles.switchBtn}
+								>
+									Reload
+								</button>
+							</div>
+							<details>
+								<summary
+									style={{
+										cursor: "pointer",
+										fontSize: 11,
+										color: "#6a5600",
+									}}
+								>
+									Diagnostic info
+								</summary>
+								<div
+									style={{
+										fontSize: 11,
+										marginTop: 6,
+										fontFamily: "monospace",
+										whiteSpace: "pre-wrap",
+										wordBreak: "break-all",
+									}}
+								>
+									<div>In iframe: {String(ssoDiag.inIframe)}</div>
+									<div>Origin: {ssoDiag.origin}</div>
+									<div>
+										REQUEST_USER_DATA sent: {ssoDiag.requestsSent}
+									</div>
+									<div>
+										postMessage events received:{" "}
+										{ssoDiag.messagesReceived}
+									</div>
+									<div>
+										Last message:{" "}
+										{ssoDiag.lastMessagePreview ?? "(none)"}
+									</div>
+								</div>
+							</details>
 						</div>
 					)}
 
