@@ -6,16 +6,34 @@ import { getServiceSupabase } from "@/lib/supabase-service";
 const SELECT_COLUMNS =
 	"id, user_id, project_id, name, edit, default_env, is_builtin, source_path, created_at, updated_at";
 
-export async function GET(request: NextRequest) {
+/**
+ * POST /api/extension/shotstack-templates/[id]/clone
+ *
+ * Duplicates a template the caller can see (their own row, a row in a project
+ * they're a member of, or a built-in starter) into a new row owned by the
+ * caller. The resulting row is always `is_builtin = false`.
+ *
+ * Optional body:
+ *   - `name`: override the cloned template's name (default: "<source name> (copy)").
+ *   - `project_id`: attach the clone to a project the caller has editor access to.
+ */
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const user = await getExtensionUser(request);
 	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
+	const { id } = await params;
+
+	let body: { name?: string; project_id?: string | null } = {};
+	try {
+		const text = await request.text();
+		body = text ? JSON.parse(text) : {};
+	} catch {
+		return Response.json({ error: "Invalid JSON" }, { status: 400 });
+	}
+
 	const supabase = getServiceSupabase();
 
-	// Project-shared templates: include rows owned by the caller AND rows
-	// attached to any project the caller is a member of (paying owner or
-	// invited collaborator alike). Built-in starter templates (seeded from the
-	// extension repo) are always visible to every authenticated caller.
+	// Caller must be able to see the source: owner, project member, or built-in.
 	const { data: memberRows } = await supabase
 		.from("project_members")
 		.select("project_id")
@@ -24,7 +42,7 @@ export async function GET(request: NextRequest) {
 		new Set(
 			((memberRows ?? []) as Array<{ project_id: string | null }>)
 				.map((r) => r.project_id)
-				.filter((id): id is string => typeof id === "string" && id.length > 0),
+				.filter((pid): pid is string => typeof pid === "string" && pid.length > 0),
 		),
 	);
 
@@ -33,43 +51,17 @@ export async function GET(request: NextRequest) {
 		orParts.push(`project_id.in.(${memberProjectIds.join(",")})`);
 	}
 
-	const { data, error } = await supabase
+	const { data: source, error: sourceErr } = await supabase
 		.from("shotstack_templates")
-		.select(SELECT_COLUMNS)
+		.select("id, name, edit, default_env")
+		.eq("id", id)
 		.or(orParts.join(","))
-		.order("updated_at", { ascending: false });
+		.maybeSingle();
 
-	if (error) return Response.json({ error: error.message }, { status: 500 });
-	return Response.json(data ?? []);
-}
-
-export async function POST(request: NextRequest) {
-	const user = await getExtensionUser(request);
-	if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-
-	let body: {
-		name: string;
-		edit?: Record<string, unknown>;
-		default_env?: string;
-		project_id?: string | null;
-	};
-	try {
-		body = await request.json();
-	} catch {
-		return Response.json({ error: "Invalid JSON" }, { status: 400 });
+	if (sourceErr || !source) {
+		return Response.json({ error: "Not found" }, { status: 404 });
 	}
 
-	if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
-		return Response.json({ error: "name is required" }, { status: 400 });
-	}
-
-	const edit = body.edit && typeof body.edit === "object" ? body.edit : {};
-	const default_env = body.default_env === "stage" || body.default_env === "v1" ? body.default_env : "v1";
-
-	const supabase = getServiceSupabase();
-
-	// Optional `project_id`: caller needs editor access to share the
-	// template into a project. Same pattern as workflows POST.
 	let projectId: string | null = null;
 	if (typeof body.project_id === "string" && body.project_id.trim()) {
 		try {
@@ -88,17 +80,19 @@ export async function POST(request: NextRequest) {
 		}
 	}
 
-	// Built-in status and source slug are seed-script-only; never accept them
-	// from the client even if the request body includes them.
+	const overrideName = typeof body.name === "string" ? body.name.trim() : "";
+	const defaultCopyName = `${source.name} (copy)`;
+	const name = overrideName || defaultCopyName;
+
 	const now = new Date().toISOString();
 	const { data: row, error } = await supabase
 		.from("shotstack_templates")
 		.insert({
 			user_id: user.user_id,
 			project_id: projectId,
-			name: body.name.trim(),
-			edit,
-			default_env,
+			name,
+			edit: source.edit ?? {},
+			default_env: source.default_env ?? "v1",
 			is_builtin: false,
 			source_path: null,
 			updated_at: now,
@@ -107,7 +101,7 @@ export async function POST(request: NextRequest) {
 		.single();
 
 	if (error || !row) {
-		return Response.json({ error: error?.message ?? "Failed to create template" }, { status: 500 });
+		return Response.json({ error: error?.message ?? "Failed to clone template" }, { status: 500 });
 	}
 
 	return Response.json(row);
