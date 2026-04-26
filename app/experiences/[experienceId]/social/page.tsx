@@ -1,4 +1,5 @@
 import { requireExperienceContext } from "@/lib/experience-context";
+import { processDueGhlPosts } from "@/lib/ghl-scheduler";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import {
 	ScheduledPostsList,
@@ -106,6 +107,12 @@ export default async function SocialPage({
 }) {
 	const { experienceId } = await params;
 	const { internalUserId } = await requireExperienceContext(experienceId);
+
+	// Hobby-friendly: publish any posts that are already due for this user
+	// before we render the list. Bounded at 5 rows so page load stays fast.
+	await processDueGhlPosts({ userId: internalUserId, batchSize: 5 }).catch(
+		() => null,
+	);
 
 	const [targets, scheduled] = await Promise.all([
 		loadTargets(internalUserId),

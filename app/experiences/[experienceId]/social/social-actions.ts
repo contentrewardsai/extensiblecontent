@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireExperienceActionUser } from "@/lib/experience-action-auth";
 import { getValidTokenForLocation, ghlFetch } from "@/lib/ghl";
+import { processDueGhlPosts } from "@/lib/ghl-scheduler";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
 type ActionResult =
@@ -173,6 +174,17 @@ export async function ghlSchedulePostAction(
 		.single();
 
 	if (error) return { ok: false, error: error.message };
+
+	// If the scheduled time is already due (user picked "now-ish"), process it
+	// right away instead of waiting for the daily cron. Fire-and-forget so the
+	// user gets immediate UI feedback.
+	if (when.getTime() <= Date.now() + 30_000) {
+		processDueGhlPosts({ userId: internalUserId, batchSize: 5 }).catch(
+			(err) => {
+				console.error("[ghl-scheduler] opportunistic kick failed", err);
+			},
+		);
+	}
 
 	revalidatePath(`/experiences/${experienceId}/social`);
 	return {

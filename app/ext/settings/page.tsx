@@ -278,7 +278,16 @@ export default function GhlSettingsPage() {
 			setScheduledPosts([]);
 			return;
 		}
-		loadScheduledPosts(currentUserId, ghlLocationId);
+		// Fire-and-forget kick: publish any due posts owned by this user
+		// before we fetch the list (Vercel Hobby runs crons once per day).
+		fetch(
+			`/api/ghl/kick-scheduler?userId=${encodeURIComponent(currentUserId)}`,
+			{ method: "POST" },
+		)
+			.catch(() => null)
+			.finally(() => {
+				loadScheduledPosts(currentUserId, ghlLocationId);
+			});
 	}, [currentUserId, ghlLocationId, loadScheduledPosts]);
 
 	const loadPageContext = useCallback(

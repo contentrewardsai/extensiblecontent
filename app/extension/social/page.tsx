@@ -169,8 +169,17 @@ export default function ExtensionSocialPage() {
 
 	useEffect(() => {
 		if (!token) return;
-		loadTargets(token);
-		loadScheduled(token);
+		// Fire-and-forget: kick the scheduler so any due posts publish now
+		// (Vercel Hobby runs crons only once per day).
+		fetch("/api/ghl/kick-scheduler", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+		})
+			.catch(() => null)
+			.finally(() => {
+				loadTargets(token);
+				loadScheduled(token);
+			});
 	}, [token, loadTargets, loadScheduled]);
 
 	const activeTarget = useMemo(

@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { getExtensionUser } from "@/lib/extension-auth";
 import { getValidTokenForLocation } from "@/lib/ghl";
+import { processDueGhlPosts } from "@/lib/ghl-scheduler";
 
 function getSupabase() {
 	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -104,6 +105,12 @@ export async function POST(request: NextRequest) {
 		.single();
 
 	if (error) return Response.json({ error: error.message }, { status: 500 });
+
+	if (when.getTime() <= Date.now() + 30_000) {
+		processDueGhlPosts({ userId: user.user_id, batchSize: 5 }).catch((err) => {
+			console.error("[ghl-scheduler] opportunistic kick failed", err);
+		});
+	}
 
 	return Response.json({ post: data });
 }

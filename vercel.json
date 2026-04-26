@@ -10,11 +10,11 @@
 		},
 		{
 			"path": "/api/cron/ghl-token-refresh",
-			"schedule": "0 */2 * * *"
+			"schedule": "30 0 * * *"
 		},
 		{
 			"path": "/api/cron/ghl-post-scheduler",
-			"schedule": "* * * * *"
+			"schedule": "45 0 * * *"
 		}
 	]
 }
