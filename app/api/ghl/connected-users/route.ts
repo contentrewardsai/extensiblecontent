@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { verifyGhlSso } from "@/lib/ghl-sso";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -6,8 +7,14 @@ import { getServiceSupabase } from "@/lib/supabase-service";
  * GET /api/ghl/connected-users?locationId=...&userId=...
  *
  * Returns all Whop users connected to a given GHL company or location.
- * The caller must pass their own userId so we can verify they also have
- * access before revealing the list.
+ * The caller must authenticate one of two ways:
+ *   1. `userId` query parameter of a Whop user who has a row in
+ *      `ghl_connection_users` for this connection.
+ *   2. `X-Ghl-Sso-Payload` header containing a valid encrypted GHL SSO
+ *      payload for the caller (this proves they're viewing the iframe as an
+ *      authenticated GHL user of the requested location — which is sufficient
+ *      to list the Whop accounts they can switch to). This lets fresh
+ *      browsers (no Whop session yet) still see available accounts.
  */
 export async function GET(request: NextRequest) {
 	const companyId = request.nextUrl.searchParams.get("companyId");
@@ -19,9 +26,6 @@ export async function GET(request: NextRequest) {
 			{ error: "companyId or locationId is required" },
 			{ status: 400 },
 		);
-	}
-	if (!requesterId) {
-		return Response.json({ error: "userId is required" }, { status: 400 });
 	}
 
 	const supabase = getServiceSupabase();
@@ -48,19 +52,39 @@ export async function GET(request: NextRequest) {
 		return Response.json({ users: [] });
 	}
 
-	// Verify the requester has access to this connection.
-	const { data: access } = await supabase
-		.from("ghl_connection_users")
-		.select("id")
-		.eq("connection_id", connectionId)
-		.eq("user_id", requesterId)
-		.maybeSingle();
+	// Authentication: require either userId with a valid access row, or a
+	// valid signed SSO payload that references the requested company/location.
+	let authorized = false;
 
-	if (!access) {
+	if (requesterId) {
+		const { data: access } = await supabase
+			.from("ghl_connection_users")
+			.select("id")
+			.eq("connection_id", connectionId)
+			.eq("user_id", requesterId)
+			.maybeSingle();
+		if (access) authorized = true;
+	}
+
+	if (!authorized) {
+		const ssoHeader = request.headers.get("x-ghl-sso-payload");
+		const sso = verifyGhlSso(ssoHeader);
+		if (sso) {
+			if (companyId && sso.companyId === companyId) authorized = true;
+			else if (
+				locationId &&
+				(sso.activeLocation === locationId ||
+					(sso as { locationId?: string }).locationId === locationId)
+			) {
+				authorized = true;
+			}
+		}
+	}
+
+	if (!authorized) {
 		return Response.json({ error: "Forbidden" }, { status: 403 });
 	}
 
-	// Fetch all users linked to this connection.
 	const { data: rows } = await supabase
 		.from("ghl_connection_users")
 		.select("user_id, created_at")

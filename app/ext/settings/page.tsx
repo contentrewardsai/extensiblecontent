@@ -132,6 +132,8 @@ function formatBytes(bytes: number): string {
 function requestSsoContext(): Promise<{
 	companyId: string;
 	activeLocation?: string;
+	/** The raw encrypted SSO payload, reusable as an auth header for other endpoints. */
+	rawPayload: string;
 }> {
 	return new Promise((resolve, reject) => {
 		let resolved = false;
@@ -143,16 +145,17 @@ function requestSsoContext(): Promise<{
 				clearTimeout(timeout);
 				window.removeEventListener("message", listener);
 
+				const rawPayload: string = event.data.payload;
 				fetch("/api/ghl/sso", {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ payload: event.data.payload }),
+					body: JSON.stringify({ payload: rawPayload }),
 				})
 					.then((res) => {
 						if (!res.ok) throw new Error("SSO decryption failed");
 						return res.json();
 					})
-					.then((data) => resolve(data))
+					.then((data) => resolve({ ...data, rawPayload }))
 					.catch(reject);
 			}
 		}
@@ -208,6 +211,11 @@ export default function GhlSettingsPage() {
 	// GHL identifiers from SSO
 	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(null);
 	const [ghlLocationId, setGhlLocationId] = useState<string | null>(null);
+	// Raw encrypted SSO payload. We forward this as an auth header to
+	// server-side endpoints that need to verify GHL-side access without
+	// requiring a Whop user session (e.g. listing Whop accounts linked to the
+	// current GHL subaccount in a fresh browser).
+	const [ghlSsoPayload, setGhlSsoPayload] = useState<string | null>(null);
 
 	// Active Whop user viewing this page (from sessionStorage or OAuth popup)
 	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -318,10 +326,12 @@ export default function GhlSettingsPage() {
 			let companyId: string | null = null;
 			let locationId: string | null = null;
 
+			let rawSso: string | null = null;
 			try {
 				const sso = await requestSsoContext();
 				companyId = sso.companyId || null;
 				locationId = sso.activeLocation || null;
+				rawSso = sso.rawPayload || null;
 			} catch {
 				// SSO not available
 			}
@@ -330,6 +340,7 @@ export default function GhlSettingsPage() {
 
 			if (companyId) setGhlCompanyId(companyId);
 			if (locationId) setGhlLocationId(locationId);
+			if (rawSso) setGhlSsoPayload(rawSso);
 
 			// Check sessionStorage for a remembered Whop user in this browser tab.
 			// Many-to-many: multiple Whop users may be linked to the same GHL
@@ -457,7 +468,9 @@ export default function GhlSettingsPage() {
 		}
 		setCtx(null);
 		setCurrentUserId(null);
-		setConnectedUsers([]);
+		// Intentionally KEEP the connectedUsers snapshot so the picker below
+		// can still offer every Whop account linked to this GHL subaccount —
+		// even ones that were never OAuthed in this browser.
 		setNeedsLink(true);
 	};
 
@@ -517,23 +530,24 @@ export default function GhlSettingsPage() {
 	};
 
 	// Load the list of all Whop users connected to this GHL company/location.
-	// Requires SSO context (companyId or locationId) so we can scope the list.
+	// We fetch as soon as we have *either* a signed SSO payload (proves
+	// GHL-side access to the subaccount) OR a currentUserId (proves backend
+	// access). That way a fresh browser with no Whop session yet can still
+	// see the list of switchable accounts.
 	useEffect(() => {
-		if (
-			!ctx?.whopLinked ||
-			!currentUserId ||
-			(!ghlCompanyId && !ghlLocationId)
-		) {
-			setConnectedUsers([]);
-			return;
-		}
+		if (!ghlCompanyId && !ghlLocationId) return;
+		if (!currentUserId && !ghlSsoPayload) return;
+
 		const qs = new URLSearchParams();
-		qs.set("userId", currentUserId);
+		if (currentUserId) qs.set("userId", currentUserId);
 		if (ghlCompanyId) qs.set("companyId", ghlCompanyId);
 		else if (ghlLocationId) qs.set("locationId", ghlLocationId);
 
+		const headers: Record<string, string> = {};
+		if (ghlSsoPayload) headers["x-ghl-sso-payload"] = ghlSsoPayload;
+
 		let cancelled = false;
-		fetch(`/api/ghl/connected-users?${qs.toString()}`)
+		fetch(`/api/ghl/connected-users?${qs.toString()}`, { headers })
 			.then(async (res) => {
 				if (!res.ok) return;
 				const data = (await res.json()) as { users?: ConnectedUser[] };
@@ -545,7 +559,7 @@ export default function GhlSettingsPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [ctx?.whopLinked, currentUserId, ghlCompanyId, ghlLocationId]);
+	}, [currentUserId, ghlCompanyId, ghlLocationId, ghlSsoPayload]);
 
 	const handleWhopOAuth = () => {
 		const params = new URLSearchParams();
@@ -627,6 +641,32 @@ export default function GhlSettingsPage() {
 	}
 
 	if (needsLink) {
+		// Merge Known Users (per-browser cache) and Connected Users (every
+		// Whop account linked to this GHL subaccount) so users can switch to
+		// accounts they never OAuthed in this browser.
+		const knownIds = new Set(knownUsers.map((u) => u.userId));
+		const pickerUsers: Array<{
+			userId: string;
+			name: string | null;
+			email: string | null;
+			source: "known" | "connected";
+		}> = [
+			...knownUsers.map((u) => ({
+				userId: u.userId,
+				name: u.name,
+				email: u.email,
+				source: "known" as const,
+			})),
+			...connectedUsers
+				.filter((u) => !knownIds.has(u.userId))
+				.map((u) => ({
+					userId: u.userId,
+					name: u.name,
+					email: u.email,
+					source: "connected" as const,
+				})),
+		];
+
 		return (
 			<div style={styles.container}>
 				<div style={styles.card}>
@@ -635,13 +675,14 @@ export default function GhlSettingsPage() {
 						<h1 style={{ ...styles.title, fontSize: 18 }}>Extensible Content</h1>
 					</div>
 
-					{knownUsers.length > 0 && (
+					{pickerUsers.length > 0 && (
 						<>
 							<p style={{ ...styles.muted, marginBottom: 8 }}>
-								Continue as a previously signed-in account:
+								Continue as an account linked to this{" "}
+								{ghlCompanyId ? "company" : "location"}:
 							</p>
 							<div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-								{knownUsers.map((u) => (
+								{pickerUsers.map((u) => (
 									<div key={u.userId} style={styles.knownUserRow}>
 										<button
 											type="button"
@@ -654,21 +695,26 @@ export default function GhlSettingsPage() {
 											<div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
 												<p style={{ ...styles.body, fontWeight: 500 }}>
 													{u.name || u.email || u.userId}
+													{u.source === "connected" && (
+														<span style={styles.youBadge}>linked</span>
+													)}
 												</p>
 												{u.name && u.email && (
 													<p style={styles.muted}>{u.email}</p>
 												)}
 											</div>
 										</button>
-										<button
-											type="button"
-											onClick={() => handleForgetUser(u.userId)}
-											style={styles.forgetBtn}
-											title="Forget this account"
-											aria-label="Forget this account"
-										>
-											×
-										</button>
+										{u.source === "known" && (
+											<button
+												type="button"
+												onClick={() => handleForgetUser(u.userId)}
+												style={styles.forgetBtn}
+												title="Forget this account"
+												aria-label="Forget this account"
+											>
+												×
+											</button>
+										)}
 									</div>
 								))}
 							</div>
@@ -680,7 +726,7 @@ export default function GhlSettingsPage() {
 						</>
 					)}
 
-					{knownUsers.length === 0 && (
+					{pickerUsers.length === 0 && (
 						<p style={styles.body}>
 							Link your Whop account to access your workflows, templates, credits,
 							and billing from within GoHighLevel.
@@ -692,7 +738,7 @@ export default function GhlSettingsPage() {
 						onClick={handleWhopOAuth}
 						style={{ ...styles.primaryBtn, marginTop: 4, width: "100%", padding: "12px 20px", fontSize: 15 }}
 					>
-						{knownUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
+						{pickerUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
 					</button>
 
 					<div style={{ margin: "20px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -826,7 +872,9 @@ export default function GhlSettingsPage() {
 					</h2>
 					<p style={{ ...styles.muted, marginBottom: 12 }}>
 						These Whop users can access this GoHighLevel{" "}
-						{ghlCompanyId ? "company" : "location"}.
+						{ghlCompanyId ? "company" : "location"}. Click any account to
+						switch to it — you don&apos;t need to re-authenticate if that
+						account has already been linked.
 					</p>
 					<ul style={styles.userList}>
 						{connectedUsers.map((u) => (
@@ -848,6 +896,17 @@ export default function GhlSettingsPage() {
 								<span style={styles.muted}>
 									{new Date(u.linkedAt).toLocaleDateString()}
 								</span>
+								{!u.isSelf && (
+									<button
+										type="button"
+										onClick={() => handleQuickSwitch(u.userId)}
+										style={styles.switchBtn}
+										disabled={loading}
+										title={`Switch to ${u.name || u.email || "this account"}`}
+									>
+										Switch
+									</button>
+								)}
 							</li>
 						))}
 					</ul>
@@ -1372,6 +1431,17 @@ const styles: Record<string, React.CSSProperties> = {
 		fontSize: 13,
 		fontWeight: 700,
 		flexShrink: 0,
+	},
+	switchBtn: {
+		marginLeft: 12,
+		fontSize: 12,
+		fontWeight: 500,
+		padding: "6px 12px",
+		borderRadius: 6,
+		border: "1px solid #d0d5dd",
+		background: "#fff",
+		color: "#111",
+		cursor: "pointer",
 	},
 	scheduledList: {
 		listStyle: "none",
