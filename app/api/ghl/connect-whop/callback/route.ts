@@ -30,8 +30,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	const { companyId, locationId } = stateData;
-	const origin = request.nextUrl.origin;
-	const callbackUrl = `${origin}/api/ghl/connect-whop/callback`;
+	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
 	// Exchange Whop code for access token
 	const tokenRes = await fetch("https://api.whop.com/oauth/token", {

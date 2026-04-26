@@ -15,8 +15,7 @@ export async function GET(request: NextRequest) {
 		return Response.json({ error: "OAuth not configured" }, { status: 500 });
 	}
 
-	const origin = request.nextUrl.origin;
-	const callbackUrl = `${origin}/api/ghl/connect-whop/callback`;
+	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
 	const state = Buffer.from(
 		JSON.stringify({
