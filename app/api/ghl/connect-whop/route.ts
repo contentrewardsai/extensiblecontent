@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
 	const codeChallenge = createHash("sha256")
 		.update(codeVerifier)
 		.digest("base64url");
+	const nonce = randomBytes(16).toString("base64url");
 
 	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
 		redirect_uri: callbackUrl,
 		scope: "openid profile email",
 		state,
+		nonce,
 		code_challenge: codeChallenge,
 		code_challenge_method: "S256",
 	});
