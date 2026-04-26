@@ -22,26 +22,31 @@ export async function GET(request: NextRequest) {
 		return closePopup({ error: "missing_params" });
 	}
 
-	let stateData: { companyId?: string; locationId?: string };
+	let stateData: { companyId?: string; locationId?: string; cv?: string };
 	try {
 		stateData = JSON.parse(Buffer.from(stateParam, "base64url").toString());
 	} catch {
 		return closePopup({ error: "invalid_state" });
 	}
 
-	const { companyId, locationId } = stateData;
+	const { companyId, locationId, cv: codeVerifier } = stateData;
 	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
-	// Exchange Whop code for access token
+	// Exchange Whop code for access token (PKCE flow)
+	const tokenBody: Record<string, string> = {
+		grant_type: "authorization_code",
+		code,
+		redirect_uri: callbackUrl,
+		client_id: process.env.NEXT_PUBLIC_WHOP_APP_ID!,
+	};
+	if (codeVerifier) {
+		tokenBody.code_verifier = codeVerifier;
+	}
+
 	const tokenRes = await fetch("https://api.whop.com/oauth/token", {
 		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({
-			grant_type: "authorization_code",
-			code,
-			redirect_uri: callbackUrl,
-			client_id: process.env.NEXT_PUBLIC_WHOP_APP_ID!,
-		}),
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(tokenBody),
 	});
 
 	if (!tokenRes.ok) {
