@@ -217,6 +217,7 @@ export default function GhlSettingsPage() {
 				const params: Record<string, string> = {};
 				if (ghlCompanyId) params.companyId = ghlCompanyId;
 				if (ghlLocationId) params.locationId = ghlLocationId;
+				if (event.data.userId) params.userId = event.data.userId;
 				loadPageContext(params)
 					.then((data) => {
 						setCtx(data);

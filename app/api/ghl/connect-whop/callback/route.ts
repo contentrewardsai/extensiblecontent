@@ -143,13 +143,17 @@ export async function GET(request: NextRequest) {
 		`[ghl-connect-whop] Linked companyId=${companyId ?? "all-unlinked"} locationId=${locationId ?? "?"} to userId=${userId}`,
 	);
 
-	return closePopup({ success: true });
+	return closePopup({ success: true, userId });
 }
 
 /**
  * Returns an HTML page that notifies the parent window and closes the popup.
  */
-function closePopup(result: { success?: boolean; error?: string }) {
+function closePopup(result: {
+	success?: boolean;
+	error?: string;
+	userId?: string;
+}) {
 	const html = `<!DOCTYPE html>
 <html><head><title>Linking...</title></head>
 <body>
