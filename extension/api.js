@@ -186,6 +186,40 @@
 		});
 	}
 
+	/** Schedule a GHL social post to be published by the backend cron worker. */
+	async function ghlSchedulePost(locationId, scheduledFor, payload) {
+		return safeApiFetch("/api/extension/ghl/social/schedule", {
+			method: "POST",
+			body: JSON.stringify({
+				locationId,
+				scheduledFor,
+				payload: payload || {},
+				source: "extension",
+			}),
+		});
+	}
+
+	/** List the current user's scheduled GHL posts. */
+	async function ghlListScheduledPosts(opts) {
+		const params = new URLSearchParams();
+		if (opts && opts.locationId) params.set("locationId", opts.locationId);
+		if (opts && opts.status) params.set("status", opts.status);
+		const qs = params.toString();
+		return safeApiFetch("/api/extension/ghl/social/schedule" + (qs ? "?" + qs : ""));
+	}
+
+	/** Cancel a pending scheduled GHL post. */
+	async function ghlCancelScheduledPost(id) {
+		return safeApiFetch("/api/extension/ghl/social/schedule?id=" + encodeURIComponent(id), {
+			method: "DELETE",
+		});
+	}
+
+	/** Unified publish targets: Upload-Post profiles + GHL sub-account channels. */
+	async function listPublishTargets() {
+		return safeApiFetch("/api/extension/publish-targets");
+	}
+
 	global.ExtensionApi = {
 		getAppOrigin,
 		getAccessToken,
@@ -202,5 +236,9 @@
 		ghlGetSocialAccounts,
 		ghlListPosts,
 		ghlCreatePost,
+		ghlSchedulePost,
+		ghlListScheduledPosts,
+		ghlCancelScheduledPost,
+		listPublishTargets,
 	};
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const WHOP_USER_STORAGE_KEY = "ec_whop_user_id";
+const KNOWN_USERS_STORAGE_KEY = "ec_known_whop_users";
 
 interface ConnectedUser {
 	userId: string;
@@ -11,6 +12,73 @@ interface ConnectedUser {
 	email: string | null;
 	linkedAt: string;
 	isSelf: boolean;
+}
+
+interface KnownUser {
+	userId: string;
+	name: string | null;
+	email: string | null;
+	lastUsed: string;
+}
+
+interface ScheduledPost {
+	id: string;
+	payload: {
+		summary?: string;
+		accountIds?: string[];
+	} | null;
+	scheduled_for: string;
+	status: string;
+	attempts: number;
+	last_error: string | null;
+	ghl_post_id: string | null;
+	source: string | null;
+	created_at: string;
+}
+
+function readKnownUsers(): KnownUser[] {
+	if (typeof localStorage === "undefined") return [];
+	try {
+		const raw = localStorage.getItem(KNOWN_USERS_STORAGE_KEY);
+		if (!raw) return [];
+		const arr = JSON.parse(raw);
+		return Array.isArray(arr) ? (arr as KnownUser[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+function rememberUser(u: {
+	userId: string;
+	name?: string | null;
+	email?: string | null;
+}) {
+	if (typeof localStorage === "undefined") return;
+	const existing = readKnownUsers().filter((x) => x.userId !== u.userId);
+	const updated: KnownUser[] = [
+		{
+			userId: u.userId,
+			name: u.name ?? null,
+			email: u.email ?? null,
+			lastUsed: new Date().toISOString(),
+		},
+		...existing,
+	].slice(0, 8);
+	try {
+		localStorage.setItem(KNOWN_USERS_STORAGE_KEY, JSON.stringify(updated));
+	} catch {
+		/* quota, ignore */
+	}
+}
+
+function forgetUser(userId: string) {
+	if (typeof localStorage === "undefined") return;
+	const updated = readKnownUsers().filter((x) => x.userId !== userId);
+	try {
+		localStorage.setItem(KNOWN_USERS_STORAGE_KEY, JSON.stringify(updated));
+	} catch {
+		/* ignore */
+	}
 }
 
 interface PageContext {
@@ -144,6 +212,75 @@ export default function GhlSettingsPage() {
 	// Active Whop user viewing this page (from sessionStorage or OAuth popup)
 	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
+	// Accounts the browser has already authenticated (for quick switching
+	// without re-OAuth). Kept in localStorage.
+	const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
+
+	// Scheduled posts for the current location + active Whop user.
+	const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
+	const [scheduledLoading, setScheduledLoading] = useState(false);
+	const [scheduledError, setScheduledError] = useState<string | null>(null);
+	const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+	useEffect(() => {
+		setKnownUsers(readKnownUsers());
+	}, []);
+
+	const loadScheduledPosts = useCallback(
+		async (userId: string, locationId: string) => {
+			setScheduledLoading(true);
+			setScheduledError(null);
+			try {
+				const qs = new URLSearchParams({ userId, locationId });
+				const res = await fetch(`/api/ghl/scheduled-posts?${qs.toString()}`);
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				const data = (await res.json()) as { posts?: ScheduledPost[] };
+				setScheduledPosts(data.posts ?? []);
+			} catch (err) {
+				setScheduledError(
+					err instanceof Error ? err.message : "Failed to load",
+				);
+			} finally {
+				setScheduledLoading(false);
+			}
+		},
+		[],
+	);
+
+	const cancelScheduledPost = useCallback(
+		async (id: string, userId: string, locationId: string) => {
+			setCancellingId(id);
+			try {
+				const qs = new URLSearchParams({ id, userId });
+				const res = await fetch(`/api/ghl/scheduled-posts?${qs.toString()}`, {
+					method: "DELETE",
+				});
+				if (!res.ok) {
+					const data = (await res.json().catch(() => null)) as {
+						error?: string;
+					} | null;
+					throw new Error(data?.error ?? `HTTP ${res.status}`);
+				}
+				await loadScheduledPosts(userId, locationId);
+			} catch (err) {
+				setScheduledError(
+					err instanceof Error ? err.message : "Failed to cancel",
+				);
+			} finally {
+				setCancellingId(null);
+			}
+		},
+		[loadScheduledPosts],
+	);
+
+	useEffect(() => {
+		if (!currentUserId || !ghlLocationId) {
+			setScheduledPosts([]);
+			return;
+		}
+		loadScheduledPosts(currentUserId, ghlLocationId);
+	}, [currentUserId, ghlLocationId, loadScheduledPosts]);
+
 	const loadPageContext = useCallback(
 		async (params: {
 			companyId?: string;
@@ -215,7 +352,17 @@ export default function GhlSettingsPage() {
 
 				if (data.whopLinked) {
 					setCtx(data);
-					if (cachedUserId) setCurrentUserId(cachedUserId);
+					if (cachedUserId) {
+						setCurrentUserId(cachedUserId);
+						if (data.user) {
+							rememberUser({
+								userId: cachedUserId,
+								name: data.user.name,
+								email: data.user.email,
+							});
+							setKnownUsers(readKnownUsers());
+						}
+					}
 					setLoading(false);
 					return;
 				}
@@ -272,6 +419,15 @@ export default function GhlSettingsPage() {
 					.then((data) => {
 						setCtx(data);
 						setLoading(false);
+						// Remember this account for quick switching later.
+						if (newUserId && data.user) {
+							rememberUser({
+								userId: newUserId,
+								name: data.user.name,
+								email: data.user.email,
+							});
+							setKnownUsers(readKnownUsers());
+						}
 					})
 					.catch((err) => {
 						setFetchError(
@@ -294,6 +450,61 @@ export default function GhlSettingsPage() {
 		setCurrentUserId(null);
 		setConnectedUsers([]);
 		setNeedsLink(true);
+	};
+
+	/**
+	 * Quick-switch to an already-authenticated Whop account without re-OAuth.
+	 * Uses the saved user list in localStorage. Server-side access is still
+	 * verified via the ghl_connection_users join table.
+	 */
+	const handleQuickSwitch = useCallback(
+		async (userId: string) => {
+			setFetchError(null);
+			setLoading(true);
+			try {
+				const data = await loadPageContext({
+					userId,
+					...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
+					...(ghlLocationId ? { locationId: ghlLocationId } : {}),
+				});
+				if (!data.whopLinked) {
+					// User no longer has access to this GHL account.
+					forgetUser(userId);
+					setKnownUsers(readKnownUsers());
+					setFetchError(
+						"That account no longer has access to this GoHighLevel location.",
+					);
+					setLoading(false);
+					return;
+				}
+				if (typeof sessionStorage !== "undefined") {
+					sessionStorage.setItem(WHOP_USER_STORAGE_KEY, userId);
+				}
+				setCurrentUserId(userId);
+				setCtx(data);
+				setNeedsLink(false);
+				setLoading(false);
+				if (data.user) {
+					rememberUser({
+						userId,
+						name: data.user.name,
+						email: data.user.email,
+					});
+					setKnownUsers(readKnownUsers());
+				}
+			} catch (err) {
+				setFetchError(
+					err instanceof Error ? err.message : "Failed to switch account",
+				);
+				setLoading(false);
+			}
+		},
+		[ghlCompanyId, ghlLocationId, loadPageContext],
+	);
+
+	const handleForgetUser = (userId: string) => {
+		forgetUser(userId);
+		setKnownUsers(readKnownUsers());
 	};
 
 	// Load the list of all Whop users connected to this GHL company/location.
@@ -381,6 +592,14 @@ export default function GhlSettingsPage() {
 			setCurrentUserId(uid);
 			setNeedsLink(false);
 			setShowKeyForm(false);
+			if (data.user) {
+				rememberUser({
+					userId: uid,
+					name: data.user.name,
+					email: data.user.email,
+				});
+				setKnownUsers(readKnownUsers());
+			}
 		} catch (err) {
 			setKeyError(err instanceof Error ? err.message : "Link failed");
 		} finally {
@@ -407,17 +626,64 @@ export default function GhlSettingsPage() {
 						<h1 style={{ ...styles.title, fontSize: 18 }}>Extensible Content</h1>
 					</div>
 
-					<p style={styles.body}>
-						Link your Whop account to access your workflows, templates, credits,
-						and billing from within GoHighLevel.
-					</p>
+					{knownUsers.length > 0 && (
+						<>
+							<p style={{ ...styles.muted, marginBottom: 8 }}>
+								Continue as a previously signed-in account:
+							</p>
+							<div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+								{knownUsers.map((u) => (
+									<div key={u.userId} style={styles.knownUserRow}>
+										<button
+											type="button"
+											onClick={() => handleQuickSwitch(u.userId)}
+											style={styles.knownUserBtn}
+										>
+											<div style={styles.userAvatar}>
+												{(u.name?.[0] || u.email?.[0] || "?").toUpperCase()}
+											</div>
+											<div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+												<p style={{ ...styles.body, fontWeight: 500 }}>
+													{u.name || u.email || u.userId}
+												</p>
+												{u.name && u.email && (
+													<p style={styles.muted}>{u.email}</p>
+												)}
+											</div>
+										</button>
+										<button
+											type="button"
+											onClick={() => handleForgetUser(u.userId)}
+											style={styles.forgetBtn}
+											title="Forget this account"
+											aria-label="Forget this account"
+										>
+											×
+										</button>
+									</div>
+								))}
+							</div>
+							<div style={{ margin: "4px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
+								<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
+								<span style={{ fontSize: 12, color: "#888" }}>or</span>
+								<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
+							</div>
+						</>
+					)}
+
+					{knownUsers.length === 0 && (
+						<p style={styles.body}>
+							Link your Whop account to access your workflows, templates, credits,
+							and billing from within GoHighLevel.
+						</p>
+					)}
 
 					<button
 						type="button"
 						onClick={handleWhopOAuth}
-						style={{ ...styles.primaryBtn, marginTop: 16, width: "100%", padding: "12px 20px", fontSize: 15 }}
+						style={{ ...styles.primaryBtn, marginTop: 4, width: "100%", padding: "12px 20px", fontSize: 15 }}
 					>
-						Link Whop Account
+						{knownUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
 					</button>
 
 					<div style={{ margin: "20px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -576,6 +842,101 @@ export default function GhlSettingsPage() {
 							</li>
 						))}
 					</ul>
+				</div>
+			)}
+
+			{ctx?.whopLinked && ghlLocationId && currentUserId && (
+				<div style={styles.card}>
+					<h2 style={styles.sectionTitle}>
+						Social Planner{" "}
+						{scheduledPosts.length > 0 && (
+							<span style={styles.countBadge}>{scheduledPosts.length}</span>
+						)}
+					</h2>
+					<p style={{ ...styles.muted, marginBottom: 12 }}>
+						Posts scheduled from Extensible Content to this location. Our
+						backend publishes them on time even if nobody is online.
+					</p>
+
+					{scheduledError && (
+						<div style={{ ...styles.errorBanner, marginBottom: 12 }}>
+							{scheduledError}
+						</div>
+					)}
+
+					{scheduledLoading && scheduledPosts.length === 0 ? (
+						<p style={styles.muted}>Loading…</p>
+					) : scheduledPosts.length === 0 ? (
+						<p style={styles.muted}>
+							No scheduled posts yet. Schedule from the Whop app or the Chrome
+							extension.
+						</p>
+					) : (
+						<ul style={styles.scheduledList}>
+							{scheduledPosts.map((p) => (
+								<li key={p.id} style={styles.scheduledItem}>
+									<div style={styles.scheduledHeader}>
+										<span
+											style={{
+												...styles.statusPill,
+												...(statusPillStyle(p.status) ?? {}),
+											}}
+										>
+											{p.status.replace("_", " ")}
+										</span>
+										<span style={styles.body}>
+											{new Date(p.scheduled_for).toLocaleString()}
+										</span>
+										{p.status === "pending" && (
+											<button
+												type="button"
+												disabled={cancellingId === p.id}
+												onClick={() =>
+													cancelScheduledPost(
+														p.id,
+														currentUserId,
+														ghlLocationId,
+													)
+												}
+												style={styles.linkDangerBtn}
+											>
+												{cancellingId === p.id ? "…" : "Cancel"}
+											</button>
+										)}
+									</div>
+									{p.payload?.summary && (
+										<p
+											style={{
+												...styles.body,
+												marginTop: 6,
+												whiteSpace: "pre-wrap",
+											}}
+										>
+											{p.payload.summary}
+										</p>
+									)}
+									{p.payload?.accountIds &&
+										p.payload.accountIds.length > 0 && (
+											<p style={{ ...styles.muted, marginTop: 4 }}>
+												{p.payload.accountIds.length} channel
+												{p.payload.accountIds.length === 1 ? "" : "s"}
+											</p>
+										)}
+									{p.last_error && (
+										<p
+											style={{
+												...styles.muted,
+												marginTop: 4,
+												color: "#82071e",
+											}}
+										>
+											Error: {p.last_error}
+										</p>
+									)}
+								</li>
+							))}
+						</ul>
+					)}
 				</div>
 			)}
 
@@ -908,6 +1269,35 @@ const styles: Record<string, React.CSSProperties> = {
 		color: "#0969da",
 		textDecoration: "none",
 	},
+	knownUserRow: {
+		display: "flex",
+		alignItems: "stretch",
+		gap: 6,
+	},
+	knownUserBtn: {
+		flex: 1,
+		display: "flex",
+		alignItems: "center",
+		gap: 12,
+		padding: "10px 12px",
+		border: "1px solid #d0d5dd",
+		borderRadius: 8,
+		background: "#fff",
+		cursor: "pointer",
+		textAlign: "left" as const,
+		fontFamily: "inherit",
+	},
+	forgetBtn: {
+		fontSize: 18,
+		fontWeight: 400,
+		padding: "0 12px",
+		borderRadius: 8,
+		border: "1px solid #d0d5dd",
+		background: "#fff",
+		color: "#666",
+		cursor: "pointer",
+		lineHeight: 1,
+	},
 	countBadge: {
 		display: "inline-block",
 		marginLeft: 8,
@@ -974,4 +1364,60 @@ const styles: Record<string, React.CSSProperties> = {
 		fontWeight: 700,
 		flexShrink: 0,
 	},
+	scheduledList: {
+		listStyle: "none",
+		padding: 0,
+		margin: 0,
+		display: "flex",
+		flexDirection: "column",
+		gap: 10,
+	},
+	scheduledItem: {
+		border: "1px solid #e1e4e8",
+		borderRadius: 8,
+		padding: "10px 12px",
+		background: "#fafbfc",
+	},
+	scheduledHeader: {
+		display: "flex",
+		alignItems: "center",
+		gap: 10,
+		flexWrap: "wrap" as const,
+	},
+	statusPill: {
+		fontSize: 11,
+		fontWeight: 600,
+		textTransform: "uppercase" as const,
+		letterSpacing: 0.4,
+		padding: "2px 8px",
+		borderRadius: 10,
+	},
+	linkDangerBtn: {
+		marginLeft: "auto",
+		fontSize: 12,
+		fontWeight: 500,
+		background: "transparent",
+		color: "#cf222e",
+		border: "none",
+		cursor: "pointer",
+		padding: 0,
+		textDecoration: "underline",
+	},
 };
+
+function statusPillStyle(status: string): React.CSSProperties | undefined {
+	switch (status) {
+		case "pending":
+			return { background: "#eef2ff", color: "#4338ca" };
+		case "in_progress":
+			return { background: "#e0f2fe", color: "#075985" };
+		case "succeeded":
+			return { background: "#dafbe1", color: "#116329" };
+		case "failed":
+			return { background: "#ffebe9", color: "#82071e" };
+		case "cancelled":
+			return { background: "#eaeef2", color: "#57606a" };
+		default:
+			return undefined;
+	}
+}

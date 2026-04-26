@@ -34,6 +34,12 @@ document.getElementById("login-btn").addEventListener("click", () => {
   window.close();
 });
 
+document.getElementById("social-btn").addEventListener("click", () => {
+  const url = `${getAppOrigin()}/extension/social`;
+  chrome.tabs.create({ url });
+  window.close();
+});
+
 document.getElementById("logout-btn").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "LOGOUT" }, () => {
     updateUI(null);

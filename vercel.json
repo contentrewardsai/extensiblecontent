@@ -7,6 +7,14 @@
 		{
 			"path": "/api/cron/shotstack-credit-expiry",
 			"schedule": "15 0 * * *"
+		},
+		{
+			"path": "/api/cron/ghl-token-refresh",
+			"schedule": "0 */2 * * *"
+		},
+		{
+			"path": "/api/cron/ghl-post-scheduler",
+			"schedule": "* * * * *"
 		}
 	]
 }
