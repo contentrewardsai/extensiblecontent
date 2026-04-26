@@ -62,20 +62,6 @@ export async function GET(request: NextRequest) {
 	const supabase = getSupabase();
 	const origin = request.nextUrl.origin;
 
-	// If no userId from state, try to find user from existing connections
-	if (!userId) {
-		const { data: existingConn } = await supabase
-			.from("ghl_connections")
-			.select("user_id")
-			.eq("company_id", tokenData.companyId)
-			.limit(1)
-			.maybeSingle();
-
-		if (existingConn) {
-			userId = existingConn.user_id;
-		}
-	}
-
 	const now = new Date().toISOString();
 	const expiresAt = new Date(
 		Date.now() + tokenData.expires_in * 1000,
@@ -105,6 +91,17 @@ export async function GET(request: NextRequest) {
 	if (connErr || !connection) {
 		console.error("[ghl-callback] DB error:", connErr);
 		return new Response("Failed to store connection", { status: 500 });
+	}
+
+	// Grant this user access to the connection (many-to-many).
+	if (userId) {
+		await supabase.from("ghl_connection_users").upsert(
+			{
+				connection_id: connection.id,
+				user_id: userId,
+			},
+			{ onConflict: "connection_id,user_id" },
+		);
 	}
 
 	if (!userId) {

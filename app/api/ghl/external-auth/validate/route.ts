@@ -69,15 +69,19 @@ export async function POST(request: NextRequest) {
 	const companyId = String(body.companyId || "").trim();
 
 	if (companyId) {
-		// Link the GHL company to this Whop user by updating the existing
-		// connection row (which already has real OAuth tokens from the install).
+		// Many-to-many link: grant this Whop user access to this GHL company.
+		// Multiple Whop users can share access to the same GHL company.
 		const { data: conn } = await supabase
 			.from("ghl_connections")
 			.select("id, user_id")
 			.eq("company_id", companyId)
 			.maybeSingle();
 
+		let connectionId: string | null = null;
+
 		if (conn) {
+			connectionId = conn.id;
+			// Set "installer" user_id if this connection has none yet (historical only).
 			if (!conn.user_id) {
 				await supabase
 					.from("ghl_connections")
@@ -86,34 +90,39 @@ export async function POST(request: NextRequest) {
 						updated_at: new Date().toISOString(),
 					})
 					.eq("id", conn.id);
-
-				// Also update any child locations
-				await supabase
-					.from("ghl_locations")
-					.update({
-						user_id: keyRow.user_id,
-						updated_at: new Date().toISOString(),
-					})
-					.eq("connection_id", conn.id);
-
-				console.log(
-					`[ghl-link] Linked companyId=${companyId} to userId=${keyRow.user_id}`,
-				);
 			}
 		} else {
 			// No connection row yet (install hasn't happened or was lost).
 			// Create a placeholder that will be updated when the install completes.
-			await supabase.from("ghl_connections").upsert(
+			const { data: inserted } = await supabase
+				.from("ghl_connections")
+				.upsert(
+					{
+						user_id: keyRow.user_id,
+						company_id: companyId,
+						user_type: "Company",
+						access_token: "pending-link",
+						refresh_token: "pending-link",
+						token_expires_at: new Date().toISOString(),
+						updated_at: new Date().toISOString(),
+					},
+					{ onConflict: "company_id" },
+				)
+				.select("id")
+				.single();
+			connectionId = inserted?.id ?? null;
+		}
+
+		if (connectionId) {
+			await supabase.from("ghl_connection_users").upsert(
 				{
+					connection_id: connectionId,
 					user_id: keyRow.user_id,
-					company_id: companyId,
-					user_type: "Company",
-					access_token: "pending-link",
-					refresh_token: "pending-link",
-					token_expires_at: new Date().toISOString(),
-					updated_at: new Date().toISOString(),
 				},
-				{ onConflict: "company_id" },
+				{ onConflict: "connection_id,user_id" },
+			);
+			console.log(
+				`[ghl-link] Granted userId=${keyRow.user_id} access to companyId=${companyId}`,
 			);
 		}
 	}

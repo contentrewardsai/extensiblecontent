@@ -55,17 +55,17 @@ export async function GET(request: NextRequest) {
 }
 
 async function cacheAccounts(
-	userId: string,
+	_userId: string,
 	locationId: string,
 	data: Record<string, unknown>,
 ) {
 	const supabase = getSupabase();
 
-	// Find the DB ghl_location row
+	// Find the DB ghl_location row (access was already verified by the caller
+	// via getValidTokenForLocation, which checks the join table).
 	const { data: loc } = await supabase
 		.from("ghl_locations")
 		.select("id")
-		.eq("user_id", userId)
 		.eq("location_id", locationId)
 		.eq("is_active", true)
 		.limit(1)

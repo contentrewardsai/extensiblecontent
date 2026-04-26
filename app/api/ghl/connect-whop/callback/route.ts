@@ -87,60 +87,65 @@ export async function GET(request: NextRequest) {
 	const supabase = getServiceSupabase();
 	const now = new Date().toISOString();
 
-	if (companyId) {
-		// Link this specific GHL company to the Whop user
-		await supabase
-			.from("ghl_connections")
-			.update({ user_id: userId, updated_at: now })
-			.eq("company_id", companyId)
-			.is("user_id", null);
+	// Find which connection(s) this user is linking to.
+	const connectionIds: string[] = [];
 
+	if (companyId) {
 		const { data: conn } = await supabase
 			.from("ghl_connections")
-			.select("id")
+			.select("id, user_id")
 			.eq("company_id", companyId)
 			.maybeSingle();
 
 		if (conn) {
-			await supabase
-				.from("ghl_locations")
-				.update({ user_id: userId, updated_at: now })
-				.eq("connection_id", conn.id)
-				.is("user_id", null);
+			connectionIds.push(conn.id);
+			// Set "installer" user_id for historical tracking if still null.
+			if (!conn.user_id) {
+				await supabase
+					.from("ghl_connections")
+					.update({ user_id: userId, updated_at: now })
+					.eq("id", conn.id);
+			}
 		}
+	} else if (locationId) {
+		const { data: loc } = await supabase
+			.from("ghl_locations")
+			.select("connection_id")
+			.eq("location_id", locationId)
+			.maybeSingle();
+		if (loc?.connection_id) connectionIds.push(loc.connection_id);
 	} else {
-		// No specific company — link ALL unlinked GHL connections to this user.
-		// This handles the case where SSO didn't provide a companyId.
-		const { data: unlinked } = await supabase
+		// No context at all — link to ALL connections that currently have no users.
+		// This covers SSO-failed first-time linking.
+		const { data: orphan } = await supabase
 			.from("ghl_connections")
 			.select("id")
 			.is("user_id", null);
-
-		if (unlinked?.length) {
-			const ids = unlinked.map((c) => c.id);
+		if (orphan?.length) {
+			connectionIds.push(...orphan.map((c) => c.id));
 			await supabase
 				.from("ghl_connections")
 				.update({ user_id: userId, updated_at: now })
-				.in("id", ids);
-
-			await supabase
-				.from("ghl_locations")
-				.update({ user_id: userId, updated_at: now })
-				.in("connection_id", ids)
-				.is("user_id", null);
+				.in(
+					"id",
+					orphan.map((c) => c.id),
+				);
 		}
 	}
 
-	if (locationId) {
+	// Grant access via the many-to-many join table.
+	if (connectionIds.length > 0) {
+		const rows = connectionIds.map((connection_id) => ({
+			connection_id,
+			user_id: userId,
+		}));
 		await supabase
-			.from("ghl_locations")
-			.update({ user_id: userId, updated_at: now })
-			.eq("location_id", locationId)
-			.is("user_id", null);
+			.from("ghl_connection_users")
+			.upsert(rows, { onConflict: "connection_id,user_id" });
 	}
 
 	console.log(
-		`[ghl-connect-whop] Linked companyId=${companyId ?? "all-unlinked"} locationId=${locationId ?? "?"} to userId=${userId}`,
+		`[ghl-connect-whop] Linked userId=${userId} to connections=[${connectionIds.join(",")}] (companyId=${companyId ?? "?"} locationId=${locationId ?? "?"})`,
 	);
 
 	return closePopup({ success: true, userId });

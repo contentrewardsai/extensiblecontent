@@ -3,8 +3,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+const WHOP_USER_STORAGE_KEY = "ec_whop_user_id";
+
+interface ConnectedUser {
+	userId: string;
+	name: string | null;
+	email: string | null;
+	linkedAt: string;
+	isSelf: boolean;
+}
+
 interface PageContext {
 	whopLinked: boolean;
+	hasAnyLink?: boolean;
 	locationId: string;
 	locationName: string | null;
 	companyId?: string;
@@ -118,6 +129,7 @@ export default function GhlSettingsPage() {
 	const [loading, setLoading] = useState(true);
 	const [needsLink, setNeedsLink] = useState(false);
 	const [fetchError, setFetchError] = useState<string | null>(null);
+	const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
 
 	// Connection Key fallback
 	const [showKeyForm, setShowKeyForm] = useState(false);
@@ -128,6 +140,9 @@ export default function GhlSettingsPage() {
 	// GHL identifiers from SSO
 	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(null);
 	const [ghlLocationId, setGhlLocationId] = useState<string | null>(null);
+
+	// Active Whop user viewing this page (from sessionStorage or OAuth popup)
+	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
 	const loadPageContext = useCallback(
 		async (params: {
@@ -147,7 +162,7 @@ export default function GhlSettingsPage() {
 		[],
 	);
 
-	// Init: SSO → backend lookup → show settings or link prompt
+	// Init: SSO → check sessionStorage for cached user → show settings or link prompt
 	useEffect(() => {
 		let cancelled = false;
 
@@ -170,28 +185,42 @@ export default function GhlSettingsPage() {
 			if (companyId) setGhlCompanyId(companyId);
 			if (locationId) setGhlLocationId(locationId);
 
-			if (companyId || locationId) {
-				try {
-					const data = await loadPageContext({
-						companyId: companyId ?? undefined,
-						locationId: locationId ?? undefined,
-					});
+			// Check sessionStorage for a remembered Whop user in this browser tab.
+			// Many-to-many: multiple Whop users may be linked to the same GHL
+			// company, so the server can't auto-pick. The user picks once via
+			// OAuth, and we remember their choice for the tab.
+			const cachedUserId =
+				typeof sessionStorage !== "undefined"
+					? sessionStorage.getItem(WHOP_USER_STORAGE_KEY)
+					: null;
 
-					if (cancelled) return;
+			try {
+				const data = await loadPageContext({
+					companyId: companyId ?? undefined,
+					locationId: locationId ?? undefined,
+					userId: cachedUserId ?? undefined,
+				});
 
-					if (data.whopLinked) {
-						setCtx(data);
-						setLoading(false);
-						return;
-					}
-				} catch (err) {
-					if (!cancelled) {
-						setFetchError(
-							err instanceof Error ? err.message : "Failed to load data",
-						);
-						setLoading(false);
-						return;
-					}
+				if (cancelled) return;
+
+				if (data.whopLinked) {
+					setCtx(data);
+					if (cachedUserId) setCurrentUserId(cachedUserId);
+					setLoading(false);
+					return;
+				}
+
+				// Cached user is no longer valid (revoked access, etc.) -- clear.
+				if (cachedUserId) {
+					sessionStorage.removeItem(WHOP_USER_STORAGE_KEY);
+				}
+			} catch (err) {
+				if (!cancelled) {
+					setFetchError(
+						err instanceof Error ? err.message : "Failed to load data",
+					);
+					setLoading(false);
+					return;
 				}
 			}
 
@@ -211,13 +240,17 @@ export default function GhlSettingsPage() {
 	useEffect(() => {
 		function onMessage(event: MessageEvent) {
 			if (event.data?.type === "whop-link-result" && event.data.success) {
-				// Accounts linked — reload settings
+				const newUserId = event.data.userId;
+				if (newUserId && typeof sessionStorage !== "undefined") {
+					sessionStorage.setItem(WHOP_USER_STORAGE_KEY, newUserId);
+				}
+				if (newUserId) setCurrentUserId(newUserId);
 				setNeedsLink(false);
 				setLoading(true);
 				const params: Record<string, string> = {};
 				if (ghlCompanyId) params.companyId = ghlCompanyId;
 				if (ghlLocationId) params.locationId = ghlLocationId;
-				if (event.data.userId) params.userId = event.data.userId;
+				if (newUserId) params.userId = newUserId;
 				loadPageContext(params)
 					.then((data) => {
 						setCtx(data);
@@ -235,6 +268,42 @@ export default function GhlSettingsPage() {
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
 	}, [ghlCompanyId, ghlLocationId, loadPageContext]);
+
+	const handleSwitchAccount = () => {
+		if (typeof sessionStorage !== "undefined") {
+			sessionStorage.removeItem(WHOP_USER_STORAGE_KEY);
+		}
+		setCtx(null);
+		setCurrentUserId(null);
+		setConnectedUsers([]);
+		setNeedsLink(true);
+	};
+
+	// Load the list of all Whop users connected to this GHL company/location
+	useEffect(() => {
+		if (!ctx?.whopLinked || !currentUserId) {
+			setConnectedUsers([]);
+			return;
+		}
+		const qs = new URLSearchParams();
+		qs.set("userId", currentUserId);
+		if (ghlCompanyId) qs.set("companyId", ghlCompanyId);
+		else if (ghlLocationId) qs.set("locationId", ghlLocationId);
+
+		let cancelled = false;
+		fetch(`/api/ghl/connected-users?${qs.toString()}`)
+			.then(async (res) => {
+				if (!res.ok) return;
+				const data = (await res.json()) as { users?: ConnectedUser[] };
+				if (!cancelled) setConnectedUsers(data.users ?? []);
+			})
+			.catch(() => {
+				/* ignore */
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [ctx?.whopLinked, currentUserId, ghlCompanyId, ghlLocationId]);
 
 	const handleWhopOAuth = () => {
 		const params = new URLSearchParams();
@@ -277,8 +346,17 @@ export default function GhlSettingsPage() {
 			const uid = result.userId;
 			if (!uid) throw new Error("Could not identify user");
 
-			const data = await loadPageContext({ userId: uid });
+			if (typeof sessionStorage !== "undefined") {
+				sessionStorage.setItem(WHOP_USER_STORAGE_KEY, uid);
+			}
+
+			const data = await loadPageContext({
+				userId: uid,
+				...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
+				...(ghlLocationId ? { locationId: ghlLocationId } : {}),
+			});
 			setCtx(data);
+			setCurrentUserId(uid);
 			setNeedsLink(false);
 			setShowKeyForm(false);
 		} catch (err) {
@@ -409,14 +487,23 @@ export default function GhlSettingsPage() {
 			<div style={styles.card}>
 				<h2 style={styles.sectionTitle}>Whop Account</h2>
 				{ctx?.whopLinked ? (
-					<div style={styles.row}>
-						<div style={styles.statusDot} />
-						<div>
-							<p style={styles.body}>
-								<strong>{ctx.user?.name || "Whop User"}</strong>
-							</p>
-							<p style={styles.muted}>{ctx.user?.email}</p>
+					<div style={{ ...styles.row, justifyContent: "space-between" }}>
+						<div style={styles.row}>
+							<div style={styles.statusDot} />
+							<div>
+								<p style={styles.body}>
+									<strong>{ctx.user?.name || "Whop User"}</strong>
+								</p>
+								<p style={styles.muted}>{ctx.user?.email}</p>
+							</div>
 						</div>
+						<button
+							type="button"
+							onClick={handleSwitchAccount}
+							style={{ ...styles.secondaryBtn, width: "auto" }}
+						>
+							Switch account
+						</button>
 					</div>
 				) : (
 					<div>
@@ -433,6 +520,42 @@ export default function GhlSettingsPage() {
 					</div>
 				)}
 			</div>
+
+			{ctx?.whopLinked && connectedUsers.length > 0 && (
+				<div style={styles.card}>
+					<h2 style={styles.sectionTitle}>
+						Connected Whop Accounts{" "}
+						<span style={styles.countBadge}>{connectedUsers.length}</span>
+					</h2>
+					<p style={{ ...styles.muted, marginBottom: 12 }}>
+						These Whop users can access this GoHighLevel{" "}
+						{ghlCompanyId ? "company" : "location"}.
+					</p>
+					<ul style={styles.userList}>
+						{connectedUsers.map((u) => (
+							<li key={u.userId} style={styles.userItem}>
+								<div style={styles.userAvatar}>
+									{(u.name?.[0] || u.email?.[0] || "?").toUpperCase()}
+								</div>
+								<div style={{ flex: 1, minWidth: 0 }}>
+									<p style={{ ...styles.body, fontWeight: 500 }}>
+										{u.name || u.email || u.userId}
+										{u.isSelf && (
+											<span style={styles.youBadge}>you</span>
+										)}
+									</p>
+									{u.name && u.email && (
+										<p style={styles.muted}>{u.email}</p>
+									)}
+								</div>
+								<span style={styles.muted}>
+									{new Date(u.linkedAt).toLocaleDateString()}
+								</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
 
 			{ctx?.whopLinked && (
 				<>
@@ -762,6 +885,59 @@ const styles: Record<string, React.CSSProperties> = {
 		fontSize: 13,
 		color: "#0969da",
 		textDecoration: "none",
+	},
+	countBadge: {
+		display: "inline-block",
+		marginLeft: 8,
+		fontSize: 12,
+		fontWeight: 600,
+		background: "#eef2ff",
+		color: "#4338ca",
+		padding: "1px 8px",
+		borderRadius: 10,
+		verticalAlign: "middle",
+	},
+	userList: {
+		listStyle: "none",
+		margin: 0,
+		padding: 0,
+		display: "flex",
+		flexDirection: "column",
+		gap: 8,
+	},
+	userItem: {
+		display: "flex",
+		alignItems: "center",
+		gap: 12,
+		padding: "10px 12px",
+		border: "1px solid #e1e4e8",
+		borderRadius: 8,
+		background: "#fafbfc",
+	},
+	userAvatar: {
+		width: 32,
+		height: 32,
+		borderRadius: "50%",
+		background: "#e0e7ff",
+		color: "#4338ca",
+		display: "flex",
+		alignItems: "center",
+		justifyContent: "center",
+		fontSize: 13,
+		fontWeight: 700,
+		flexShrink: 0,
+	},
+	youBadge: {
+		display: "inline-block",
+		marginLeft: 8,
+		fontSize: 10,
+		fontWeight: 600,
+		textTransform: "uppercase" as const,
+		background: "#dafbe1",
+		color: "#116329",
+		padding: "1px 6px",
+		borderRadius: 6,
+		verticalAlign: "middle",
 	},
 	logoCircle: {
 		width: 36,

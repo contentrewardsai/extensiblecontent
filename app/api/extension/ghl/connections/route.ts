@@ -20,17 +20,39 @@ export async function GET(request: NextRequest) {
 
 	const supabase = getSupabase();
 
-	const { data: connections, error: connErr } = await supabase
-		.from("ghl_connections")
-		.select("id, company_id, user_type, scopes, created_at, updated_at")
-		.eq("user_id", user.user_id)
-		.order("created_at", { ascending: false });
+	// Get connection IDs this user has access to (many-to-many join table).
+	const { data: access, error: accessErr } = await supabase
+		.from("ghl_connection_users")
+		.select("connection_id")
+		.eq("user_id", user.user_id);
 
-	if (connErr) {
-		return Response.json({ error: connErr.message }, { status: 500 });
+	if (accessErr) {
+		return Response.json({ error: accessErr.message }, { status: 500 });
 	}
 
-	const connIds = (connections ?? []).map((c) => c.id);
+	const connIds = (access ?? []).map((a) => a.connection_id);
+
+	let connections: Array<{
+		id: string;
+		company_id: string;
+		user_type: string;
+		scopes: string | null;
+		created_at: string;
+		updated_at: string;
+	}> = [];
+
+	if (connIds.length > 0) {
+		const { data: conns, error: connErr } = await supabase
+			.from("ghl_connections")
+			.select("id, company_id, user_type, scopes, created_at, updated_at")
+			.in("id", connIds)
+			.order("created_at", { ascending: false });
+
+		if (connErr) {
+			return Response.json({ error: connErr.message }, { status: 500 });
+		}
+		connections = conns ?? [];
+	}
 
 	let locations: Array<{
 		id: string;
@@ -56,7 +78,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	return Response.json({
-		connections: connections ?? [],
+		connections,
 		locations,
 	});
 }
@@ -64,7 +86,9 @@ export async function GET(request: NextRequest) {
 /**
  * DELETE /api/extension/ghl/connections?id=...
  *
- * Deletes a GHL connection and all its locations (cascaded by FK).
+ * Revokes THIS user's access to the GHL connection. If no other users remain
+ * linked to it, the underlying connection (and its locations, via FK cascade)
+ * is also deleted.
  */
 export async function DELETE(request: NextRequest) {
 	const user = await getExtensionUser(request);
@@ -77,25 +101,29 @@ export async function DELETE(request: NextRequest) {
 
 	const supabase = getSupabase();
 
-	// Verify ownership before deleting
-	const { data: conn } = await supabase
-		.from("ghl_connections")
+	// Verify the user has access to this connection.
+	const { data: access } = await supabase
+		.from("ghl_connection_users")
 		.select("id")
-		.eq("id", connectionId)
+		.eq("connection_id", connectionId)
 		.eq("user_id", user.user_id)
-		.single();
+		.maybeSingle();
 
-	if (!conn) {
+	if (!access) {
 		return Response.json({ error: "Connection not found" }, { status: 404 });
 	}
 
-	const { error } = await supabase
-		.from("ghl_connections")
-		.delete()
-		.eq("id", connectionId);
+	// Remove just this user's access.
+	await supabase.from("ghl_connection_users").delete().eq("id", access.id);
 
-	if (error) {
-		return Response.json({ error: error.message }, { status: 500 });
+	// If no other users remain, delete the connection itself.
+	const { count } = await supabase
+		.from("ghl_connection_users")
+		.select("*", { count: "exact", head: true })
+		.eq("connection_id", connectionId);
+
+	if ((count ?? 0) === 0) {
+		await supabase.from("ghl_connections").delete().eq("id", connectionId);
 	}
 
 	return Response.json({ ok: true });

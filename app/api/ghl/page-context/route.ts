@@ -24,81 +24,97 @@ export async function GET(request: NextRequest) {
 	}
 
 	const supabase = getServiceSupabase();
-
-	let userId: string | null = null;
 	let locationName: string | null = null;
 
-	if (directUserId) {
-		userId = directUserId;
-	} else if (companyId) {
-		// Look up the linked Whop user via the ghl_connections table
-		const { data: conn } = await supabase
-			.from("ghl_connections")
-			.select("user_id")
-			.eq("company_id", companyId)
-			.maybeSingle();
-
-		if (conn?.user_id) {
-			userId = conn.user_id;
-		} else {
-			return Response.json({
-				whopLinked: false,
-				companyId,
-				locationId: null,
-				locationName: null,
-			});
-		}
-	} else if (locationId) {
-		// Look up via ghl_locations
-		const { data: loc } = await supabase
-			.from("ghl_locations")
-			.select("id, user_id, location_name, is_active")
-			.eq("location_id", locationId)
-			.eq("is_active", true)
-			.not("access_token", "in", '("pending","pending-link")')
-			.limit(1)
-			.maybeSingle();
-
-		if (loc?.user_id) {
-			userId = loc.user_id;
-			locationName = loc.location_name;
-		} else {
-			// Try via ghl_connections using location's parent connection
-			const { data: locAny } = await supabase
+	// In the many-to-many model, a GHL company / location may have multiple
+	// linked Whop users, so we can't pick one from companyId alone. The caller
+	// must provide directUserId (typically stored in a cookie or passed via
+	// postMessage after Whop OAuth). If only companyId/locationId is provided,
+	// we simply report whether ANY link exists so the UI can show the
+	// "Link Whop Account" button if needed.
+	if (!directUserId) {
+		let anyLink = false;
+		if (companyId) {
+			const { data: conn } = await supabase
+				.from("ghl_connections")
+				.select("id")
+				.eq("company_id", companyId)
+				.maybeSingle();
+			if (conn) {
+				const { count } = await supabase
+					.from("ghl_connection_users")
+					.select("*", { count: "exact", head: true })
+					.eq("connection_id", conn.id);
+				anyLink = (count ?? 0) > 0;
+			}
+		} else if (locationId) {
+			const { data: loc } = await supabase
 				.from("ghl_locations")
-				.select("connection_id")
+				.select("connection_id, location_name")
 				.eq("location_id", locationId)
-				.limit(1)
+				.maybeSingle();
+			if (loc) {
+				locationName = loc.location_name;
+				const { count } = await supabase
+					.from("ghl_connection_users")
+					.select("*", { count: "exact", head: true })
+					.eq("connection_id", loc.connection_id);
+				anyLink = (count ?? 0) > 0;
+			}
+		}
+
+		return Response.json({
+			whopLinked: false,
+			hasAnyLink: anyLink,
+			companyId: companyId ?? null,
+			locationId: locationId ?? null,
+			locationName,
+		});
+	}
+
+	const userId = directUserId;
+
+	// If companyId or locationId was also provided, verify this user actually
+	// has access via the join table. This prevents someone from loading
+	// another user's data by passing an arbitrary userId.
+	if (companyId || locationId) {
+		let connectionId: string | null = null;
+
+		if (companyId) {
+			const { data: conn } = await supabase
+				.from("ghl_connections")
+				.select("id")
+				.eq("company_id", companyId)
+				.maybeSingle();
+			connectionId = conn?.id ?? null;
+		} else if (locationId) {
+			const { data: loc } = await supabase
+				.from("ghl_locations")
+				.select("connection_id, location_name")
+				.eq("location_id", locationId)
+				.maybeSingle();
+			connectionId = loc?.connection_id ?? null;
+			locationName = loc?.location_name ?? null;
+		}
+
+		if (connectionId) {
+			const { data: access } = await supabase
+				.from("ghl_connection_users")
+				.select("id")
+				.eq("connection_id", connectionId)
+				.eq("user_id", userId)
 				.maybeSingle();
 
-			if (locAny) {
-				const { data: conn } = await supabase
-					.from("ghl_connections")
-					.select("user_id")
-					.eq("id", locAny.connection_id)
-					.maybeSingle();
-
-				if (conn?.user_id) {
-					userId = conn.user_id;
-				}
-			}
-
-			if (!userId) {
+			if (!access) {
 				return Response.json({
 					whopLinked: false,
-					locationId,
-					locationName: null,
+					hasAnyLink: true,
+					companyId: companyId ?? null,
+					locationId: locationId ?? null,
+					locationName,
 				});
 			}
 		}
-	}
-
-	if (!userId) {
-		return Response.json({
-			whopLinked: false,
-			locationId: locationId ?? null,
-			locationName: null,
-		});
 	}
 
 	// Load all data in parallel

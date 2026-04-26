@@ -170,8 +170,9 @@ export async function getValidLocationToken(
 }
 
 /**
- * Looks up the first active ghl_locations row for a user + GHL locationId,
- * then returns a valid token.
+ * Looks up an active ghl_locations row for a user + GHL locationId, checking
+ * access via the many-to-many ghl_connection_users join table, then returns a
+ * valid token. Multiple Whop users can share access to the same GHL company.
  */
 export async function getValidTokenForLocation(
 	userId: string,
@@ -179,17 +180,26 @@ export async function getValidTokenForLocation(
 ): Promise<{ token: string; ghlLocationDbId: string }> {
 	const supabase = getSupabase();
 
+	// Find the location record and verify the user has access via the
+	// connection-level join table (many-to-many).
 	const { data: loc, error } = await supabase
 		.from("ghl_locations")
-		.select("id")
-		.eq("user_id", userId)
+		.select("id, connection_id")
 		.eq("location_id", locationId)
 		.eq("is_active", true)
 		.limit(1)
-		.single();
+		.maybeSingle();
 
-	if (error || !loc)
-		throw new Error("No active GHL location found for this user");
+	if (error || !loc) throw new Error("GHL location not found");
+
+	const { data: access } = await supabase
+		.from("ghl_connection_users")
+		.select("id")
+		.eq("connection_id", loc.connection_id)
+		.eq("user_id", userId)
+		.maybeSingle();
+
+	if (!access) throw new Error("User does not have access to this GHL location");
 
 	const token = await getValidLocationToken(loc.id);
 	return { token, ghlLocationDbId: loc.id };

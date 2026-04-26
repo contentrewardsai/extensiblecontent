@@ -13,14 +13,29 @@ export default async function IntegrationsPage({
 	const { internalUserId } = await requireExperienceContext(experienceId);
 	const supabase = getServiceSupabase();
 
-	// Load GHL connections and locations for this user
-	const { data: connections } = await supabase
-		.from("ghl_connections")
-		.select("id, company_id, user_type, created_at")
-		.eq("user_id", internalUserId)
-		.order("created_at", { ascending: false });
+	// Load GHL connections this user has access to (many-to-many join table).
+	const { data: access } = await supabase
+		.from("ghl_connection_users")
+		.select("connection_id")
+		.eq("user_id", internalUserId);
 
-	const connIds = (connections ?? []).map((c) => c.id);
+	const connIds = (access ?? []).map((a) => a.connection_id);
+
+	let connections: Array<{
+		id: string;
+		company_id: string;
+		user_type: string;
+		created_at: string;
+	}> = [];
+
+	if (connIds.length > 0) {
+		const { data: conns } = await supabase
+			.from("ghl_connections")
+			.select("id, company_id, user_type, created_at")
+			.in("id", connIds)
+			.order("created_at", { ascending: false });
+		connections = conns ?? [];
+	}
 
 	let locations: Array<{
 		id: string;
@@ -41,9 +56,30 @@ export default async function IntegrationsPage({
 		locations = locs ?? [];
 	}
 
-	const hasConnections = (connections?.length ?? 0) > 0;
+	const hasConnections = connections.length > 0;
 	const activeLocations = locations.filter((l) => l.is_active);
 	const activeKeyInfo = await getActiveKeyInfo(internalUserId);
+
+	// Count of other Whop users sharing access to each connection.
+	let shareCounts = new Map<string, number>();
+	if (connIds.length > 0) {
+		const { data: sharedRows } = await supabase
+			.from("ghl_connection_users")
+			.select("connection_id")
+			.in("connection_id", connIds);
+		shareCounts = (sharedRows ?? []).reduce((acc, row) => {
+			acc.set(row.connection_id, (acc.get(row.connection_id) ?? 0) + 1);
+			return acc;
+		}, new Map<string, number>());
+	}
+
+	// Group active locations by connection for rendering.
+	const locationsByConn = new Map<string, typeof activeLocations>();
+	for (const loc of activeLocations) {
+		const arr = locationsByConn.get(loc.connection_id) ?? [];
+		arr.push(loc);
+		locationsByConn.set(loc.connection_id, arr);
+	}
 
 	return (
 		<div className="flex flex-col gap-8">
@@ -73,27 +109,63 @@ export default async function IntegrationsPage({
 				/>
 
 				{hasConnections ? (
-					<div className="mt-4">
-						<p className="text-3 text-gray-11 mb-2">
-							<strong className="text-gray-12">{activeLocations.length}</strong> active sub-account{activeLocations.length !== 1 ? "s" : ""} connected
+					<div className="mt-4 flex flex-col gap-4">
+						<p className="text-3 text-gray-11">
+							<strong className="text-gray-12">{connections.length}</strong>{" "}
+							GHL {connections.length === 1 ? "account" : "accounts"} &middot;{" "}
+							<strong className="text-gray-12">{activeLocations.length}</strong>{" "}
+							active sub-account{activeLocations.length !== 1 ? "s" : ""}
 						</p>
 
-						{activeLocations.length > 0 && (
-							<ul className="flex flex-col gap-2">
-								{activeLocations.map((loc) => (
-									<li
-										key={loc.id}
-										className="flex items-center gap-2 border border-gray-a4 rounded-md px-3 py-2 bg-gray-a1"
-									>
-										<span className="w-2 h-2 rounded-full bg-green-9 shrink-0" />
-										<span className="text-3 text-gray-12">
-											{loc.location_name || loc.location_id}
-										</span>
-										<span className="text-2 text-gray-10 ml-auto">{loc.location_id}</span>
-									</li>
-								))}
-							</ul>
-						)}
+						{connections.map((conn) => {
+							const locs = locationsByConn.get(conn.id) ?? [];
+							const others = (shareCounts.get(conn.id) ?? 1) - 1;
+							return (
+								<div
+									key={conn.id}
+									className="border border-gray-a4 rounded-md p-3 bg-gray-a1"
+								>
+									<div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+										<div className="flex items-center gap-2">
+											<span className="font-mono text-2 text-gray-11">
+												{conn.company_id}
+											</span>
+											<span className="text-1 text-gray-10 border border-gray-a5 rounded px-2 py-px">
+												{conn.user_type === "Company" ? "Agency" : "Location"}
+											</span>
+										</div>
+										{others > 0 && (
+											<span className="text-2 text-gray-10">
+												Shared with {others} other Whop user{others === 1 ? "" : "s"}
+											</span>
+										)}
+									</div>
+
+									{locs.length === 0 ? (
+										<p className="text-2 text-gray-10 italic">
+											No active sub-accounts yet.
+										</p>
+									) : (
+										<ul className="flex flex-col gap-2">
+											{locs.map((loc) => (
+												<li
+													key={loc.id}
+													className="flex items-center gap-2 border border-gray-a4 rounded-md px-3 py-2 bg-gray-a2"
+												>
+													<span className="w-2 h-2 rounded-full bg-green-9 shrink-0" />
+													<span className="text-3 text-gray-12">
+														{loc.location_name || loc.location_id}
+													</span>
+													<span className="text-2 text-gray-10 ml-auto font-mono">
+														{loc.location_id}
+													</span>
+												</li>
+											))}
+										</ul>
+									)}
+								</div>
+							);
+						})}
 					</div>
 				) : (
 					<p className="text-3 text-gray-10 mt-3 border border-gray-a4 rounded-lg p-4 bg-gray-a1">
