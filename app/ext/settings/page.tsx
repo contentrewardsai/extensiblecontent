@@ -562,9 +562,19 @@ export default function GhlSettingsPage() {
 	}, [currentUserId, ghlCompanyId, ghlLocationId, ghlSsoPayload]);
 
 	const handleWhopOAuth = () => {
+		if (!ghlSsoPayload) {
+			setFetchError(
+				"Could not read your GoHighLevel session. Please reload this page and try again.",
+			);
+			return;
+		}
 		const params = new URLSearchParams();
-		if (ghlCompanyId) params.set("companyId", ghlCompanyId);
-		if (ghlLocationId) params.set("locationId", ghlLocationId);
+		// Source of truth for the target GHL company/location is the signed
+		// SSO payload — the backend decrypts it to derive identifiers. We
+		// intentionally do NOT send unsigned companyId/locationId because an
+		// attacker could craft a URL that linked their Whop account to
+		// someone else's real GHL company.
+		params.set("sso", ghlSsoPayload);
 
 		window.open(
 			`/api/ghl/connect-whop?${params.toString()}`,

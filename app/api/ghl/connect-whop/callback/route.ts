@@ -1,13 +1,30 @@
 import type { NextRequest } from "next/server";
+import { verifyState } from "@/lib/ghl-sso";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { ensureInternalUserFromWhop } from "@/lib/whop-app-user";
+
+type ConnectWhopState = {
+	companyId?: string;
+	locationId?: string;
+	cv?: string;
+	ts?: number;
+};
+
+// Max age for an in-flight signed state, to limit replay risk.
+const MAX_STATE_AGE_MS = 30 * 60 * 1000;
 
 /**
  * GET /api/ghl/connect-whop/callback
  *
- * Whop redirects here after the user authenticates. We exchange the
- * code for user info, link the GHL company/location to the Whop user
- * in the database, and close the popup.
+ * Whop redirects here after the user authenticates. We exchange the code for
+ * user info, then record the Whop user as having access to the GHL
+ * company/location that was encoded in the HMAC-signed state.
+ *
+ * If no ghl_connections row exists yet for the company (e.g. the user has
+ * configured the app as a Custom Page without doing a marketplace install),
+ * we create a placeholder row with `access_token='pending-link'` so the
+ * linking still works. Real tokens will be populated if/when the marketplace
+ * install OAuth fires later.
  */
 export async function GET(request: NextRequest) {
 	const { searchParams } = request.nextUrl;
@@ -22,17 +39,34 @@ export async function GET(request: NextRequest) {
 		return closePopup({ error: "missing_params" });
 	}
 
-	let stateData: { companyId?: string; locationId?: string; cv?: string };
-	try {
-		stateData = JSON.parse(Buffer.from(stateParam, "base64url").toString());
-	} catch {
-		return closePopup({ error: "invalid_state" });
+	// New-format (HMAC-signed) states contain a dot; legacy base64-only states
+	// from before the HMAC migration don't. We accept the legacy format only
+	// in non-production to keep any existing test flows working.
+	let stateData: ConnectWhopState | null = null;
+
+	if (stateParam.includes(".")) {
+		stateData = verifyState<ConnectWhopState>(stateParam);
+		if (!stateData) return closePopup({ error: "invalid_state_signature" });
+		if (stateData.ts && Date.now() - stateData.ts > MAX_STATE_AGE_MS) {
+			return closePopup({ error: "state_expired" });
+		}
+	} else if (process.env.NODE_ENV !== "production") {
+		try {
+			stateData = JSON.parse(
+				Buffer.from(stateParam, "base64url").toString(),
+			) as ConnectWhopState;
+		} catch {
+			return closePopup({ error: "invalid_state" });
+		}
+	} else {
+		return closePopup({ error: "invalid_state_signature" });
 	}
+
+	if (!stateData) return closePopup({ error: "invalid_state" });
 
 	const { companyId, locationId, cv: codeVerifier } = stateData;
 	const callbackUrl = `https://extensiblecontent.com/api/ghl/connect-whop/callback`;
 
-	// Exchange Whop code for access token (PKCE flow)
 	const tokenBody: Record<string, string> = {
 		grant_type: "authorization_code",
 		code,
@@ -59,7 +93,6 @@ export async function GET(request: NextRequest) {
 
 	const tokenData = (await tokenRes.json()) as { access_token: string };
 
-	// Get Whop user info
 	const userinfoRes = await fetch("https://api.whop.com/oauth/userinfo", {
 		headers: { Authorization: `Bearer ${tokenData.access_token}` },
 	});
@@ -77,7 +110,6 @@ export async function GET(request: NextRequest) {
 		return closePopup({ error: "invalid_user" });
 	}
 
-	// Ensure user exists in our database
 	const userId = await ensureInternalUserFromWhop(userinfo.sub, {
 		email: userinfo.email,
 		name: userinfo.name,
@@ -87,27 +119,77 @@ export async function GET(request: NextRequest) {
 	const supabase = getServiceSupabase();
 	const now = new Date().toISOString();
 
-	// Find which connection(s) this user is linking to.
 	const connectionIds: string[] = [];
 
 	if (companyId) {
-		const { data: conn } = await supabase
+		// Upsert a placeholder connection row if none exists. The SSO-verified
+		// companyId makes this safe — only a real GHL user of that company
+		// could have produced the signed state that got us here.
+		const { data: existing } = await supabase
 			.from("ghl_connections")
 			.select("id, user_id")
 			.eq("company_id", companyId)
 			.maybeSingle();
 
-		if (conn) {
-			connectionIds.push(conn.id);
-			// Set "installer" user_id for historical tracking if still null.
-			if (!conn.user_id) {
-				await supabase
+		let connectionId: string | null = existing?.id ?? null;
+
+		if (!connectionId) {
+			const { data: inserted, error: insertErr } = await supabase
+				.from("ghl_connections")
+				.insert({
+					company_id: companyId,
+					user_type: "Company",
+					access_token: "pending-link",
+					refresh_token: "pending-link",
+					token_expires_at: new Date(0).toISOString(),
+					user_id: userId,
+				})
+				.select("id")
+				.single();
+			if (insertErr || !inserted) {
+				// Race: someone else inserted between select and insert.
+				const { data: retry } = await supabase
 					.from("ghl_connections")
-					.update({ user_id: userId, updated_at: now })
-					.eq("id", conn.id);
+					.select("id")
+					.eq("company_id", companyId)
+					.maybeSingle();
+				connectionId = retry?.id ?? null;
+			} else {
+				connectionId = inserted.id;
+			}
+		} else if (!existing?.user_id) {
+			await supabase
+				.from("ghl_connections")
+				.update({ user_id: userId, updated_at: now })
+				.eq("id", connectionId);
+		}
+
+		if (connectionId) connectionIds.push(connectionId);
+
+		// Also create a pending location row if we have a locationId and no
+		// existing row — lets the Social Planner / media UI have something
+		// to hang off of before full install.
+		if (connectionId && locationId) {
+			const { data: loc } = await supabase
+				.from("ghl_locations")
+				.select("id")
+				.eq("connection_id", connectionId)
+				.eq("location_id", locationId)
+				.maybeSingle();
+			if (!loc) {
+				await supabase.from("ghl_locations").insert({
+					connection_id: connectionId,
+					location_id: locationId,
+					access_token: "pending-link",
+					refresh_token: "pending-link",
+					token_expires_at: new Date(0).toISOString(),
+					is_active: true,
+				});
 			}
 		}
 	} else if (locationId) {
+		// Location-level custom page without companyId: derive connection from
+		// the existing ghl_locations row if any.
 		const { data: loc } = await supabase
 			.from("ghl_locations")
 			.select("connection_id")
@@ -115,8 +197,7 @@ export async function GET(request: NextRequest) {
 			.maybeSingle();
 		if (loc?.connection_id) connectionIds.push(loc.connection_id);
 	} else {
-		// No context at all — link to ALL connections that currently have no users.
-		// This covers SSO-failed first-time linking.
+		// No SSO context at all. Link to orphan connections (legacy path).
 		const { data: orphan } = await supabase
 			.from("ghl_connections")
 			.select("id")
@@ -133,7 +214,6 @@ export async function GET(request: NextRequest) {
 		}
 	}
 
-	// Grant access via the many-to-many join table.
 	if (connectionIds.length > 0) {
 		const rows = connectionIds.map((connection_id) => ({
 			connection_id,

@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash } from "crypto";
+import { createDecipheriv, createHash, createHmac, timingSafeEqual } from "crypto";
 
 /**
  * Decrypted SSO payload GHL sends to embedded custom pages.
@@ -89,6 +89,46 @@ export function verifyGhlSso(payload: string | null | undefined): GhlSsoContext 
 	if (!secret) return null;
 	try {
 		return decryptSsoPayload(payload, secret);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * HMAC-sign an arbitrary JSON-serializable object to carry through an OAuth
+ * `state` round-trip. Keyed on GHL_SHARED_SECRET so we don't need an extra
+ * env var. Format: base64url(json).base64url(hmac-sha256).
+ */
+export function signState(data: unknown): string {
+	const secret = process.env.GHL_SHARED_SECRET;
+	if (!secret) throw new Error("GHL_SHARED_SECRET is required");
+	const json = JSON.stringify(data);
+	const payload = Buffer.from(json).toString("base64url");
+	const sig = createHmac("sha256", secret).update(payload).digest("base64url");
+	return `${payload}.${sig}`;
+}
+
+/**
+ * Verify an HMAC-signed state string and return the decoded object. Returns
+ * null on any mismatch (bad signature, missing secret, malformed payload).
+ */
+export function verifyState<T = unknown>(signed: string | null | undefined): T | null {
+	if (!signed) return null;
+	const secret = process.env.GHL_SHARED_SECRET;
+	if (!secret) return null;
+	const [payload, sig] = signed.split(".");
+	if (!payload || !sig) return null;
+	const expected = createHmac("sha256", secret).update(payload).digest("base64url");
+	const sigBuf = Buffer.from(sig, "base64url");
+	const expectedBuf = Buffer.from(expected, "base64url");
+	if (sigBuf.length !== expectedBuf.length) return null;
+	try {
+		if (!timingSafeEqual(sigBuf, expectedBuf)) return null;
+	} catch {
+		return null;
+	}
+	try {
+		return JSON.parse(Buffer.from(payload, "base64url").toString()) as T;
 	} catch {
 		return null;
 	}
