@@ -53,6 +53,8 @@ interface PageContext {
 		id: string;
 		name: string;
 		default_env: string;
+		is_builtin?: boolean;
+		source_path?: string | null;
 		created_at: string;
 		updated_at: string;
 	}>;
@@ -1144,22 +1146,47 @@ export default function GhlSettingsPage() {
 												<th style={styles.th}>Name</th>
 												<th style={styles.th}>Environment</th>
 												<th style={styles.th}>Updated</th>
+												<th style={styles.th}>Actions</th>
 											</tr>
 										</thead>
 										<tbody>
-											{ctx.templates.map((tpl) => (
-												<tr key={tpl.id}>
-													<td style={styles.td}>{tpl.name}</td>
-													<td style={styles.td}>
-														{tpl.default_env === "v1"
-															? "Production"
-															: "Staging"}
-													</td>
-													<td style={styles.tdMuted}>
-														{new Date(tpl.updated_at).toLocaleDateString()}
-													</td>
-												</tr>
-											))}
+											{ctx.templates.map((tpl) => {
+												const editorQs = new URLSearchParams();
+												if (ghlLocationId) editorQs.set("location_id", ghlLocationId);
+												if (ghlCompanyId) editorQs.set("company_id", ghlCompanyId);
+												const editorHref = `/ext/shotstack/editor/${tpl.id}${
+													editorQs.toString() ? `?${editorQs.toString()}` : ""
+												}`;
+												return (
+													<tr key={tpl.id}>
+														<td style={styles.td}>
+															{tpl.name}
+															{tpl.is_builtin ? (
+																<span style={{ ...styles.tagGray, marginLeft: 8 }}>Starter</span>
+															) : null}
+														</td>
+														<td style={styles.td}>
+															{tpl.default_env === "v1" ? "Production" : "Staging"}
+														</td>
+														<td style={styles.tdMuted}>
+															{new Date(tpl.updated_at).toLocaleDateString()}
+														</td>
+														<td style={styles.td}>
+															<a
+																href={editorHref}
+																style={{ ...styles.link, fontWeight: 500 }}
+																title={
+																	tpl.is_builtin
+																		? "Open read-only — saving creates your own editable copy"
+																		: "Open in the visual editor"
+																}
+															>
+																{tpl.is_builtin ? "Clone & edit →" : "Edit (visual) →"}
+															</a>
+														</td>
+													</tr>
+												);
+											})}
 										</tbody>
 									</table>
 								</div>

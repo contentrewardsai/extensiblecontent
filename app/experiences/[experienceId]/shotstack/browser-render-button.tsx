@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ensureCfsGeneratorLoaded } from "./ensure-cfs-generator";
+import type { ShotstackEditorContext } from "./shotstack-editor-context";
 
 type Variant = "row" | "toolbar";
 
@@ -13,27 +14,32 @@ function detectChromium() {
 	return /Chrome|Chromium|Edg\/|CriOS/.test(u) && !/FxiOS|Firefox\//.test(u);
 }
 
+function buildUrl(base: string, path: string, query: string): string {
+	const url = `${base}${path}`;
+	if (!query) return url;
+	return url.includes("?") ? `${url}&${query}` : `${url}?${query}`;
+}
+
 export function BrowserRenderButton({
-	experienceId,
 	templateId,
 	templateName: _templateName,
 	variant = "row",
 	getTemplateJson,
 	disabled = false,
+	context,
 }: {
-	experienceId: string;
 	templateId: string;
 	templateName: string;
 	variant?: Variant;
 	/** If provided (e.g. from visual editor), used instead of fetching the template. */
 	getTemplateJson?: () => Record<string, unknown> | null;
 	disabled?: boolean;
+	context: ShotstackEditorContext;
 }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
 	const [msg, setMsg] = useState<string | null>(null);
 	// Gate with useEffect so SSR and first client render agree (hydration-safe).
-	// We render a stable placeholder until the UA check has run on the client.
 	const [canRun, setCanRun] = useState<boolean | null>(null);
 	useEffect(() => {
 		setCanRun(detectChromium());
@@ -62,7 +68,7 @@ export function BrowserRenderButton({
 			}
 			if (!edit) {
 				const tRes = await fetch(
-					`/api/whop/shotstack-templates/${templateId}?experienceId=${encodeURIComponent(experienceId)}`,
+					buildUrl(context.templatesApiBase, `/${templateId}`, context.templatesApiQuery),
 					{ credentials: "include" },
 				);
 				if (!tRes.ok) {
@@ -78,24 +84,25 @@ export function BrowserRenderButton({
 			const webm = await engine.renderTimelineToVideoBlob(merged);
 			if (!webm) throw new Error("No video from renderer");
 
-			const ff = (window as unknown as { FFmpegLocal?: { convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown> } })
-				.FFmpegLocal;
+			const ff = (window as unknown as {
+				FFmpegLocal?: { convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown> };
+			}).FFmpegLocal;
 			if (!ff?.convertToMp4) {
 				throw new Error("FFmpeg not loaded");
 			}
 			const mp4result = (await ff.convertToMp4(webm, (s) => setMsg(s))) as { ok?: boolean; blob?: Blob };
 			const blob = mp4result?.ok && mp4result.blob ? mp4result.blob : webm;
-			// If FFmpeg failed we fall back to the raw WebM; name/filetype must match so the server
-			// stores it with the correct extension and players don't choke on container/ext mismatch.
 			const isMp4 = !!(mp4result?.ok && mp4result.blob);
 			const ext = isMp4 ? "mp4" : "webm";
 			const contentType = blob.type || (isMp4 ? "video/mp4" : "video/webm");
 			const fd = new FormData();
-			fd.append("experienceId", experienceId);
+			for (const [k, v] of Object.entries(context.browserRenderFields)) {
+				fd.append(k, v);
+			}
 			fd.append("template_id", templateId);
 			fd.append("file", blob, `render.${ext}`);
 			fd.append("content_type", contentType);
-			const up = await fetch("/api/whop/shotstack/browser-render", { method: "POST", body: fd, credentials: "include" });
+			const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
 			const j = (await up.json().catch(() => ({}))) as { error?: string; file_url?: string; ok?: boolean };
 			if (!up.ok) {
 				throw new Error(j.error || `Upload failed (${up.status})`);
@@ -109,8 +116,6 @@ export function BrowserRenderButton({
 		}
 	};
 
-	// Pre-detection (SSR + pre-effect) renders a disabled button so both passes
-	// produce identical markup, avoiding hydration errors.
 	if (canRun === null) {
 		return (
 			<div className={isToolbar ? "inline-flex flex-col gap-0.5" : "inline-flex flex-col items-end gap-0.5"}>

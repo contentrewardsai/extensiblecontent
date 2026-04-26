@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRenderButton } from "./browser-render-button";
+import type { ShotstackEditorContext } from "./shotstack-editor-context";
 import { SHOTSTACK_EDITOR_SCRIPT_HREFS, SHOTSTACK_EDITOR_STYLES } from "./shotstack-editor-load-order";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -60,20 +61,26 @@ function loadStyleOnce(href: string) {
 	document.head.append(l);
 }
 
+function buildUrl(base: string, path: string, query: string): string {
+	const url = `${base}${path}`;
+	if (!query) return url;
+	return url.includes("?") ? `${url}&${query}` : `${url}?${query}`;
+}
+
 const AUTOSAVE_INTERVAL_MS = 15_000;
 
 export function ShotstackEditorHost({
-	experienceId,
 	templateId,
 	templateName,
 	isBuiltin,
 	initialEdit,
+	context,
 }: {
-	experienceId: string;
 	templateId: string;
 	templateName: string;
 	isBuiltin: boolean;
 	initialEdit: Record<string, unknown>;
+	context: ShotstackEditorContext;
 }) {
 	const router = useRouter();
 	const mountRef = useRef<HTMLDivElement | null>(null);
@@ -105,7 +112,6 @@ export function ShotstackEditorHost({
 		setStatus("ready");
 	}, [initialEdit]);
 
-	// Load CSS + scripts + boot editor
 	useEffect(() => {
 		let cancelled = false;
 		(async () => {
@@ -138,14 +144,11 @@ export function ShotstackEditorHost({
 		};
 	}, [applyStubs, bootEditor]);
 
-	// Persist the supplied edit JSON back to the DB. For built-in templates this does an
-	// implicit clone first and navigates to the new template's editor URL. Returns the
-	// effective templateId that was saved (might differ from the input on implicit clone).
 	const persistEdit = useCallback(
 		async (edit: Record<string, unknown>): Promise<string | null> => {
 			if (isBuiltin) {
 				const cloneRes = await fetch(
-					`/api/whop/shotstack-templates/${templateId}/clone?experienceId=${encodeURIComponent(experienceId)}`,
+					buildUrl(context.templatesApiBase, `/${templateId}/clone`, context.templatesApiQuery),
 					{ method: "POST", credentials: "include" },
 				);
 				if (!cloneRes.ok) {
@@ -155,7 +158,7 @@ export function ShotstackEditorHost({
 				const cloned = (await cloneRes.json()) as { id?: string; name?: string };
 				if (!cloned.id) throw new Error("Clone returned no id");
 				const patchRes = await fetch(
-					`/api/whop/shotstack-templates/${cloned.id}?experienceId=${encodeURIComponent(experienceId)}`,
+					buildUrl(context.templatesApiBase, `/${cloned.id}`, context.templatesApiQuery),
 					{
 						method: "PATCH",
 						credentials: "include",
@@ -171,7 +174,7 @@ export function ShotstackEditorHost({
 			}
 
 			const patchRes = await fetch(
-				`/api/whop/shotstack-templates/${templateId}?experienceId=${encodeURIComponent(experienceId)}`,
+				buildUrl(context.templatesApiBase, `/${templateId}`, context.templatesApiQuery),
 				{
 					method: "PATCH",
 					credentials: "include",
@@ -185,7 +188,7 @@ export function ShotstackEditorHost({
 			}
 			return templateId;
 		},
-		[experienceId, isBuiltin, templateId, templateName],
+		[context, isBuiltin, templateId, templateName],
 	);
 
 	const save = useCallback(
@@ -205,8 +208,10 @@ export function ShotstackEditorHost({
 				setIsDirty(false);
 				if (!opts.silent) setSaveState("Saved.");
 				if (savedId && savedId !== templateId) {
-					// Implicit clone: navigate to the editable copy.
-					router.replace(`/experiences/${experienceId}/shotstack/editor/${savedId}`);
+					const target = `${context.editorUrlPrefix}/${savedId}${
+						context.templatesApiQuery ? `?${context.templatesApiQuery}` : ""
+					}`;
+					router.replace(target);
 				}
 			} catch (e) {
 				setSaveState(e instanceof Error ? e.message : "Save failed");
@@ -214,13 +219,9 @@ export function ShotstackEditorHost({
 				savingRef.current = false;
 			}
 		},
-		[experienceId, persistEdit, router, templateId],
+		[context, persistEdit, router, templateId],
 	);
 
-	// Subscribe to the editor's edit:changed event to drive the dirty indicator.
-	// We also start an autosave interval that fires only when there are pending
-	// changes and we're not currently saving. Autosave is disabled for built-ins
-	// to avoid accidentally spawning multiple clones per edit burst.
 	useEffect(() => {
 		if (status !== "ready") return;
 		const inst = editorRef.current;
@@ -252,7 +253,6 @@ export function ShotstackEditorHost({
 		};
 	}, [isBuiltin, save, status]);
 
-	// Warn user if they close/refresh with unsaved edits.
 	useEffect(() => {
 		const onBeforeUnload = (e: BeforeUnloadEvent) => {
 			const cur = editorRef.current;
@@ -270,7 +270,7 @@ export function ShotstackEditorHost({
 	return (
 		<div className="flex flex-col gap-4">
 			<div className="flex flex-wrap items-center gap-3">
-				<Link href={`/experiences/${experienceId}/shotstack`} className="text-3 text-gray-12 underline">
+				<Link href={context.backUrl} className="text-3 text-gray-12 underline">
 					← Back to templates
 				</Link>
 				<button
@@ -282,12 +282,12 @@ export function ShotstackEditorHost({
 					{saveLabel}
 				</button>
 				<BrowserRenderButton
-					experienceId={experienceId}
 					templateId={templateId}
 					templateName={templateName}
 					variant="toolbar"
 					getTemplateJson={() => editorRef.current?.getShotstackTemplate?.() ?? null}
 					disabled={status !== "ready"}
+					context={context}
 				/>
 				{!isBuiltin && isDirty ? <span className="text-2 text-gray-10">Unsaved changes</span> : null}
 			</div>

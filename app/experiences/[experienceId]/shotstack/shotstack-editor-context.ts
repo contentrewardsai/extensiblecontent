@@ -1,0 +1,40 @@
+/**
+ * ShotstackEditorContext decouples the editor host/browser-render UI from the
+ * auth flow of the page that mounts them. The same `ShotstackEditorHost` and
+ * `BrowserRenderButton` components are used from:
+ *
+ *   - Whop experience pages (`/experiences/.../shotstack/editor/[id]`) — auth
+ *     via Whop user token / cookie, context is an `experienceId`.
+ *   - GHL Custom Page (`/ext/shotstack/editor/[id]`) — auth via the signed
+ *     `ec_whop_user` cookie, context is `locationId` / `companyId`.
+ *
+ * We pass an explicit context object so each surface can wire its own API
+ * endpoints, form fields, and post-clone navigation URLs without branching
+ * inside the shared components.
+ */
+export interface ShotstackEditorContext {
+	/**
+	 * Full URL prefix for template CRUD. The component appends
+	 * `/${templateId}`, `/${templateId}/clone`, etc.
+	 * e.g. `/api/whop/shotstack-templates` or `/api/ghl/shotstack-templates`.
+	 */
+	templatesApiBase: string;
+	/** Query string (without leading `?`) appended to every templates API call. */
+	templatesApiQuery: string;
+	/** Full URL of the browser-render endpoint. */
+	browserRenderUrl: string;
+	/**
+	 * Extra form fields appended to each browser-render upload so the server
+	 * can re-verify the caller (e.g. `{ experienceId }` on Whop or
+	 * `{ locationId, companyId }` on GHL).
+	 */
+	browserRenderFields: Record<string, string>;
+	/**
+	 * URL prefix for the editor page itself (without trailing slash). Used to
+	 * navigate to the newly cloned template after an implicit clone-on-save.
+	 * e.g. `/experiences/${eid}/shotstack/editor` or `/ext/shotstack/editor`.
+	 */
+	editorUrlPrefix: string;
+	/** URL of the "← Back to templates" link. */
+	backUrl: string;
+}

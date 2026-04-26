@@ -28,6 +28,13 @@ const nextConfig: NextConfig = {
 			],
 		},
 		{
+			source: "/ext/shotstack/editor/:templateId",
+			headers: [
+				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+			],
+		},
+		{
 			source: "/lib/ffmpeg/:file*",
 			headers: [
 				{ key: "Cache-Control", value: "public, max-age=31536000, immutable" },

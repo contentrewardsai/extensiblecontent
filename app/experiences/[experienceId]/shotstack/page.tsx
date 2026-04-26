@@ -9,6 +9,7 @@ import {
 	updateShotstackTemplate,
 } from "../experience-actions";
 import { BrowserRenderButton } from "./browser-render-button";
+import type { ShotstackEditorContext } from "./shotstack-editor-context";
 import { ShotstackRenderForm } from "./shotstack-render-form";
 
 const ERR: Record<string, string> = {
@@ -50,6 +51,14 @@ export default async function ShotstackPage({
 	]);
 
 	const templates = templatesRes.data ?? [];
+	const editorContext: ShotstackEditorContext = {
+		templatesApiBase: "/api/whop/shotstack-templates",
+		templatesApiQuery: `experienceId=${encodeURIComponent(experienceId)}`,
+		browserRenderUrl: "/api/whop/shotstack/browser-render",
+		browserRenderFields: { experienceId },
+		editorUrlPrefix: `/experiences/${experienceId}/shotstack/editor`,
+		backUrl: `/experiences/${experienceId}/shotstack`,
+	};
 	const renders = rendersRes.data ?? [];
 	// Always read the spendable balance from the ledger (unexpired grants
 	// minus debits) instead of the cached column so this page can never lag
@@ -165,9 +174,9 @@ export default async function ShotstackPage({
 									</div>
 									<div className="flex flex-wrap items-center gap-3 shrink-0">
 										<BrowserRenderButton
-											experienceId={experienceId}
 											templateId={row.id}
 											templateName={row.name}
+											context={editorContext}
 										/>
 										{row.is_builtin ? (
 											<form action={cloneShotstackTemplate} className="inline">

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireExperienceContext } from "@/lib/experience-context";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { ShotstackEditorHost } from "../../shotstack-editor-host";
+import type { ShotstackEditorContext } from "../../shotstack-editor-context";
 
 /**
  * Open an editable template. Built-ins open read-only; saving from a built-in triggers
@@ -56,12 +57,24 @@ export default async function ShotstackEditorPage({
 				) : null}
 			</div>
 			<ShotstackEditorHost
-				experienceId={experienceId}
 				templateId={row.id}
 				templateName={row.name}
 				isBuiltin={!!row.is_builtin}
 				initialEdit={row.edit as Record<string, unknown>}
+				context={buildWhopEditorContext(experienceId)}
 			/>
 		</div>
 	);
+}
+
+function buildWhopEditorContext(experienceId: string): ShotstackEditorContext {
+	const query = `experienceId=${encodeURIComponent(experienceId)}`;
+	return {
+		templatesApiBase: "/api/whop/shotstack-templates",
+		templatesApiQuery: query,
+		browserRenderUrl: "/api/whop/shotstack/browser-render",
+		browserRenderFields: { experienceId },
+		editorUrlPrefix: `/experiences/${experienceId}/shotstack/editor`,
+		backUrl: `/experiences/${experienceId}/shotstack`,
+	};
 }
