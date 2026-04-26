@@ -75,37 +75,45 @@ export async function GET(request: NextRequest) {
 	const userId = directUserId;
 
 	// If companyId or locationId was also provided, verify this user actually
-	// has access via the join table. This prevents someone from loading
-	// another user's data by passing an arbitrary userId.
+	// has access via the join table. Collect every connection_id that matches
+	// the given GHL context (historical data may have split teammates across
+	// multiple rows) and check for access against any of them.
 	if (companyId || locationId) {
-		let connectionId: string | null = null;
+		const connectionIds = new Set<string>();
 
 		if (companyId) {
-			const { data: conn } = await supabase
+			const { data: byCompany } = await supabase
 				.from("ghl_connections")
 				.select("id")
-				.eq("company_id", companyId)
-				.maybeSingle();
-			connectionId = conn?.id ?? null;
-		} else if (locationId) {
-			const { data: loc } = await supabase
-				.from("ghl_locations")
-				.select("connection_id, location_name")
-				.eq("location_id", locationId)
-				.maybeSingle();
-			connectionId = loc?.connection_id ?? null;
-			locationName = loc?.location_name ?? null;
+				.eq("company_id", companyId);
+			for (const c of byCompany ?? []) connectionIds.add(c.id);
 		}
 
-		if (connectionId) {
+		if (locationId) {
+			const { data: byLocation } = await supabase
+				.from("ghl_locations")
+				.select("connection_id, location_name")
+				.eq("location_id", locationId);
+			for (const l of byLocation ?? []) {
+				if (l.connection_id) connectionIds.add(l.connection_id);
+				if (l.location_name) locationName = l.location_name;
+			}
+			const { data: bySynthetic } = await supabase
+				.from("ghl_connections")
+				.select("id")
+				.eq("company_id", `loc:${locationId}`);
+			for (const c of bySynthetic ?? []) connectionIds.add(c.id);
+		}
+
+		if (connectionIds.size > 0) {
 			const { data: access } = await supabase
 				.from("ghl_connection_users")
 				.select("id")
-				.eq("connection_id", connectionId)
+				.in("connection_id", Array.from(connectionIds))
 				.eq("user_id", userId)
-				.maybeSingle();
+				.limit(1);
 
-			if (!access) {
+			if (!access || access.length === 0) {
 				return Response.json({
 					whopLinked: false,
 					hasAnyLink: true,

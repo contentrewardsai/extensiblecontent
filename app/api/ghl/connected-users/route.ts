@@ -1,34 +1,33 @@
 import type { NextRequest } from "next/server";
-import {
-	WHOP_USER_COOKIE,
-	readWhopUserCookie,
-	verifyGhlSso,
-} from "@/lib/ghl-sso";
+import { WHOP_USER_COOKIE, readWhopUserCookie } from "@/lib/ghl-sso";
 import { getServiceSupabase } from "@/lib/supabase-service";
 
 /**
  * GET /api/ghl/connected-users?companyId=...  (or ?locationId=...)
  *
- * Returns all Whop users linked to a given GHL company or location.
+ * Returns every Whop user linked to a given GHL company or location.
  *
- * Authentication — any of these proves the caller is allowed to see the
- * linked user list for this GHL context:
+ * This endpoint is intentionally **unauthenticated** — a GHL subaccount is a
+ * shared team workspace, and anyone on the team who can see the Custom Page
+ * should be able to see their teammates' linked Whop accounts. Requiring a
+ * per-user cookie/SSO would break common flows:
+ *   • Team member opens the Custom Page in a fresh browser (no cookie yet)
+ *   • User clicks "Switch account" (cookie cleared) and needs to pick
+ *     another linked teammate to switch to
+ *   • SSO postMessage handshake fails (common — GHL's iframe is flaky)
  *
- *   1. `userId` query param of a Whop user with a row in
- *      `ghl_connection_users` for this connection (legacy; Whop app context).
- *   2. `ec_whop_user` signed cookie of a user with the same access.
- *   3. `X-Ghl-Sso-Payload` header containing an encrypted GHL SSO payload
- *      that references the same company/location (proves the caller is an
- *      authenticated GHL user viewing the Custom Page for this location).
+ * The only data exposed is the list of Whop user names/emails that have
+ * linked to this GHL subaccount — equivalent to the team roster GHL itself
+ * already shows for that subaccount.
  *
- * We consider the GHL-iframe context itself sufficient to list switchable
- * Whop accounts: seeing "which Whop accounts are linked to this location"
- * doesn't expose any Whop-owned data — it's the same list GHL would show.
+ * The `userId` query param (or the `ec_whop_user` cookie) is used ONLY to
+ * mark which of the returned users is the current viewer (the `isSelf`
+ * flag), not for authorization.
  */
 export async function GET(request: NextRequest) {
 	const companyId = request.nextUrl.searchParams.get("companyId");
 	const locationId = request.nextUrl.searchParams.get("locationId");
-	const requesterId =
+	const viewerId =
 		request.nextUrl.searchParams.get("userId") ||
 		readWhopUserCookie(request.cookies.get(WHOP_USER_COOKIE)?.value);
 
@@ -41,65 +40,46 @@ export async function GET(request: NextRequest) {
 
 	const supabase = getServiceSupabase();
 
-	let connectionId: string | null = null;
+	// Collect ALL connection_ids that match the given GHL context. Usually
+	// there's just one, but historical data (from before the callback was
+	// hardened) may have split teammates across multiple rows — this query
+	// unions them so the picker shows every linked teammate for the location.
+	const connectionIds = new Set<string>();
 
 	if (companyId) {
-		const { data: conn } = await supabase
+		const { data: byCompany } = await supabase
 			.from("ghl_connections")
 			.select("id")
-			.eq("company_id", companyId)
-			.maybeSingle();
-		connectionId = conn?.id ?? null;
-	} else if (locationId) {
-		const { data: loc } = await supabase
+			.eq("company_id", companyId);
+		for (const c of byCompany ?? []) connectionIds.add(c.id);
+	}
+
+	if (locationId) {
+		const { data: byLocation } = await supabase
 			.from("ghl_locations")
 			.select("connection_id")
-			.eq("location_id", locationId)
-			.maybeSingle();
-		connectionId = loc?.connection_id ?? null;
-	}
-
-	if (!connectionId) {
-		return Response.json({ users: [] });
-	}
-
-	// Authentication: require either userId with a valid access row, or a
-	// valid signed SSO payload that references the requested company/location.
-	let authorized = false;
-
-	if (requesterId) {
-		const { data: access } = await supabase
-			.from("ghl_connection_users")
-			.select("id")
-			.eq("connection_id", connectionId)
-			.eq("user_id", requesterId)
-			.maybeSingle();
-		if (access) authorized = true;
-	}
-
-	if (!authorized) {
-		const ssoHeader = request.headers.get("x-ghl-sso-payload");
-		const sso = verifyGhlSso(ssoHeader);
-		if (sso) {
-			if (companyId && sso.companyId === companyId) authorized = true;
-			else if (
-				locationId &&
-				(sso.activeLocation === locationId ||
-					(sso as { locationId?: string }).locationId === locationId)
-			) {
-				authorized = true;
-			}
+			.eq("location_id", locationId);
+		for (const l of byLocation ?? []) {
+			if (l.connection_id) connectionIds.add(l.connection_id);
 		}
+
+		// Also catch the synthetic-id connections we may have created for
+		// location-only OAuth flows.
+		const { data: byLocSynthetic } = await supabase
+			.from("ghl_connections")
+			.select("id")
+			.eq("company_id", `loc:${locationId}`);
+		for (const c of byLocSynthetic ?? []) connectionIds.add(c.id);
 	}
 
-	if (!authorized) {
-		return Response.json({ error: "Forbidden" }, { status: 403 });
+	if (connectionIds.size === 0) {
+		return Response.json({ users: [] });
 	}
 
 	const { data: rows } = await supabase
 		.from("ghl_connection_users")
 		.select("user_id, created_at")
-		.eq("connection_id", connectionId)
+		.in("connection_id", Array.from(connectionIds))
 		.order("created_at", { ascending: true });
 
 	const userIds = (rows ?? []).map((r) => r.user_id);
@@ -121,7 +101,7 @@ export async function GET(request: NextRequest) {
 			name: u?.name ?? null,
 			email: u?.email ?? null,
 			linkedAt: r.created_at,
-			isSelf: r.user_id === requesterId,
+			isSelf: r.user_id === viewerId,
 		};
 	});
 

@@ -3,21 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-const KNOWN_USERS_STORAGE_KEY = "ec_known_whop_users";
-
 interface ConnectedUser {
 	userId: string;
 	name: string | null;
 	email: string | null;
 	linkedAt: string;
 	isSelf: boolean;
-}
-
-interface KnownUser {
-	userId: string;
-	name: string | null;
-	email: string | null;
-	lastUsed: string;
 }
 
 interface ScheduledPost {
@@ -33,51 +24,6 @@ interface ScheduledPost {
 	ghl_post_id: string | null;
 	source: string | null;
 	created_at: string;
-}
-
-function readKnownUsers(): KnownUser[] {
-	if (typeof localStorage === "undefined") return [];
-	try {
-		const raw = localStorage.getItem(KNOWN_USERS_STORAGE_KEY);
-		if (!raw) return [];
-		const arr = JSON.parse(raw);
-		return Array.isArray(arr) ? (arr as KnownUser[]) : [];
-	} catch {
-		return [];
-	}
-}
-
-function rememberUser(u: {
-	userId: string;
-	name?: string | null;
-	email?: string | null;
-}) {
-	if (typeof localStorage === "undefined") return;
-	const existing = readKnownUsers().filter((x) => x.userId !== u.userId);
-	const updated: KnownUser[] = [
-		{
-			userId: u.userId,
-			name: u.name ?? null,
-			email: u.email ?? null,
-			lastUsed: new Date().toISOString(),
-		},
-		...existing,
-	].slice(0, 8);
-	try {
-		localStorage.setItem(KNOWN_USERS_STORAGE_KEY, JSON.stringify(updated));
-	} catch {
-		/* quota, ignore */
-	}
-}
-
-function forgetUser(userId: string) {
-	if (typeof localStorage === "undefined") return;
-	const updated = readKnownUsers().filter((x) => x.userId !== userId);
-	try {
-		localStorage.setItem(KNOWN_USERS_STORAGE_KEY, JSON.stringify(updated));
-	} catch {
-		/* ignore */
-	}
 }
 
 interface PageContext {
@@ -245,10 +191,6 @@ export default function GhlSettingsPage() {
 	// persists across tabs, reloads, and iframe re-embeds.
 	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-	// Per-browser "known users" cache, for fast switching between accounts
-	// already OAuthed in this browser without hitting the backend first.
-	const [knownUsers, setKnownUsers] = useState<KnownUser[]>([]);
-
 	// Scheduled posts for the current location + active Whop user.
 	const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
 	const [scheduledLoading, setScheduledLoading] = useState(false);
@@ -259,10 +201,6 @@ export default function GhlSettingsPage() {
 	// Custom Page URL is misconfigured (no URL params + no SSO handshake).
 	const hasAnyContext =
 		!!ghlLocationId || !!ghlCompanyId || !!ghlSsoPayload || !!currentUserId;
-
-	useEffect(() => {
-		setKnownUsers(readKnownUsers());
-	}, []);
 
 	// Run SSO handshake in the background (non-blocking). If GHL responds,
 	// we upgrade ghlCompanyId/ghlLocationId + capture the encrypted payload.
@@ -386,14 +324,7 @@ export default function GhlSettingsPage() {
 					const data = (await res.json()) as {
 						user?: { userId: string; name: string | null; email: string | null };
 					};
-					if (data.user?.userId) {
-						cookieUserId = data.user.userId;
-						rememberUser({
-							userId: data.user.userId,
-							name: data.user.name,
-							email: data.user.email,
-						});
-					}
+					if (data.user?.userId) cookieUserId = data.user.userId;
 				}
 			} catch {
 				/* ignore */
@@ -421,17 +352,7 @@ export default function GhlSettingsPage() {
 
 				if (data.whopLinked) {
 					setCtx(data);
-					if (cookieUserId) {
-						setCurrentUserId(cookieUserId);
-						if (data.user) {
-							rememberUser({
-								userId: cookieUserId,
-								name: data.user.name,
-								email: data.user.email,
-							});
-							setKnownUsers(readKnownUsers());
-						}
-					}
+					if (cookieUserId) setCurrentUserId(cookieUserId);
 					setLoading(false);
 					return;
 				}
@@ -479,14 +400,6 @@ export default function GhlSettingsPage() {
 				.then((data) => {
 					setCtx(data);
 					setLoading(false);
-					if (data.user) {
-						rememberUser({
-							userId: newUserId,
-							name: data.user.name,
-							email: data.user.email,
-						});
-						setKnownUsers(readKnownUsers());
-					}
 				})
 				.catch((err) => {
 					setFetchError(
@@ -530,26 +443,31 @@ export default function GhlSettingsPage() {
 					...(ghlLocationId ? { locationId: ghlLocationId } : {}),
 				});
 				if (!data.whopLinked) {
-					forgetUser(userId);
-					setKnownUsers(readKnownUsers());
 					setFetchError(
 						"That account no longer has access to this GoHighLevel location.",
 					);
 					setLoading(false);
 					return;
 				}
+				// Set the active-user cookie on the backend so subsequent
+				// requests (and reloads) know who the viewer is.
+				try {
+					await fetch("/api/ghl/set-active-user", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							userId,
+							...(ghlLocationId ? { locationId: ghlLocationId } : {}),
+							...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
+						}),
+					});
+				} catch {
+					/* best-effort */
+				}
 				setCurrentUserId(userId);
 				setCtx(data);
 				setNeedsLink(false);
 				setLoading(false);
-				if (data.user) {
-					rememberUser({
-						userId,
-						name: data.user.name,
-						email: data.user.email,
-					});
-					setKnownUsers(readKnownUsers());
-				}
 			} catch (err) {
 				setFetchError(
 					err instanceof Error ? err.message : "Failed to switch account",
@@ -560,13 +478,10 @@ export default function GhlSettingsPage() {
 		[ghlCompanyId, ghlLocationId, loadPageContext],
 	);
 
-	const handleForgetUser = (userId: string) => {
-		forgetUser(userId);
-		setKnownUsers(readKnownUsers());
-	};
-
-	// Load Whop users linked to this GHL company/location. We fetch when we
-	// have any identifier — server checks access via cookie/SSO/userId.
+	// Load all Whop users linked to this GHL location (or company). The
+	// endpoint is unauthenticated — the list of linked teammates is shared
+	// data for the GHL subaccount — so we fetch as soon as we have any
+	// GHL identifier, regardless of whether a Whop user is signed in here.
 	useEffect(() => {
 		if (!ghlCompanyId && !ghlLocationId) return;
 
@@ -575,11 +490,8 @@ export default function GhlSettingsPage() {
 		if (ghlCompanyId) qs.set("companyId", ghlCompanyId);
 		else if (ghlLocationId) qs.set("locationId", ghlLocationId);
 
-		const headers: Record<string, string> = {};
-		if (ghlSsoPayload) headers["x-ghl-sso-payload"] = ghlSsoPayload;
-
 		let cancelled = false;
-		fetch(`/api/ghl/connected-users?${qs.toString()}`, { headers })
+		fetch(`/api/ghl/connected-users?${qs.toString()}`)
 			.then(async (res) => {
 				if (!res.ok) return;
 				const data = (await res.json()) as { users?: ConnectedUser[] };
@@ -591,7 +503,7 @@ export default function GhlSettingsPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [currentUserId, ghlCompanyId, ghlLocationId, ghlSsoPayload]);
+	}, [currentUserId, ghlCompanyId, ghlLocationId]);
 
 	const handleWhopOAuth = useCallback(() => {
 		if (!ghlLocationId && !ghlCompanyId && !ghlSsoPayload) {
@@ -653,14 +565,6 @@ export default function GhlSettingsPage() {
 			setCurrentUserId(uid);
 			setNeedsLink(false);
 			setShowKeyForm(false);
-			if (data.user) {
-				rememberUser({
-					userId: uid,
-					name: data.user.name,
-					email: data.user.email,
-				});
-				setKnownUsers(readKnownUsers());
-			}
 		} catch (err) {
 			setKeyError(err instanceof Error ? err.message : "Link failed");
 		} finally {
@@ -679,30 +583,11 @@ export default function GhlSettingsPage() {
 	}
 
 	if (needsLink) {
-		// Merge per-browser Known Users and backend-linked Connected Users.
-		const knownIds = new Set(knownUsers.map((u) => u.userId));
-		const pickerUsers: Array<{
-			userId: string;
-			name: string | null;
-			email: string | null;
-			source: "known" | "connected";
-		}> = [
-			...knownUsers.map((u) => ({
-				userId: u.userId,
-				name: u.name,
-				email: u.email,
-				source: "known" as const,
-			})),
-			...connectedUsers
-				.filter((u) => !knownIds.has(u.userId))
-				.map((u) => ({
-					userId: u.userId,
-					name: u.name,
-					email: u.email,
-					source: "connected" as const,
-				})),
-		];
-
+		// Picker shows every Whop account linked to this GHL location, sourced
+		// from the backend (ghl_connection_users). This is shared team data —
+		// any teammate viewing the Custom Page can pick any of their linked
+		// accounts without having OAuthed in *this* browser.
+		const pickerUsers = connectedUsers;
 		const canLink = !!ghlLocationId || !!ghlCompanyId || !!ghlSsoPayload;
 
 		return (
@@ -767,8 +652,9 @@ export default function GhlSettingsPage() {
 					{pickerUsers.length > 0 && (
 						<>
 							<p style={{ ...styles.muted, marginBottom: 8 }}>
-								Continue as an account linked to this{" "}
-								{ghlCompanyId ? "company" : "location"}:
+								Whop accounts linked to this{" "}
+								{ghlCompanyId ? "company" : "location"}. Click to continue
+								as any of them:
 							</p>
 							<div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
 								{pickerUsers.map((u) => (
@@ -784,26 +670,12 @@ export default function GhlSettingsPage() {
 											<div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
 												<p style={{ ...styles.body, fontWeight: 500 }}>
 													{u.name || u.email || u.userId}
-													{u.source === "connected" && (
-														<span style={styles.youBadge}>linked</span>
-													)}
 												</p>
 												{u.name && u.email && (
 													<p style={styles.muted}>{u.email}</p>
 												)}
 											</div>
 										</button>
-										{u.source === "known" && (
-											<button
-												type="button"
-												onClick={() => handleForgetUser(u.userId)}
-												style={styles.forgetBtn}
-												title="Forget this account"
-												aria-label="Forget this account"
-											>
-												×
-											</button>
-										)}
 									</div>
 								))}
 							</div>

@@ -123,26 +123,47 @@ export async function GET(request: NextRequest) {
 	const supabase = getServiceSupabase();
 	const now = new Date().toISOString();
 
-	const connectionIds: string[] = [];
+	// Resolve / create the single ghl_connections row that represents this
+	// GHL workspace. Shared across all team members — the (company_id) unique
+	// index guarantees one row per GHL company.
+	//
+	// Lookup order:
+	//   1. If companyId is known, find/create by company_id.
+	//   2. Otherwise, if locationId is known, reuse the connection referenced
+	//      by the existing ghl_locations row (this is how teammates converge
+	//      when GHL doesn't substitute {{company.id}} in the Custom Page URL).
+	//   3. Fall back to a synthetic company_id derived from the location so a
+	//      brand-new location still gets exactly one row.
+	const effectiveCompanyId = companyId ?? `loc:${locationId ?? "unknown"}`;
 
-	if (companyId) {
-		// Upsert a placeholder connection row if none exists. The SSO-verified
-		// companyId makes this safe — only a real GHL user of that company
-		// could have produced the signed state that got us here.
+	let connectionId: string | null = null;
+
+	// 2. Reuse whatever connection is already wired up to this location.
+	if (!companyId && locationId) {
+		const { data: loc } = await supabase
+			.from("ghl_locations")
+			.select("connection_id")
+			.eq("location_id", locationId)
+			.maybeSingle();
+		if (loc?.connection_id) connectionId = loc.connection_id;
+	}
+
+	// 1 / 3. Look up or create by (effective) company id.
+	if (!connectionId) {
 		const { data: existing } = await supabase
 			.from("ghl_connections")
-			.select("id, user_id")
-			.eq("company_id", companyId)
+			.select("id")
+			.eq("company_id", effectiveCompanyId)
 			.maybeSingle();
 
-		let connectionId: string | null = existing?.id ?? null;
-
-		if (!connectionId) {
+		if (existing?.id) {
+			connectionId = existing.id;
+		} else {
 			const { data: inserted, error: insertErr } = await supabase
 				.from("ghl_connections")
 				.insert({
-					company_id: companyId,
-					user_type: "Company",
+					company_id: effectiveCompanyId,
+					user_type: companyId ? "Company" : "Location",
 					access_token: "pending-link",
 					refresh_token: "pending-link",
 					token_expires_at: new Date(0).toISOString(),
@@ -155,81 +176,54 @@ export async function GET(request: NextRequest) {
 				const { data: retry } = await supabase
 					.from("ghl_connections")
 					.select("id")
-					.eq("company_id", companyId)
+					.eq("company_id", effectiveCompanyId)
 					.maybeSingle();
 				connectionId = retry?.id ?? null;
 			} else {
 				connectionId = inserted.id;
 			}
-		} else if (!existing?.user_id) {
-			await supabase
-				.from("ghl_connections")
-				.update({ user_id: userId, updated_at: now })
-				.eq("id", connectionId);
 		}
+	}
 
-		if (connectionId) connectionIds.push(connectionId);
+	if (!connectionId) {
+		console.error(
+			"[ghl-connect-whop] Failed to resolve connection for",
+			{ companyId, locationId, effectiveCompanyId },
+		);
+		return closePopup({ error: "link_failed" });
+	}
 
-		// Also create a pending location row if we have a locationId and no
-		// existing row — lets the Social Planner / media UI have something
-		// to hang off of before full install.
-		if (connectionId && locationId) {
-			const { data: loc } = await supabase
-				.from("ghl_locations")
-				.select("id")
-				.eq("connection_id", connectionId)
-				.eq("location_id", locationId)
-				.maybeSingle();
-			if (!loc) {
-				await supabase.from("ghl_locations").insert({
-					connection_id: connectionId,
-					location_id: locationId,
-					access_token: "pending-link",
-					refresh_token: "pending-link",
-					token_expires_at: new Date(0).toISOString(),
-					is_active: true,
-				});
-			}
-		}
-	} else if (locationId) {
-		// Location-level custom page without companyId: derive connection from
-		// the existing ghl_locations row if any.
+	// Ensure a ghl_locations row exists too (if we have a locationId). Every
+	// teammate's OAuth will converge on this row via (connection_id, location_id).
+	if (locationId) {
 		const { data: loc } = await supabase
 			.from("ghl_locations")
-			.select("connection_id")
+			.select("id")
+			.eq("connection_id", connectionId)
 			.eq("location_id", locationId)
 			.maybeSingle();
-		if (loc?.connection_id) connectionIds.push(loc.connection_id);
-	} else {
-		// No SSO context at all. Link to orphan connections (legacy path).
-		const { data: orphan } = await supabase
-			.from("ghl_connections")
-			.select("id")
-			.is("user_id", null);
-		if (orphan?.length) {
-			connectionIds.push(...orphan.map((c) => c.id));
-			await supabase
-				.from("ghl_connections")
-				.update({ user_id: userId, updated_at: now })
-				.in(
-					"id",
-					orphan.map((c) => c.id),
-				);
+		if (!loc) {
+			await supabase.from("ghl_locations").insert({
+				connection_id: connectionId,
+				location_id: locationId,
+				access_token: "pending-link",
+				refresh_token: "pending-link",
+				token_expires_at: new Date(0).toISOString(),
+				is_active: true,
+			});
 		}
 	}
 
-	if (connectionIds.length > 0) {
-		const rows = connectionIds.map((connection_id) => ({
-			connection_id,
-			user_id: userId,
-		}));
-		await supabase
-			.from("ghl_connection_users")
-			.upsert(rows, { onConflict: "connection_id,user_id" });
-	}
+	// Always record team membership in the join table.
+	await supabase
+		.from("ghl_connection_users")
+		.upsert(
+			{ connection_id: connectionId, user_id: userId },
+			{ onConflict: "connection_id,user_id" },
+		);
 
 	console.log(
-		`[ghl-connect-whop] Linked userId=${userId} to connections=[${connectionIds.join(",")}] (companyId=${companyId ?? "?"} locationId=${locationId ?? "?"})`,
+		`[ghl-connect-whop] Linked userId=${userId} to connection=${connectionId} (companyId=${companyId ?? "?"} locationId=${locationId ?? "?"} effectiveCompanyId=${effectiveCompanyId})`,
 	);
 
 	return closePopup(
