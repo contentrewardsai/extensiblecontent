@@ -194,6 +194,16 @@ export default function GhlSettingsPage() {
 					? sessionStorage.getItem(WHOP_USER_STORAGE_KEY)
 					: null;
 
+			// If we have no context at all (SSO failed AND no cached user), skip
+			// the API call entirely -- it would 400. Show the link prompt.
+			if (!companyId && !locationId && !cachedUserId) {
+				if (!cancelled) {
+					setNeedsLink(true);
+					setLoading(false);
+				}
+				return;
+			}
+
 			try {
 				const data = await loadPageContext({
 					companyId: companyId ?? undefined,
@@ -246,6 +256,13 @@ export default function GhlSettingsPage() {
 				}
 				if (newUserId) setCurrentUserId(newUserId);
 				setNeedsLink(false);
+
+				// Need at least one identifier for page-context to work.
+				if (!ghlCompanyId && !ghlLocationId && !newUserId) {
+					setFetchError("Linked, but no context returned. Please reload.");
+					return;
+				}
+
 				setLoading(true);
 				const params: Record<string, string> = {};
 				if (ghlCompanyId) params.companyId = ghlCompanyId;
@@ -279,9 +296,14 @@ export default function GhlSettingsPage() {
 		setNeedsLink(true);
 	};
 
-	// Load the list of all Whop users connected to this GHL company/location
+	// Load the list of all Whop users connected to this GHL company/location.
+	// Requires SSO context (companyId or locationId) so we can scope the list.
 	useEffect(() => {
-		if (!ctx?.whopLinked || !currentUserId) {
+		if (
+			!ctx?.whopLinked ||
+			!currentUserId ||
+			(!ghlCompanyId && !ghlLocationId)
+		) {
 			setConnectedUsers([]);
 			return;
 		}
