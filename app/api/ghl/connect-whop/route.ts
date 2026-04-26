@@ -10,13 +10,6 @@ export async function GET(request: NextRequest) {
 	const companyId = request.nextUrl.searchParams.get("companyId");
 	const locationId = request.nextUrl.searchParams.get("locationId");
 
-	if (!companyId && !locationId) {
-		return Response.json(
-			{ error: "companyId or locationId is required" },
-			{ status: 400 },
-		);
-	}
-
 	const whopAppId = process.env.NEXT_PUBLIC_WHOP_APP_ID;
 	if (!whopAppId) {
 		return Response.json({ error: "OAuth not configured" }, { status: 500 });

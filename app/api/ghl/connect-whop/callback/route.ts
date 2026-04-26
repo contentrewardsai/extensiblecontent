@@ -83,15 +83,14 @@ export async function GET(request: NextRequest) {
 	const supabase = getServiceSupabase();
 	const now = new Date().toISOString();
 
-	// Link the GHL company to this Whop user
 	if (companyId) {
+		// Link this specific GHL company to the Whop user
 		await supabase
 			.from("ghl_connections")
 			.update({ user_id: userId, updated_at: now })
 			.eq("company_id", companyId)
 			.is("user_id", null);
 
-		// Also update child locations for this company
 		const { data: conn } = await supabase
 			.from("ghl_connections")
 			.select("id")
@@ -105,9 +104,29 @@ export async function GET(request: NextRequest) {
 				.eq("connection_id", conn.id)
 				.is("user_id", null);
 		}
+	} else {
+		// No specific company — link ALL unlinked GHL connections to this user.
+		// This handles the case where SSO didn't provide a companyId.
+		const { data: unlinked } = await supabase
+			.from("ghl_connections")
+			.select("id")
+			.is("user_id", null);
+
+		if (unlinked?.length) {
+			const ids = unlinked.map((c) => c.id);
+			await supabase
+				.from("ghl_connections")
+				.update({ user_id: userId, updated_at: now })
+				.in("id", ids);
+
+			await supabase
+				.from("ghl_locations")
+				.update({ user_id: userId, updated_at: now })
+				.in("connection_id", ids)
+				.is("user_id", null);
+		}
 	}
 
-	// Also link specific location if provided
 	if (locationId) {
 		await supabase
 			.from("ghl_locations")
@@ -117,7 +136,7 @@ export async function GET(request: NextRequest) {
 	}
 
 	console.log(
-		`[ghl-connect-whop] Linked companyId=${companyId ?? "?"} locationId=${locationId ?? "?"} to userId=${userId}`,
+		`[ghl-connect-whop] Linked companyId=${companyId ?? "all-unlinked"} locationId=${locationId ?? "?"} to userId=${userId}`,
 	);
 
 	return closePopup({ success: true });
