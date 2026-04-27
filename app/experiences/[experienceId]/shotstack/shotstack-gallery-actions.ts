@@ -15,11 +15,14 @@ function buildUrl(cfg: TemplateActionsConfig, path: string): string {
 	return url.includes("?") ? `${url}&${cfg.templatesApiQuery}` : `${url}?${cfg.templatesApiQuery}`;
 }
 
-export async function cloneTemplateViaApi(cfg: TemplateActionsConfig, id: string): Promise<{ id: string } | null> {
+export async function cloneTemplateViaApi(cfg: TemplateActionsConfig, id: string): Promise<{ id: string }> {
 	const res = await fetch(buildUrl(cfg, `/${id}/clone`), { method: "POST", credentials: "include" });
-	if (!res.ok) return null;
+	if (!res.ok) {
+		const j = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(j.error || `Clone failed (${res.status})`);
+	}
 	const body = (await res.json().catch(() => null)) as { id?: string } | null;
-	if (!body?.id) return null;
+	if (!body?.id) throw new Error("Clone succeeded but server returned no id");
 	return { id: body.id };
 }
 
@@ -34,15 +37,18 @@ export async function deleteTemplateViaApi(cfg: TemplateActionsConfig, id: strin
 export async function createBlankTemplateViaApi(
 	cfg: TemplateActionsConfig,
 	name = "Untitled template",
-): Promise<{ id: string } | null> {
+): Promise<{ id: string }> {
 	const res = await fetch(buildUrl(cfg, ""), {
 		method: "POST",
 		credentials: "include",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name, edit: { timeline: { tracks: [] }, output: { format: "mp4" } } }),
 	});
-	if (!res.ok) return null;
+	if (!res.ok) {
+		const j = (await res.json().catch(() => ({}))) as { error?: string };
+		throw new Error(j.error || `Create failed (${res.status})`);
+	}
 	const body = (await res.json().catch(() => null)) as { id?: string } | null;
-	if (!body?.id) return null;
+	if (!body?.id) throw new Error("Create succeeded but server returned no id");
 	return { id: body.id };
 }

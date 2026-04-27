@@ -54,12 +54,12 @@ export function ShotstackTemplateGallery({
 	templates: GalleryTemplate[];
 	/** URL to open in the visual editor for a given template id. */
 	editorHrefFor: (id: string) => string;
-	/** Async clone of a built-in or user-owned template → returns new template id. */
-	onClone: (id: string) => Promise<{ id: string } | null>;
+	/** Async clone of a built-in or user-owned template → returns new template id. Throws on failure. */
+	onClone: (id: string) => Promise<{ id: string }>;
 	/** Async delete of a user-owned template. Called only for non-built-ins. */
 	onDelete?: (id: string) => Promise<void>;
 	/** If set, renders a "New from scratch" tile that calls this handler. */
-	onCreateBlank?: () => Promise<{ id: string } | null>;
+	onCreateBlank?: () => Promise<{ id: string }>;
 }) {
 	const [filter, setFilter] = useState<Filter>("all");
 	const [selected, setSelected] = useState<GalleryTemplate | null>(null);
@@ -91,10 +91,6 @@ export function ShotstackTemplateGallery({
 			setActionState("Cloning…");
 			try {
 				const res = await onClone(t.id);
-				if (!res) {
-					setActionState("Clone failed.");
-					return;
-				}
 				window.location.href = editorHrefFor(res.id);
 			} catch (e) {
 				setActionState(e instanceof Error ? e.message : "Clone failed.");
@@ -108,10 +104,6 @@ export function ShotstackTemplateGallery({
 			setActionState("Creating…");
 			try {
 				const res = await onCreateBlank();
-				if (!res) {
-					setActionState("Could not create template.");
-					return;
-				}
 				window.location.href = editorHrefFor(res.id);
 			} catch (e) {
 				setActionState(e instanceof Error ? e.message : "Could not create template.");
@@ -135,6 +127,9 @@ export function ShotstackTemplateGallery({
 
 	return (
 		<div className="flex flex-col gap-4">
+			{actionState && !selected ? (
+				<p className="text-3 text-red-11 border border-red-a6 rounded-md px-3 py-2 bg-red-a2">{actionState}</p>
+			) : null}
 			<div className="flex flex-wrap items-center gap-2">
 				<div className="inline-flex items-center gap-1 border border-gray-a4 rounded-md p-0.5 bg-gray-a1">
 					<TabButton active={filter === "all"} onClick={() => setFilter("all")}>

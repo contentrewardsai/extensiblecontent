@@ -3,8 +3,8 @@
 	"version": "0.2.0",
 	"private": true,
 	"scripts": {
-		"dev": "whop-proxy --command 'next dev --turbopack'",
-		"build": "next build",
+		"dev": "node scripts/sync-extension-assets.mjs && whop-proxy --command 'next dev --turbopack'",
+		"build": "node scripts/sync-extension-assets.mjs && next build",
 		"start": "next start",
 		"lint": "biome lint",
 		"test:unit": "node test/unit-tests.js && tsx test/knowledge-domain.test.ts && tsx test/extension-sidebar.test.ts && tsx test/sidebar-heartbeat.test.ts && tsx test/sidebar-lookup-parse.test.ts && tsx test/sidebar-project.test.ts && tsx test/sidebar-list-query.test.ts && tsx test/postgres-errors.test.ts && tsx test/workflow-hostname-match.test.ts && tsx test/following-wallets.test.ts && tsx test/storage-object-resolve.test.ts && tsx test/project-access.test.ts && tsx test/project-quota.test.ts && tsx test/project-audit.test.ts && tsx test/shotstack-expiry.test.ts && tsx test/shotstack-template-roundtrip.test.ts && tsx test/promotion-plan.test.ts && tsx --test test/plan-tiers.test.ts",
