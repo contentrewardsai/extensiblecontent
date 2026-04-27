@@ -1138,7 +1138,30 @@ export default function GhlSettingsPage() {
 
 						{ctx.templates && ctx.templates.length > 0 && (
 							<>
-								<h3 style={styles.subTitle}>Templates</h3>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "baseline",
+										justifyContent: "space-between",
+										gap: 8,
+										marginTop: 16,
+										marginBottom: 8,
+										flexWrap: "wrap",
+									}}
+								>
+									<h3 style={{ ...styles.subTitle, margin: 0 }}>Templates</h3>
+									<a
+										href={(() => {
+											const qs = new URLSearchParams();
+											if (ghlLocationId) qs.set("location_id", ghlLocationId);
+											if (ghlCompanyId) qs.set("company_id", ghlCompanyId);
+											return `/ext/shotstack${qs.toString() ? `?${qs.toString()}` : ""}`;
+										})()}
+										style={{ ...styles.link, fontWeight: 500 }}
+									>
+										Open template gallery →
+									</a>
+								</div>
 								<div style={styles.tableWrap}>
 									<table style={styles.table}>
 										<thead>

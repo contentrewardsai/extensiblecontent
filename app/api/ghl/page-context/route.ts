@@ -144,7 +144,9 @@ export async function GET(request: NextRequest) {
 				.limit(50),
 			supabase
 				.from("shotstack_templates")
-				.select("id, name, default_env, is_builtin, source_path, created_at, updated_at")
+				.select(
+					"id, name, default_env, is_builtin, source_path, thumbnail_url, thumbnail_updated_at, created_at, updated_at",
+				)
 				.or(`user_id.eq.${userId},is_builtin.eq.true`)
 				.order("is_builtin", { ascending: true })
 				.order("updated_at", { ascending: false }),

@@ -2,15 +2,10 @@ import Link from "next/link";
 import { requireExperienceContext } from "@/lib/experience-context";
 import { getSpendableCredits } from "@/lib/shotstack-ledger";
 import { getServiceSupabase } from "@/lib/supabase-service";
-import {
-	cloneShotstackTemplate,
-	createShotstackTemplate,
-	deleteShotstackTemplate,
-	updateShotstackTemplate,
-} from "../experience-actions";
-import { BrowserRenderButton } from "./browser-render-button";
-import type { ShotstackEditorContext } from "./shotstack-editor-context";
+import { createShotstackTemplate } from "../experience-actions";
 import { ShotstackRenderForm } from "./shotstack-render-form";
+import { ShotstackTemplateGalleryClient } from "./shotstack-template-gallery-client";
+import type { GalleryTemplate } from "./shotstack-template-gallery";
 
 const ERR: Record<string, string> = {
 	bad_json: "Edit must be valid JSON object.",
@@ -36,7 +31,9 @@ export default async function ShotstackPage({
 	const [templatesRes, rendersRes, userRes, spendableCredits] = await Promise.all([
 		supabase
 			.from("shotstack_templates")
-			.select("id, name, edit, default_env, is_builtin, source_path, created_at, updated_at")
+			.select(
+				"id, user_id, name, default_env, is_builtin, source_path, thumbnail_url, thumbnail_updated_at, created_at, updated_at",
+			)
 			.or(`user_id.eq.${internalUserId},is_builtin.eq.true`)
 			.order("is_builtin", { ascending: true })
 			.order("updated_at", { ascending: false }),
@@ -50,15 +47,29 @@ export default async function ShotstackPage({
 		getSpendableCredits(supabase, internalUserId),
 	]);
 
-	const templates = templatesRes.data ?? [];
-	const editorContext: ShotstackEditorContext = {
-		templatesApiBase: "/api/whop/shotstack-templates",
-		templatesApiQuery: `experienceId=${encodeURIComponent(experienceId)}`,
-		browserRenderUrl: "/api/whop/shotstack/browser-render",
-		browserRenderFields: { experienceId },
-		editorUrlPrefix: `/experiences/${experienceId}/shotstack/editor`,
-		backUrl: `/experiences/${experienceId}/shotstack`,
-	};
+	const templates = (templatesRes.data ?? []) as Array<{
+		id: string;
+		user_id: string | null;
+		name: string;
+		default_env: string | null;
+		is_builtin: boolean;
+		source_path: string | null;
+		thumbnail_url: string | null;
+		thumbnail_updated_at: string | null;
+		updated_at: string | null;
+	}>;
+	const galleryTemplates: GalleryTemplate[] = templates.map((t) => ({
+		id: t.id,
+		user_id: t.user_id,
+		name: t.name,
+		default_env: t.default_env,
+		is_builtin: !!t.is_builtin,
+		source_path: t.source_path,
+		thumbnail_url: t.thumbnail_url,
+		thumbnail_updated_at: t.thumbnail_updated_at,
+		updated_at: t.updated_at,
+	}));
+	const templatesApiQuery = `experienceId=${encodeURIComponent(experienceId)}`;
 	const renders = rendersRes.data ?? [];
 	// Always read the spendable balance from the ledger (unexpired grants
 	// minus debits) instead of the cached column so this page can never lag
@@ -101,161 +112,60 @@ export default async function ShotstackPage({
 				templates={templates.map((t) => ({ id: t.id, name: t.name, isBuiltin: t.is_builtin }))}
 			/>
 
-			<section className="border border-gray-a4 rounded-lg p-4 bg-gray-a2 space-y-3">
-				<h3 className="text-5 font-semibold text-gray-12">Save ShotStack template</h3>
-				<form action={createShotstackTemplate} className="flex flex-col gap-3 max-w-xl">
-					<input type="hidden" name="experienceId" value={experienceId} />
-					<label className="text-3 text-gray-11 flex flex-col gap-1">
-						Name
-						<input
-							name="name"
-							required
-							className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a1"
-							placeholder="Holiday promo"
-						/>
-					</label>
-					<label className="text-3 text-gray-11 flex flex-col gap-1">
-						Edit JSON
-						<textarea
-							name="edit"
-							required
-							rows={8}
-							className="border border-gray-a4 rounded-md px-3 py-2 font-mono text-2 text-gray-12 bg-gray-a1"
-						/>
-					</label>
-					<label className="text-3 text-gray-11 flex flex-col gap-1">
-						Default environment
-						<select name="default_env" className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a1">
-							<option value="v1">Production (v1)</option>
-							<option value="stage">Staging</option>
-						</select>
-					</label>
-					<button
-						type="submit"
-						className="self-start text-3 px-4 py-2 rounded-md bg-gray-12 text-gray-1 hover:opacity-90"
-					>
-						Save template
-					</button>
-				</form>
+			<section className="flex flex-col gap-3">
+				<div className="flex items-baseline justify-between gap-2">
+					<h3 className="text-5 font-semibold text-gray-12">Templates</h3>
+					<p className="text-2 text-gray-10">Click any tile to preview, edit, clone, or delete.</p>
+				</div>
+				<ShotstackTemplateGalleryClient
+					templates={galleryTemplates}
+					actions={{ templatesApiBase: "/api/whop/shotstack-templates", templatesApiQuery }}
+					editorUrlPrefix={`/experiences/${experienceId}/shotstack/editor`}
+					allowCreate
+				/>
 			</section>
 
 			<section>
-				<h3 className="text-5 font-semibold text-gray-12 mb-3">Saved templates</h3>
-				{templates.length === 0 ? (
-					<p className="text-3 text-gray-10 border border-gray-a4 rounded-lg p-6 bg-gray-a2">No templates yet.</p>
-				) : (
-					<ul className="flex flex-col gap-3">
-						{templates.map((row) => (
-							<li key={row.id} className="border border-gray-a4 rounded-lg p-4 bg-gray-a2">
-								<div className="flex flex-wrap items-start justify-between gap-2">
-									<div className="min-w-0 flex-1">
-										<div className="flex flex-wrap items-center gap-2">
-											<p className="text-5 font-medium text-gray-12">{row.name}</p>
-											{row.is_builtin ? (
-												<span className="text-2 px-2 py-0.5 rounded bg-gray-a4 text-gray-11">Starter</span>
-											) : null}
-										</div>
-										<p className="text-2 text-gray-10 mt-1">
-											Default env: {row.default_env} · Updated{" "}
-											{row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}
-											{row.source_path ? (
-												<>
-													{" "}
-													· <code className="text-2 bg-gray-a3 px-1 rounded">{row.source_path}</code>
-												</>
-											) : null}
-										</p>
-										{row.is_builtin ? (
-											<p className="text-2 text-gray-10 mt-2 max-w-2xl">
-												Read-only. Clone to get your own editable copy, or open it in the visual editor after
-												cloning.
-											</p>
-										) : null}
-									</div>
-									<div className="flex flex-wrap items-center gap-3 shrink-0">
-										<BrowserRenderButton
-											templateId={row.id}
-											templateName={row.name}
-											context={editorContext}
-										/>
-										{row.is_builtin ? (
-											<form action={cloneShotstackTemplate} className="inline">
-												<input type="hidden" name="experienceId" value={experienceId} />
-												<input type="hidden" name="templateId" value={row.id} />
-												<button
-													type="submit"
-													className="text-3 text-gray-12 px-3 py-1.5 rounded-md border border-gray-a4 bg-gray-a1 hover:opacity-90"
-												>
-													Clone to edit
-												</button>
-											</form>
-										) : (
-											<>
-												<Link
-													href={`/experiences/${experienceId}/shotstack/editor/${row.id}`}
-													className="text-3 text-gray-12 px-3 py-1.5 rounded-md border border-gray-a4 bg-gray-a1 hover:opacity-90"
-												>
-													Edit (visual)
-												</Link>
-												<form action={deleteShotstackTemplate} className="inline">
-													<input type="hidden" name="experienceId" value={experienceId} />
-													<input type="hidden" name="templateId" value={row.id} />
-													<button type="submit" className="text-3 text-red-11 underline hover:no-underline">
-														Delete
-													</button>
-												</form>
-											</>
-										)}
-									</div>
-								</div>
-								{!row.is_builtin && row.edit && typeof row.edit === "object" ? (
-									<details className="mt-3 border border-gray-a4 rounded-md p-3 bg-gray-a1">
-										<summary className="text-3 text-gray-11 cursor-pointer">Edit JSON</summary>
-										<form action={updateShotstackTemplate} className="mt-3 flex flex-col gap-2">
-											<input type="hidden" name="experienceId" value={experienceId} />
-											<input type="hidden" name="templateId" value={row.id} />
-											<label className="text-3 text-gray-11 flex flex-col gap-1">
-												Name
-												<input
-													name="name"
-													defaultValue={row.name}
-													className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a2"
-												/>
-											</label>
-											<label className="text-3 text-gray-11 flex flex-col gap-1">
-												Edit JSON
-												<textarea
-													name="edit"
-													required
-													rows={10}
-													defaultValue={JSON.stringify(row.edit, null, 2)}
-													className="border border-gray-a4 rounded-md px-3 py-2 font-mono text-2 text-gray-12 bg-gray-a2"
-												/>
-											</label>
-											<label className="text-3 text-gray-11 flex flex-col gap-1">
-												Default environment
-												<select
-													name="default_env"
-													defaultValue={row.default_env === "stage" ? "stage" : "v1"}
-													className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a2"
-												>
-													<option value="v1">Production (v1)</option>
-													<option value="stage">Staging</option>
-												</select>
-											</label>
-											<button
-												type="submit"
-												className="self-start text-3 px-4 py-2 rounded-md bg-gray-12 text-gray-1 hover:opacity-90"
-											>
-												Save changes
-											</button>
-										</form>
-									</details>
-								) : null}
-							</li>
-						))}
-					</ul>
-				)}
+				<details className="border border-gray-a4 rounded-lg p-4 bg-gray-a2">
+					<summary className="text-3 text-gray-11 cursor-pointer">Advanced: paste a ShotStack edit JSON</summary>
+					<form action={createShotstackTemplate} className="mt-3 flex flex-col gap-3 max-w-xl">
+						<input type="hidden" name="experienceId" value={experienceId} />
+						<label className="text-3 text-gray-11 flex flex-col gap-1">
+							Name
+							<input
+								name="name"
+								required
+								className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a1"
+								placeholder="Holiday promo"
+							/>
+						</label>
+						<label className="text-3 text-gray-11 flex flex-col gap-1">
+							Edit JSON
+							<textarea
+								name="edit"
+								required
+								rows={8}
+								className="border border-gray-a4 rounded-md px-3 py-2 font-mono text-2 text-gray-12 bg-gray-a1"
+							/>
+						</label>
+						<label className="text-3 text-gray-11 flex flex-col gap-1">
+							Default environment
+							<select
+								name="default_env"
+								className="border border-gray-a4 rounded-md px-3 py-2 text-gray-12 bg-gray-a1"
+							>
+								<option value="v1">Production (v1)</option>
+								<option value="stage">Staging</option>
+							</select>
+						</label>
+						<button
+							type="submit"
+							className="self-start text-3 px-4 py-2 rounded-md bg-gray-12 text-gray-1 hover:opacity-90"
+						>
+							Save template
+						</button>
+					</form>
+				</details>
 			</section>
 
 			<section>

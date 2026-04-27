@@ -37,4 +37,11 @@ export interface ShotstackEditorContext {
 	editorUrlPrefix: string;
 	/** URL of the "← Back to templates" link. */
 	backUrl: string;
+	/**
+	 * Optional: full URL of the thumbnail-upload endpoint. When set the host
+	 * captures a PNG thumbnail from the Fabric canvas after each save and
+	 * POSTs it. The same `browserRenderFields` are appended so the server can
+	 * re-verify the caller.
+	 */
+	thumbnailUploadUrl?: string;
 }

@@ -76,5 +76,6 @@ function buildWhopEditorContext(experienceId: string): ShotstackEditorContext {
 		browserRenderFields: { experienceId },
 		editorUrlPrefix: `/experiences/${experienceId}/shotstack/editor`,
 		backUrl: `/experiences/${experienceId}/shotstack`,
+		thumbnailUploadUrl: `/api/whop/shotstack-templates/:id/thumbnail?${query}`,
 	};
 }

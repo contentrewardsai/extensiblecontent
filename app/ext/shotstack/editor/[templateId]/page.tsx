@@ -98,10 +98,10 @@ export default async function GhlShotstackEditorPage({
 		<div style={{ maxWidth: 1280, margin: "0 auto", padding: "16px", fontFamily: "system-ui, -apple-system, sans-serif" }}>
 			<div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
 				<Link
-					href={`/ext/settings${backQs.toString() ? `?${backQs.toString()}` : ""}`}
+					href={`/ext/shotstack${backQs.toString() ? `?${backQs.toString()}` : ""}`}
 					style={{ color: "#0969da", textDecoration: "underline", fontSize: 13 }}
 				>
-					← Back to settings
+					← Back to templates
 				</Link>
 				<span style={{ color: "#999", fontSize: 13 }}>|</span>
 				<span style={{ color: "#111", fontWeight: 500, fontSize: 13 }}>{row.name}</span>
@@ -155,7 +155,8 @@ function buildGhlEditorContext({
 		browserRenderUrl: "/api/ghl/shotstack/browser-render",
 		browserRenderFields,
 		editorUrlPrefix: "/ext/shotstack/editor",
-		backUrl: `/ext/settings${backQs.toString() ? `?${backQs.toString()}` : ""}`,
+		backUrl: `/ext/shotstack${backQs.toString() ? `?${backQs.toString()}` : ""}`,
+		thumbnailUploadUrl: "/api/ghl/shotstack-templates/:id/thumbnail",
 	};
 }
 

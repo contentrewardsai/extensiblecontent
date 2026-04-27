@@ -14,10 +14,15 @@ type EditEvents = {
 	off?: (name: string, fn: (data?: unknown) => void) => void;
 };
 
+type FabricLikeCanvas = {
+	toDataURL?: (options: { format?: string; quality?: number; multiplier?: number }) => string;
+};
+
 type UnifiedEditorInstance = {
 	getShotstackTemplate?: () => Record<string, unknown>;
 	hasPendingChanges?: () => boolean;
 	markSaved?: () => void;
+	getCanvas?: () => FabricLikeCanvas | null;
 	events?: EditEvents;
 	destroy?: () => void;
 };
@@ -68,6 +73,18 @@ function buildUrl(base: string, path: string, query: string): string {
 }
 
 const AUTOSAVE_INTERVAL_MS = 15_000;
+const THUMBNAIL_MULTIPLIER = 0.25; // ~480x270 for a 1920x1080 Fabric canvas
+
+function dataUrlToBlob(dataUrl: string): Blob | null {
+	const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl);
+	if (!m) return null;
+	const [, mime, b64] = m;
+	const bin = atob(b64);
+	const len = bin.length;
+	const buf = new Uint8Array(len);
+	for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i);
+	return new Blob([buf], { type: mime });
+}
 
 export function ShotstackEditorHost({
 	templateId,
@@ -191,6 +208,33 @@ export function ShotstackEditorHost({
 		[context, isBuiltin, templateId, templateName],
 	);
 
+	const captureThumbnail = useCallback(
+		async (savedId: string): Promise<void> => {
+			if (!context.thumbnailUploadUrl) return;
+			const inst = editorRef.current;
+			const canvas = inst?.getCanvas?.();
+			if (!canvas?.toDataURL) return;
+			let dataUrl: string;
+			try {
+				dataUrl = canvas.toDataURL({ format: "png", quality: 0.92, multiplier: THUMBNAIL_MULTIPLIER });
+			} catch {
+				return; // tainted canvas (cross-origin image), can't capture
+			}
+			const blob = dataUrlToBlob(dataUrl);
+			if (!blob) return;
+			const fd = new FormData();
+			for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
+			fd.append("file", blob, `thumbnail-${savedId}.png`);
+			const url = context.thumbnailUploadUrl.replace(":id", savedId);
+			try {
+				await fetch(url, { method: "PUT", body: fd, credentials: "include" });
+			} catch {
+				// Best-effort: thumbnail failures never block a save.
+			}
+		},
+		[context],
+	);
+
 	const save = useCallback(
 		async (opts: { silent?: boolean } = {}): Promise<void> => {
 			const inst = editorRef.current;
@@ -207,6 +251,7 @@ export function ShotstackEditorHost({
 				inst.markSaved?.();
 				setIsDirty(false);
 				if (!opts.silent) setSaveState("Saved.");
+				if (savedId) void captureThumbnail(savedId);
 				if (savedId && savedId !== templateId) {
 					const target = `${context.editorUrlPrefix}/${savedId}${
 						context.templatesApiQuery ? `?${context.templatesApiQuery}` : ""
@@ -219,7 +264,7 @@ export function ShotstackEditorHost({
 				savingRef.current = false;
 			}
 		},
-		[context, persistEdit, router, templateId],
+		[captureThumbnail, context, persistEdit, router, templateId],
 	);
 
 	useEffect(() => {
