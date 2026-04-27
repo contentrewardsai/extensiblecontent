@@ -36,11 +36,15 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 		templateId: id,
 		contentType: file.type || "image/png",
 		bytes,
+		// No active GHL context on the Whop surface — fall back to the user's saved preference.
+		activeGhlContext: null,
 	});
 	if (!res.ok) return Response.json({ error: res.error }, { status: res.status });
 	return Response.json({
 		ok: true,
 		thumbnail_url: res.thumbnailUrl,
 		thumbnail_updated_at: res.thumbnailUpdatedAt,
+		storage_type: res.storageType,
+		fallback_message: res.fallbackMessage,
 	});
 }

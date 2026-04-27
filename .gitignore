@@ -29,6 +29,8 @@
 /public/lib/html2canvas.min.js
 /public/lib/socket.io.min.js
 /public/lib/Sortable.min.js
+/public/lib/kokoro/
+/public/lib/transformers/
 
 # next.js
 /.next/

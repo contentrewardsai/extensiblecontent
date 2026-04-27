@@ -1,32 +1,39 @@
+import { describeFallback } from "@/lib/storage-destination";
+import { performStorageUpload } from "@/lib/storage-upload";
 import { getServiceSupabase } from "@/lib/supabase-service";
-import { POST_MEDIA_BUCKET_PUBLIC } from "@/lib/storage-post-media";
 
 const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024; // 2 MB safety cap
 const ALLOWED_CONTENT_TYPES = ["image/png", "image/webp", "image/jpeg"] as const;
 
 export type ThumbnailUploadResult =
-	| { ok: true; thumbnailUrl: string; thumbnailUpdatedAt: string }
+	| {
+			ok: true;
+			thumbnailUrl: string;
+			thumbnailUpdatedAt: string;
+			storageType: "supabase" | "ghl";
+			fallbackMessage: string | null;
+	  }
 	| { ok: false; status: number; error: string };
 
 /**
- * Upload a captured Fabric-canvas thumbnail to the public post-media bucket and
- * stamp `thumbnail_url` / `thumbnail_updated_at` on the template row.
- *
- * Ownership check: the caller must be the template's `user_id`. Built-in
- * templates (user_id IS NULL, is_builtin TRUE) cannot receive thumbnails
- * through this path — the clone-on-save flow captures a thumbnail for the
- * resulting copy instead.
- *
- * Path layout: `${owner}/shotstack-thumbnails/${templateId}.png` (upsert).
- * Using a stable path per template means each save overwrites the previous
- * thumbnail with no orphan cleanup needed; cache-busting is handled client
- * side by appending `?v=${thumbnailUpdatedAt}` when the URL is rendered.
+ * Upload a captured Fabric-canvas thumbnail and stamp
+ * `thumbnail_url` / `thumbnail_updated_at` / `thumbnail_storage_type` on the
+ * template row. Thumbnails follow the same storage-destination resolver as
+ * renders: HighLevel Media Library when configured, otherwise the public
+ * post-media bucket.
  */
 export async function uploadTemplateThumbnail(params: {
 	internalUserId: string;
 	templateId: string;
 	contentType: string;
 	bytes: ArrayBuffer;
+	/**
+	 * Optional GHL context from the calling surface. When the caller is inside
+	 * a GHL Custom Page, pass the active locationId/companyId so the resolver
+	 * can pick that location's Media Library without relying on the user's
+	 * saved default.
+	 */
+	activeGhlContext?: { locationId?: string | null; companyId?: string | null } | null;
 }): Promise<ThumbnailUploadResult> {
 	const { internalUserId, templateId, contentType, bytes } = params;
 	if (!ALLOWED_CONTENT_TYPES.includes(contentType as (typeof ALLOWED_CONTENT_TYPES)[number])) {
@@ -58,31 +65,50 @@ export async function uploadTemplateThumbnail(params: {
 	}
 
 	const ext = contentType === "image/webp" ? "webp" : contentType === "image/jpeg" ? "jpg" : "png";
-	const filePath = `${internalUserId}/shotstack-thumbnails/${templateId}.${ext}`;
-	const { error: uploadError } = await supabase.storage.from(POST_MEDIA_BUCKET_PUBLIC).upload(filePath, bytes, {
-		contentType,
-		upsert: true,
-	});
-	if (uploadError) {
-		return { ok: false, status: 500, error: uploadError.message };
+	// Stable Supabase path per template so upserts overwrite. GHL uploads can't
+	// be "upserted" like this — each call creates a new media entry — but the
+	// template row only stores the latest URL, so older GHL uploads just become
+	// unreferenced entries in the user's Media Library.
+	const filename = `${templateId}.${ext}`;
+
+	let uploadResult;
+	try {
+		uploadResult = await performStorageUpload({
+			resolve: {
+				internalUserId,
+				activeGhlContext: params.activeGhlContext ?? null,
+			},
+			supabasePathPrefix: `${internalUserId}/shotstack-thumbnails`,
+			filename,
+			contentType,
+			bytes,
+			privateSupabase: false,
+		});
+	} catch (err) {
+		return { ok: false, status: 500, error: err instanceof Error ? err.message : "Upload failed" };
 	}
 
-	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	if (!supabaseUrl) {
-		return { ok: false, status: 500, error: "NEXT_PUBLIC_SUPABASE_URL is not set" };
-	}
-	const publicUrl = `${supabaseUrl}/storage/v1/object/public/${POST_MEDIA_BUCKET_PUBLIC}/${filePath}`;
 	const thumbnailUpdatedAt = new Date().toISOString();
 	const { error: updateError } = await supabase
 		.from("shotstack_templates")
-		.update({ thumbnail_url: publicUrl, thumbnail_updated_at: thumbnailUpdatedAt })
+		.update({
+			thumbnail_url: uploadResult.fileUrl,
+			thumbnail_updated_at: thumbnailUpdatedAt,
+			thumbnail_storage_type: uploadResult.storageType,
+		})
 		.eq("id", templateId)
 		.eq("user_id", internalUserId);
 	if (updateError) {
 		return { ok: false, status: 500, error: updateError.message };
 	}
 
-	return { ok: true, thumbnailUrl: publicUrl, thumbnailUpdatedAt };
+	return {
+		ok: true,
+		thumbnailUrl: uploadResult.fileUrl,
+		thumbnailUpdatedAt,
+		storageType: uploadResult.storageType,
+		fallbackMessage: uploadResult.fallbackReason ? describeFallback(uploadResult.fallbackReason) : null,
+	};
 }
 
 /**

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRenderButton } from "./browser-render-button";
+import { afterCfsScriptLoaded, applyCfsGeneratorStubs } from "./ensure-cfs-generator";
 import type { ShotstackEditorContext } from "./shotstack-editor-context";
 import { SHOTSTACK_EDITOR_SCRIPT_HREFS, SHOTSTACK_EDITOR_STYLES } from "./shotstack-editor-load-order";
 
@@ -109,11 +110,7 @@ export function ShotstackEditorHost({
 	const [isDirty, setIsDirty] = useState(false);
 
 	const applyStubs = useCallback(() => {
-		window.__CFS_generationStorage = {
-			getProjectFolderHandle: () => null,
-		};
-		window.__CFS_generatorProjectId = "";
-		window.__CFS_stepGeneratorUIs = window.__CFS_stepGeneratorUIs || {};
+		applyCfsGeneratorStubs();
 	}, []);
 
 	const bootEditor = useCallback(() => {
@@ -138,6 +135,7 @@ export function ShotstackEditorHost({
 				for (const src of SHOTSTACK_EDITOR_SCRIPT_HREFS) {
 					if (cancelled) return;
 					await loadScriptOnce(src);
+					afterCfsScriptLoaded(src);
 				}
 				if (cancelled) return;
 				applyStubs();

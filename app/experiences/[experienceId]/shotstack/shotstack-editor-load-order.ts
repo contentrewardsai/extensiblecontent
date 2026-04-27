@@ -32,6 +32,7 @@ export const SHOTSTACK_EDITOR_SCRIPT_HREFS: string[] = [
 	"/generator/core/estimate-words.js",
 	"/generator/core/srt.js",
 	"/generator/core/wrap-text.js",
+	"/cfs-web/cfs-web-ai.js",
 	"/generator/tts/default-tts.js",
 	"/generator/tts/tts-audio-cache.js",
 	"/generator/stt/default-stt.js",

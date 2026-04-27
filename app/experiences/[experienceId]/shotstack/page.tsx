@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { StoragePreferencesSection } from "@/app/components/storage-preferences-section";
 import { requireExperienceContext } from "@/lib/experience-context";
 import { getSpendableCredits } from "@/lib/shotstack-ledger";
 import { getServiceSupabase } from "@/lib/supabase-service";
@@ -124,6 +125,8 @@ export default async function ShotstackPage({
 					allowCreate
 				/>
 			</section>
+
+			<StoragePreferencesSection apiUrl={`/api/whop/storage-preferences?experienceId=${encodeURIComponent(experienceId)}`} />
 
 			<section>
 				<details className="border border-gray-a4 rounded-lg p-4 bg-gray-a2">

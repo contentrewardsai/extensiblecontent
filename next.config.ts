@@ -35,9 +35,37 @@ const nextConfig: NextConfig = {
 			],
 		},
 		{
+			source: "/ext/shotstack/:path*",
+			headers: [
+				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+			],
+		},
+		{
 			source: "/lib/ffmpeg/:file*",
 			headers: [
 				{ key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+				{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+			],
+		},
+		{
+			source: "/lib/kokoro/:file*",
+			headers: [
+				{ key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+				{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+			],
+		},
+		{
+			source: "/lib/transformers/:file*",
+			headers: [
+				{ key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+				{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+			],
+		},
+		{
+			source: "/cfs-web/:file*",
+			headers: [
+				{ key: "Cache-Control", value: "public, max-age=3600" },
 				{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
 			],
 		},

@@ -1,29 +1,20 @@
-import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { ensureUserDefaultProjectId } from "@/lib/default-project";
 import { getInternalUserForGhl } from "@/lib/ghl-shotstack-auth";
 import { assertProjectAccess, ProjectAccessError } from "@/lib/project-access";
 import { assertProjectQuota, ProjectQuotaError } from "@/lib/project-quota";
-import { POST_MEDIA_BUCKET_PRIVATE, POST_MEDIA_BUCKET_PUBLIC } from "@/lib/storage-post-media";
+import { describeFallback } from "@/lib/storage-destination";
+import { performStorageUpload } from "@/lib/storage-upload";
+import { getServiceSupabase } from "@/lib/supabase-service";
 import { getMemberProjectIdsForUser, shotstackListOrFilter } from "@/lib/whop-shotstack-template-routes";
-
-const SIGNED_URL_EXPIRY = 3600;
-
-function getServiceSupabase() {
-	const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-	const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-	if (!url || !key) throw new Error("Supabase not configured");
-	return createClient(url, key);
-}
 
 /**
  * POST /api/ghl/shotstack/browser-render
  *
- * Mirror of /api/whop/shotstack/browser-render, but authenticates via the
- * `ec_whop_user` cookie and (optionally) verifies GHL linkage. The client
- * sends `locationId`/`companyId` in the form data so we can cross-check.
- *
- * FormData: locationId?, companyId?, template_id, file, project_id?, private?
+ * Mirror of /api/whop/shotstack/browser-render for the GHL Custom Page surface.
+ * The active `locationId`/`companyId` (from the GHL Custom Page context) are
+ * passed through to the resolver so an upload initiated from inside GHL
+ * defaults to that location's Media Library.
  */
 export async function POST(request: NextRequest) {
 	const supabase = getServiceSupabase();
@@ -89,6 +80,7 @@ export async function POST(request: NextRequest) {
 	const contentType = rawType || (isWebm ? "video/webm" : "video/mp4");
 	const ext = isWebm ? "webm" : "mp4";
 	const fileBuffer = await file.arrayBuffer();
+
 	const { data: projectRow } = await supabase.from("projects").select("quota_bytes").eq("id", project_id).maybeSingle();
 	const quotaBytes = (projectRow?.quota_bytes as number | null) ?? null;
 	try {
@@ -105,26 +97,28 @@ export async function POST(request: NextRequest) {
 		throw err;
 	}
 
-	const bucket = isPrivate ? POST_MEDIA_BUCKET_PRIVATE : POST_MEDIA_BUCKET_PUBLIC;
 	const renderId = crypto.randomUUID();
 	const timestamp = Date.now();
-	const filePath = `${owner_id}/${project_id}/generations/${template_id}/${timestamp}_${renderId}.${ext}`;
+	const filename = `${timestamp}_${renderId}.${ext}`;
 
-	const { error: uploadError } = await supabase.storage.from(bucket).upload(filePath, fileBuffer, {
-		contentType,
-		upsert: true,
-	});
-	if (uploadError) {
-		return Response.json({ error: uploadError.message }, { status: 500 });
-	}
-
-	let fileUrl: string;
-	if (isPrivate) {
-		const { data: signed } = await supabase.storage.from(bucket).createSignedUrl(filePath, SIGNED_URL_EXPIRY);
-		fileUrl = signed?.signedUrl ?? "";
-	} else {
-		const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-		fileUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}`;
+	let uploadResult;
+	try {
+		uploadResult = await performStorageUpload({
+			resolve: {
+				internalUserId,
+				projectId: project_id,
+				// Active GHL context from the Custom Page — resolver uses it first
+				// when picking a location for GHL uploads.
+				activeGhlContext: { locationId, companyId },
+			},
+			supabasePathPrefix: `${owner_id}/${project_id}/generations/${template_id}`,
+			filename,
+			contentType,
+			bytes: fileBuffer,
+			privateSupabase: isPrivate,
+		});
+	} catch (err) {
+		return Response.json({ error: err instanceof Error ? err.message : "Upload failed" }, { status: 500 });
 	}
 
 	const { error: insertErr } = await supabase.from("shotstack_renders").insert({
@@ -138,9 +132,11 @@ export async function POST(request: NextRequest) {
 			edit_snapshot: templateRow.edit ?? {},
 		},
 		status: "ready",
-		output_url: fileUrl,
+		output_url: uploadResult.fileUrl,
 		credits_used: 0,
 		env: "browser",
+		storage_type: uploadResult.storageType,
+		storage_meta: uploadResult.storageMeta,
 	});
 	if (insertErr) {
 		console.error("[ghl browser-render] shotstack_renders insert", insertErr);
@@ -150,7 +146,10 @@ export async function POST(request: NextRequest) {
 	return Response.json({
 		ok: true,
 		shotstack_render_id: renderId,
-		file_url: fileUrl,
+		file_url: uploadResult.fileUrl,
+		storage_type: uploadResult.storageType,
+		fallback_reason: uploadResult.fallbackReason ?? null,
+		fallback_message: uploadResult.fallbackReason ? describeFallback(uploadResult.fallbackReason) : null,
 		project_id,
 		template_id,
 		owner_id,

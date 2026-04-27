@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { StoragePreferencesSection } from "@/app/components/storage-preferences-section";
 
 interface ConnectedUser {
 	userId: string;
@@ -1215,6 +1216,19 @@ export default function GhlSettingsPage() {
 								</div>
 							</>
 						)}
+					</div>
+
+					{/* Storage destination */}
+					<div style={styles.card}>
+						<h2 style={styles.sectionTitle}>Storage</h2>
+						<StoragePreferencesSection
+							apiUrl={(() => {
+								const qs = new URLSearchParams();
+								if (ghlLocationId) qs.set("locationId", ghlLocationId);
+								if (ghlCompanyId) qs.set("companyId", ghlCompanyId);
+								return `/api/ghl/storage-preferences${qs.toString() ? `?${qs.toString()}` : ""}`;
+							})()}
+						/>
 					</div>
 
 					{/* Billing */}

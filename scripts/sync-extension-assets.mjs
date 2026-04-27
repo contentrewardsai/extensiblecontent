@@ -92,6 +92,29 @@ const ASSET_PATHS = [
 	"generator/generator.css",
 ];
 
+/**
+ * Pinned ESM / WASM for in-browser Kokoro TTS + Whisper (Transformers.js), not in the
+ * extension repo. See public/cfs-web/ for the worker + main-thread shim.
+ */
+const NPM_VENDOR = [
+	{
+		out: "public/lib/kokoro/kokoro.web.js",
+		url: "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js",
+	},
+	{
+		out: "public/lib/transformers/transformers.min.js",
+		url: "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/transformers.min.js",
+	},
+	{
+		out: "public/lib/transformers/ort-wasm-simd-threaded.jsep.wasm",
+		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.jsep.wasm",
+	},
+	{
+		out: "public/lib/transformers/ort-wasm-simd-threaded.wasm",
+		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.wasm",
+	},
+];
+
 async function ensureDir(f) {
 	await mkdir(f, { recursive: true });
 }
@@ -167,6 +190,16 @@ async function run() {
 			}
 		}
 		await writeBuffer(dest, text);
+		count++;
+	}
+	for (const { out, url } of NPM_VENDOR) {
+		const dest = join(ROOT, out);
+		const res = await fetch(url, { headers: { Accept: "*/*" } });
+		if (!res.ok) {
+			throw new Error(`Failed ${url}: ${res.status} ${res.statusText}`);
+		}
+		const buf = Buffer.from(await res.arrayBuffer());
+		await writeBuffer(dest, buf);
 		count++;
 	}
 	const versionFile = join(PUBLIC, "generator", ".extension-assets-version");
