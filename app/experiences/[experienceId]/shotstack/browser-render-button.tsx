@@ -14,6 +14,7 @@ type CfsAiProgress = {
 	loaded?: number;
 	total?: number;
 	status?: string;
+	error?: string;
 };
 
 function detectChromium() {
@@ -173,9 +174,16 @@ export function BrowserRenderButton({
 			const wAi = window as unknown as {
 				__CFS_subscribeAiProgress?: (fn: (d: CfsAiProgress) => void) => () => void;
 			};
+			let aiFatal: string | null = null;
 			const unsub =
 				typeof wAi.__CFS_subscribeAiProgress === "function"
 					? wAi.__CFS_subscribeAiProgress((d) => {
+							if (d.type === "fatal") {
+								// Worker died — narration will be silent for this render.
+								// Surface it so the user knows; the engine will keep going.
+								aiFatal = d.error || "AI worker failed";
+								return;
+							}
 							if (d.type !== "progress") return;
 							const label = d.stage === "stt" ? "Whisper STT" : "Kokoro TTS";
 							if (typeof d.loaded === "number" && typeof d.total === "number" && d.total > 0) {
@@ -199,8 +207,8 @@ export function BrowserRenderButton({
 				const merged = engine.applyMergeToTemplate(e, merge) as Record<string, unknown>;
 				webm = await runWithTimeout(
 					engine.renderTimelineToVideoBlob(merged),
-					300_000,
-					"Video render (Kokoro / Whisper + timeline) timed out after 5 minutes",
+					600_000,
+					"Video render (Kokoro / Whisper + timeline) timed out after 10 minutes",
 				);
 				if (!webm) throw new Error("No video from renderer");
 			} finally {
@@ -217,18 +225,34 @@ export function BrowserRenderButton({
 			const ff = (window as unknown as {
 				FFmpegLocal?: { convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown> };
 			}).FFmpegLocal;
-			if (!ff?.convertToMp4) {
-				throw new Error("FFmpeg not loaded");
+			let mp4result: { ok?: boolean; blob?: Blob; error?: string } | null = null;
+			if (ff?.convertToMp4) {
+				try {
+					// First-time FFmpeg WASM load on a fresh tab can take a while
+					// (the core wasm is ~33MB and is fetched + compiled inside an
+					// internal worker). Give it 10 minutes; if it still doesn't
+					// finish, just upload the webm so the user gets *something*.
+					mp4result = (await runWithTimeout(
+						ff.convertToMp4(webm, (s) => setMsg(s)),
+						600_000,
+						"FFmpeg conversion timed out after 10 minutes — uploading WebM instead.",
+					)) as { ok?: boolean; blob?: Blob; error?: string };
+				} catch (err) {
+					mp4result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+				}
 			}
-			const mp4result = (await runWithTimeout(
-				ff.convertToMp4(webm, (s) => setMsg(s)),
-				180_000,
-				"FFmpeg conversion timed out after 3 minutes",
-			)) as { ok?: boolean; blob?: Blob };
-			const blob = mp4result?.ok && mp4result.blob ? mp4result.blob : webm;
 			const isMp4 = !!(mp4result?.ok && mp4result.blob);
+			const blob: Blob = isMp4 && mp4result?.blob ? mp4result.blob : webm;
 			const ext = isMp4 ? "mp4" : "webm";
 			const contentType = blob.type || (isMp4 ? "video/mp4" : "video/webm");
+			if (!isMp4) {
+				const why = mp4result?.error
+					? ` (${mp4result.error})`
+					: ff?.convertToMp4
+						? ""
+						: " (FFmpeg not available)";
+				setMsg(`Uploading WebM — could not transcode to MP4${why}`);
+			}
 			const fd = new FormData();
 			for (const [k, v] of Object.entries(context.browserRenderFields)) {
 				fd.append(k, v);
@@ -252,7 +276,9 @@ export function BrowserRenderButton({
 			// the fallback reason when we couldn't honour their preference.
 			const dest =
 				j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
-			setMsg(j.fallback_message ? `${dest} ${j.fallback_message}` : dest);
+			const ttsNote = aiFatal ? ` Narration is silent because in-browser TTS failed: ${aiFatal}` : "";
+			const fmtNote = isMp4 ? "" : " Saved as WebM instead of MP4.";
+			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}${fmtNote}${ttsNote}`);
 			router.refresh();
 		} catch (e) {
 			setMsg(e instanceof Error ? e.message : "Render failed");

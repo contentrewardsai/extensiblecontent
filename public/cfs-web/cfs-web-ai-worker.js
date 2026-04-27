@@ -2,22 +2,67 @@
  * Module Web Worker: Kokoro TTS + Whisper STT via same-origin vendored bundles
  * (/lib/kokoro/kokoro.web.js, /lib/transformers/transformers.min.js + ORT wasm).
  * Mirrors ExtensibleContentExtension sandbox/quality-check.js (synthesise + transcribe).
+ *
+ * Diagnostics protocol:
+ *   - posts { type: "ready" } once after script eval succeeds
+ *   - posts { type: "fatal", error, stack } from self.onerror / unhandledrejection
+ *   - posts { type: "result", id, ok: false, error } for any per-call failure
+ * The shim treats `fatal` as a permanent worker death and nulls out its reference
+ * so subsequent calls fail fast (or fall back to silent TTS) instead of hanging
+ * on a dead worker forever.
  */
 const ORIGIN = typeof self !== "undefined" && self.location && self.location.origin ? self.location.origin : "";
 
 let kokoroTts = null;
 let asrPipeline = null;
 
+function safePost(payload) {
+	try {
+		self.postMessage(payload);
+	} catch (_) {
+		/* never throw out of error handlers */
+	}
+}
+
+function describeError(err) {
+	if (!err) return { message: "unknown" };
+	if (typeof err === "string") return { message: err };
+	const out = {};
+	if (typeof err.message === "string") out.message = err.message;
+	if (typeof err.name === "string") out.name = err.name;
+	if (typeof err.stack === "string") out.stack = err.stack.slice(0, 4000);
+	if (typeof err.filename === "string") out.filename = err.filename;
+	if (typeof err.lineno === "number") out.lineno = err.lineno;
+	if (typeof err.colno === "number") out.colno = err.colno;
+	if (!out.message) out.message = String(err);
+	return out;
+}
+
+self.addEventListener("error", (ev) => {
+	safePost({
+		type: "fatal",
+		source: "error",
+		error: describeError(ev && (ev.error || ev)),
+	});
+});
+self.addEventListener("unhandledrejection", (ev) => {
+	safePost({
+		type: "fatal",
+		source: "unhandledrejection",
+		error: describeError(ev && ev.reason),
+	});
+});
+
 function emitProgress(stage, ev) {
 	if (!ev || typeof ev !== "object") {
-		self.postMessage({ type: "progress", stage, status: "init" });
+		safePost({ type: "progress", stage, status: "init" });
 		return;
 	}
 	const file = ev.file ?? ev.name ?? "";
 	const loaded = typeof ev.loaded === "number" ? ev.loaded : undefined;
 	const total = typeof ev.total === "number" ? ev.total : undefined;
 	const status = ev.status ?? "";
-	self.postMessage({
+	safePost({
 		type: "progress",
 		stage,
 		file: String(file),
@@ -29,11 +74,18 @@ function emitProgress(stage, ev) {
 
 async function ensureKokoro() {
 	if (kokoroTts) return kokoroTts;
-	const mod = await import(new URL("/lib/kokoro/kokoro.web.js", ORIGIN).href);
+	let mod;
+	try {
+		mod = await import(new URL("/lib/kokoro/kokoro.web.js", ORIGIN).href);
+	} catch (e) {
+		throw new Error(`Failed to import kokoro.web.js: ${(e && e.message) || e}`);
+	}
 	const { KokoroTTS, env } = mod;
+	if (!KokoroTTS) throw new Error("kokoro.web.js did not export KokoroTTS");
 	const wasmBase = `${ORIGIN}/lib/transformers/`;
-	/* `env` is a thin proxy; setting wasmPaths wires ORT to our same-origin ORT wasm files */
-	env.wasmPaths = wasmBase;
+	if (env && "wasmPaths" in env) {
+		env.wasmPaths = wasmBase;
+	}
 	kokoroTts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
 		dtype: "q8",
 		device: "wasm",
@@ -83,14 +135,23 @@ async function runTts(text, voiceOpt) {
 
 async function ensureAsr() {
 	if (asrPipeline) return asrPipeline;
-	const { pipeline, env } = await import(new URL("/lib/transformers/transformers.min.js", ORIGIN).href);
+	let mod;
+	try {
+		mod = await import(new URL("/lib/transformers/transformers.min.js", ORIGIN).href);
+	} catch (e) {
+		throw new Error(`Failed to import transformers.min.js: ${(e && e.message) || e}`);
+	}
+	const { pipeline, env } = mod;
+	if (!pipeline) throw new Error("transformers.min.js did not export pipeline");
 	const wasmBase = `${ORIGIN}/lib/transformers/`;
-	env.allowLocalModels = false;
-	env.useBrowserCache = true;
-	env.useWasmCache = true;
-	if (env?.backends?.onnx?.wasm) {
-		env.backends.onnx.wasm.wasmPaths = wasmBase;
-		env.backends.onnx.wasm.numThreads = self.crossOriginIsolated ? 4 : 1;
+	if (env) {
+		env.allowLocalModels = false;
+		env.useBrowserCache = true;
+		env.useWasmCache = true;
+		if (env.backends?.onnx?.wasm) {
+			env.backends.onnx.wasm.wasmPaths = wasmBase;
+			env.backends.onnx.wasm.numThreads = self.crossOriginIsolated ? 4 : 1;
+		}
 	}
 	asrPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {
 		quantized: true,
@@ -147,26 +208,27 @@ async function runStt(audioBlob) {
 self.onmessage = async (ev) => {
 	const d = ev.data || {};
 	const { type, id } = d;
+	if (type === "ping") {
+		safePost({ type: "pong" });
+		return;
+	}
 	if (!id) return;
 	try {
 		if (type === "tts") {
 			const blob = await runTts(d.text, d.voice);
-			self.postMessage({ type: "result", id, ok: true, blob });
+			safePost({ type: "result", id, ok: true, blob });
 		} else if (type === "stt") {
 			const buf = d.buffer;
 			if (!buf) throw new Error("No audio buffer");
 			const audioBlob = new Blob([buf], { type: d.mimeType || "application/octet-stream" });
 			const out = await runStt(audioBlob);
-			self.postMessage({ type: "result", id, ok: true, text: out.text, words: out.words });
+			safePost({ type: "result", id, ok: true, text: out.text, words: out.words });
 		} else {
-			self.postMessage({ type: "result", id, ok: false, error: "Unknown message type" });
+			safePost({ type: "result", id, ok: false, error: "Unknown message type" });
 		}
 	} catch (e) {
-		self.postMessage({
-			type: "result",
-			id,
-			ok: false,
-			error: (e && e.message) || String(e),
-		});
+		safePost({ type: "result", id, ok: false, error: (e && e.message) || String(e) });
 	}
 };
+
+safePost({ type: "ready" });
