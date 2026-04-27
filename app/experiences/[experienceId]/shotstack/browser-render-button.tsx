@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ensureCfsGeneratorLoaded } from "./ensure-cfs-generator";
 import type { ShotstackEditorContext } from "./shotstack-editor-context";
@@ -81,12 +81,54 @@ export function BrowserRenderButton({
 	const [msg, setMsg] = useState<string | null>(null);
 	// Gate with useEffect so SSR and first client render agree (hydration-safe).
 	const [canRun, setCanRun] = useState<boolean | null>(null);
+	// `crossOriginIsolated` requires COOP/COEP on the page AND the embedding
+	// parent iframe setting `allow="cross-origin-isolated"`. GHL (and some Whop
+	// surfaces) don't grant that, so we expose a "open in new tab" fallback —
+	// the editor URL is standalone-friendly and in a top-level browsing context
+	// the COOP/COEP headers we ship actually take effect.
+	const [isolated, setIsolated] = useState<boolean | null>(null);
 	useEffect(() => {
 		setCanRun(detectChromium());
+		setIsolated(typeof crossOriginIsolated !== "undefined" ? !!crossOriginIsolated : false);
 	}, []);
+
+	const onRenderRef = useRef<(() => void) | null>(null);
+	const autoRanRef = useRef(false);
+	// Auto-run when the button was opened via "Open in new tab to render"
+	// (the originating click sets ?render=1 on the URL). This lets us honour a
+	// user's click that we couldn't service in the embedded frame.
+	useEffect(() => {
+		if (canRun !== true || isolated !== true) return;
+		if (autoRanRef.current) return;
+		try {
+			const url = new URL(window.location.href);
+			if (url.searchParams.get("render") !== "1") return;
+			autoRanRef.current = true;
+			url.searchParams.delete("render");
+			window.history.replaceState(null, "", url.toString());
+			// Defer one tick so the newly-bound `onRender` closure runs.
+			setTimeout(() => {
+				onRenderRef.current?.();
+			}, 0);
+		} catch {
+			/* ignore */
+		}
+	}, [canRun, isolated]);
 	const isToolbar = variant === "toolbar";
 	const baseBtn =
 		"text-3 px-3 py-1.5 rounded-md border border-gray-a4 bg-gray-a1 text-gray-12 disabled:opacity-50 disabled:cursor-not-allowed";
+
+	function openStandalone() {
+		try {
+			const url = new URL(window.location.href);
+			url.searchParams.set("render", "1");
+			// If we're embedded (GHL / Whop iframe), _top is often blocked by
+			// the parent's frame-ancestors; always use a fresh window instead.
+			window.open(url.toString(), "_blank", "noopener,noreferrer");
+		} catch {
+			/* ignore */
+		}
+	}
 
 	const onRender = async () => {
 		if (canRun !== true) return;
@@ -125,7 +167,7 @@ export function BrowserRenderButton({
 			await preflightFfmpegWasm();
 			if (!crossOriginIsolated) {
 				throw new Error(
-					"This page isn't cross-origin-isolated, so FFmpeg WASM can't use SharedArrayBuffer. Refresh the tab; if it keeps happening, open the editor in a new tab.",
+					'This page is embedded, so the render pipeline (FFmpeg WASM + Kokoro / Whisper) can\'t use SharedArrayBuffer. Click "Open in new tab to render" below.',
 				);
 			}
 			const wAi = window as unknown as {
@@ -218,6 +260,7 @@ export function BrowserRenderButton({
 			setBusy(false);
 		}
 	};
+	onRenderRef.current = onRender;
 
 	if (canRun === null) {
 		return (
@@ -237,6 +280,29 @@ export function BrowserRenderButton({
 			>
 				Browser render: Chromium only
 			</span>
+		);
+	}
+
+	if (isolated === false) {
+		// Embedded in an iframe that doesn't grant `allow="cross-origin-isolated"`
+		// (GHL, some Whop surfaces). We can't render in this frame at all — direct
+		// users to a standalone tab where our COOP/COEP headers actually take effect.
+		return (
+			<div className={isToolbar ? "inline-flex flex-col gap-0.5" : "inline-flex flex-col items-end gap-0.5"}>
+				<button type="button" className={baseBtn} onClick={openStandalone}>
+					{isToolbar ? "Open in new tab to render" : "Open in new tab to render (free)"}
+				</button>
+				<span
+					className={
+						isToolbar
+							? "text-2 text-gray-10"
+							: "text-2 text-gray-10 text-right max-w-xs"
+					}
+					title="SharedArrayBuffer (required by FFmpeg + Kokoro) only works in a top-level browsing context."
+				>
+					Embedded frame can't run the free render — open standalone.
+				</span>
+			</div>
 		);
 	}
 
