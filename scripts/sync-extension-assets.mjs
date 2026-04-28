@@ -172,6 +172,54 @@ function patchFfmpegLocal(relPath, outRelPath) {
 }
 
 /**
+ * Apply web-app patches to the vendored ffmpeg-local.js after the URL fixups.
+ * The upstream extension never had to deal with a 40 MB wasm hanging silently
+ * in a tab, so we add:
+ *
+ * 1. `ensureLoaded` exposed publicly so the caller can split "loading" from
+ *    "converting" timeouts (a hung load looks identical to a slow long video).
+ * 2. Diagnostic `console.log` lines inside `ensureLoaded` so the next time it
+ *    hangs we can see which sub-step (worker spawn, importScripts, wasm fetch,
+ *    wasm compile) is actually stuck, instead of seeing only the frontend
+ *    "Loading FFmpeg WASM..." status with no detail.
+ *
+ * Markers are exact substrings of the vendored upstream so a kokoro-/ffmpeg-
+ * version drift will surface as a "marker not found" warning and skip cleanly
+ * rather than silently corrupting the file.
+ */
+function patchFfmpegLocalDiagnostics(text) {
+	let out = text;
+	const ensureMarker = "function ensureLoaded(report) {";
+	if (out.includes(ensureMarker)) {
+		out = out.replace(
+			ensureMarker,
+			"function ensureLoaded(report) {\n    try { console.log('[FFmpegLocal] ensureLoaded called', { hasInstance: !!ffmpegInstance, loaded: ffmpegInstance && ffmpegInstance.loaded }); } catch (_) {}",
+		);
+	} else {
+		console.warn("[sync-extension-assets] ffmpeg-local.js ensureLoaded marker not found — skipping diagnostics patch");
+	}
+	const loadMarker = "return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {";
+	if (out.includes(loadMarker)) {
+		out = out.replace(
+			loadMarker,
+			"try { console.log('[FFmpegLocal] calling FFmpeg.load()', { coreURL: coreURL(), wasmURL: wasmURL() }); } catch (_) {}\n      ffmpegInstance.on('log', function (ev) { try { console.log('[FFmpeg core]', ev && ev.type, ev && ev.message); } catch (_) {} });\n      return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {\n        try { console.log('[FFmpegLocal] FFmpeg.load() resolved'); } catch (_) {}",
+		);
+	} else {
+		console.warn("[sync-extension-assets] ffmpeg-local.js load marker not found — skipping load diagnostics");
+	}
+	const exportsMarker = "global.FFmpegLocal = {\n    convertToMp4: convertToMp4,";
+	if (out.includes(exportsMarker)) {
+		out = out.replace(
+			exportsMarker,
+			"global.FFmpegLocal = {\n    ensureLoaded: ensureLoaded,\n    convertToMp4: convertToMp4,",
+		);
+	} else {
+		console.warn("[sync-extension-assets] ffmpeg-local.js exports marker not found — skipping ensureLoaded export");
+	}
+	return out;
+}
+
+/**
  * Widen kokoro.web.js's `env` proxy so we can mutate ORT settings beyond
  * `wasmPaths`. Ships with ONLY `wasmPaths` exposed:
  *   const Mf={set wasmPaths(e){Wg.backends.onnx.wasm.wasmPaths=e}, get wasmPaths(){…}};
@@ -218,6 +266,7 @@ async function run() {
 		}
 		let text = body.toString("utf8");
 		if (patchFfmpegLocal(rel, outRel)) {
+			text = patchFfmpegLocalDiagnostics(text);
 			if (!text.includes("location.origin + '/lib/ffmpeg/ffmpeg-core.js'")) {
 				text = text.replace(
 					`  function coreURL() {

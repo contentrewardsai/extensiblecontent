@@ -302,7 +302,10 @@ export function BrowserRenderButton({
 			}
 
 			const ff = (window as unknown as {
-				FFmpegLocal?: { convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown> };
+				FFmpegLocal?: {
+					ensureLoaded?: (cb?: (s: string) => void) => Promise<unknown>;
+					convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown>;
+				};
 			}).FFmpegLocal;
 			let mp4result: { ok?: boolean; blob?: Blob; error?: string } | null = null;
 			if (ff?.convertToMp4) {
@@ -310,21 +313,54 @@ export function BrowserRenderButton({
 					// Warm the HTTP cache for the 40 MB ffmpeg-core.wasm with
 					// visible byte-progress, so the user can tell the load is
 					// alive (and FFmpeg's internal fetch will then hit cache).
-					await runWithTimeout(
-						warmFfmpegWasmCache((s) => setMsg(s)),
-						600_000,
-						"FFmpeg WASM download timed out after 10 minutes — uploading WebM instead.",
-					);
-					// First-time FFmpeg WASM load on a fresh tab can take a while
-					// (the core wasm is ~40MB and is fetched + compiled inside an
-					// internal worker). Give it 10 minutes; if it still doesn't
-					// finish, just upload the webm so the user gets *something*.
+					try {
+						console.log("[BrowserRender] warming ffmpeg-core.wasm cache");
+						await runWithTimeout(
+							warmFfmpegWasmCache((s) => setMsg(s)),
+							600_000,
+							"FFmpeg WASM download timed out after 10 minutes — uploading WebM instead.",
+						);
+						console.log("[BrowserRender] warm cache complete");
+					} catch (warmErr) {
+						console.warn("[BrowserRender] warm cache failed (continuing anyway)", warmErr);
+					}
+					// Split load and convert into separate timeouts. The load step
+					// (worker spawn + wasm compile) should finish within ~30s on a
+					// warm cache; if it hasn't in 90s, the worker is hung and we
+					// give up on MP4 so the user still gets a (WebM) result.
+					if (typeof ff.ensureLoaded === "function") {
+						let lastTick = Date.now();
+						const heartbeat = setInterval(() => {
+							const secs = Math.floor((Date.now() - lastTick) / 1000);
+							setMsg(`Loading FFmpeg WASM… ${secs}s (worker spawn + compile, ~30–60s on first run)`);
+						}, 1000);
+						try {
+							console.log("[BrowserRender] FFmpeg ensureLoaded starting");
+							await runWithTimeout(
+								ff.ensureLoaded((s) => {
+									lastTick = Date.now();
+									setMsg(s);
+								}),
+								90_000,
+								"FFmpeg load timed out after 90s — worker likely hung; uploading WebM instead.",
+							);
+							console.log("[BrowserRender] FFmpeg ensureLoaded resolved");
+						} finally {
+							clearInterval(heartbeat);
+						}
+					}
+					// Now actually transcode. Load is done (or skipped); this is
+					// pure CPU-bound encoding. Long videos can take several
+					// minutes, so keep the original 10-minute budget.
+					console.log("[BrowserRender] FFmpeg convertToMp4 starting");
 					mp4result = (await runWithTimeout(
 						ff.convertToMp4(webm, (s) => setMsg(s)),
 						600_000,
 						"FFmpeg conversion timed out after 10 minutes — uploading WebM instead.",
 					)) as { ok?: boolean; blob?: Blob; error?: string };
+					console.log("[BrowserRender] FFmpeg convertToMp4 done", { ok: mp4result?.ok });
 				} catch (err) {
+					console.warn("[BrowserRender] FFmpeg pipeline failed — falling back to WebM", err);
 					mp4result = { ok: false, error: err instanceof Error ? err.message : String(err) };
 				}
 			}
