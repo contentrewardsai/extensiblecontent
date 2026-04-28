@@ -38,6 +38,22 @@ export async function GET(request: NextRequest) {
 		);
 	}
 
+	// HighLevel rolled out an app-versioning system. As of late 2025 their
+	// `/oauth/chooselocation` endpoint rejects installs that don't specify a
+	// concrete `appVersionId`, returning the cryptic `error.noAppVersionIdFound`
+	// banner along with a "log out and back in" prompt that misleadingly looks
+	// like a session issue. The version id is found in the HighLevel
+	// Marketplace dashboard → your app → Versions tab → the Live version row;
+	// it's a 24-char hex string (Mongo ObjectID) like `665c6bb13d4e5364bdec0e2f`.
+	// Falls back to constructing the URL the old way if not configured so we
+	// don't break local dev / private-app flows that still accept it.
+	const appVersionId = process.env.GHL_APP_VERSION_ID;
+	if (!appVersionId) {
+		console.warn(
+			"[ghl-auth-start] GHL_APP_VERSION_ID is not set; HighLevel may reject the install with `error.noAppVersionIdFound`. Set it from Marketplace → your app → Versions → Live version id.",
+		);
+	}
+
 	const state = Buffer.from(JSON.stringify({ userId })).toString("base64url");
 
 	const params = new URLSearchParams({
@@ -47,6 +63,12 @@ export async function GET(request: NextRequest) {
 		scope:
 			"medias.readonly medias.write socialplanner/post.readonly socialplanner/post.write socialplanner/account.readonly oauth.readonly oauth.write",
 		state,
+		// `loginWindowOpenMode=self` makes the OAuth screen reuse the current
+		// window for the HighLevel login redirect rather than opening a new
+		// window, which was the source of the "log out and log in again"
+		// confusion: the popup loaded in an unauthenticated state.
+		loginWindowOpenMode: "self",
+		...(appVersionId ? { appVersionId } : {}),
 	});
 
 	return Response.redirect(

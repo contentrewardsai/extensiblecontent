@@ -71,6 +71,7 @@ The app integrates with GoHighLevel via a Marketplace App for media library and 
 | `GHL_CLIENT_ID` | GHL Marketplace → Manage → Secrets → Client Keys |
 | `GHL_CLIENT_SECRET` | Generated alongside Client ID (copy immediately, shown once) |
 | `GHL_REDIRECT_URI` | Your OAuth callback, e.g. `https://your-domain.com/api/ghl/auth/callback` |
+| `GHL_APP_VERSION_ID` | GHL Marketplace → your app → Versions tab → Live version row → 24-char hex id. Required by HighLevel's `/oauth/chooselocation` install URL since the rollout of app versioning; without it install fails with `error.noAppVersionIdFound`. |
 | `GHL_API_BASE` | `https://services.leadconnectorhq.com` |
 | `GHL_SHARED_SECRET` | GHL Marketplace → Manage → Secrets → Shared Secret Key |
 | `GHL_EXT_AUTH_CLIENT_ID` | Self-generated (`openssl rand -hex 16`), entered in GHL External Auth config |
