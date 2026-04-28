@@ -46,6 +46,54 @@ async function preflightFfmpegWasm(): Promise<void> {
 	}
 }
 
+/**
+ * Stream the 40 MB ffmpeg-core.wasm with visible progress and warm the HTTP
+ * cache so FFmpeg's own `load()` call (which reads it again via fetch from
+ * inside its worker) lands in cache and resolves immediately.
+ *
+ * Without this, the user sees "Loading FFmpeg WASM..." forever while the
+ * worker silently downloads — the only feedback is no feedback. With it,
+ * they see the actual byte count climb so they can tell it's not hung.
+ */
+async function warmFfmpegWasmCache(onProgress: (msg: string) => void): Promise<void> {
+	const url = "/lib/ffmpeg/ffmpeg-core.wasm";
+	let res: Response;
+	try {
+		res = await fetch(url, { credentials: "include" });
+	} catch (err) {
+		throw new Error(`Could not start ffmpeg-core.wasm download: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (!res.ok) throw new Error(`ffmpeg-core.wasm returned HTTP ${res.status}`);
+	const totalHeader = res.headers.get("content-length");
+	const total = totalHeader ? Number.parseInt(totalHeader, 10) : 0;
+	const reader = res.body?.getReader();
+	if (!reader) {
+		// No streaming support — fall through and let the browser fetch normally.
+		await res.arrayBuffer();
+		return;
+	}
+	let loaded = 0;
+	let lastReport = 0;
+	for (;;) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		loaded += value?.byteLength ?? 0;
+		const now = Date.now();
+		// Throttle UI updates to ~5/sec so React doesn't thrash.
+		if (now - lastReport > 200) {
+			lastReport = now;
+			const mb = (loaded / 1e6).toFixed(1);
+			if (total > 0) {
+				const pct = Math.min(100, Math.round((100 * loaded) / total));
+				onProgress(`Downloading FFmpeg WASM — ${mb} / ${(total / 1e6).toFixed(1)} MB (${pct}%)`);
+			} else {
+				onProgress(`Downloading FFmpeg WASM — ${mb} MB`);
+			}
+		}
+	}
+	onProgress("Compiling FFmpeg WASM…");
+}
+
 function runWithTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const t = setTimeout(() => reject(new Error(message)), ms);
@@ -234,8 +282,16 @@ export function BrowserRenderButton({
 			let mp4result: { ok?: boolean; blob?: Blob; error?: string } | null = null;
 			if (ff?.convertToMp4) {
 				try {
+					// Warm the HTTP cache for the 40 MB ffmpeg-core.wasm with
+					// visible byte-progress, so the user can tell the load is
+					// alive (and FFmpeg's internal fetch will then hit cache).
+					await runWithTimeout(
+						warmFfmpegWasmCache((s) => setMsg(s)),
+						600_000,
+						"FFmpeg WASM download timed out after 10 minutes — uploading WebM instead.",
+					);
 					// First-time FFmpeg WASM load on a fresh tab can take a while
-					// (the core wasm is ~33MB and is fetched + compiled inside an
+					// (the core wasm is ~40MB and is fetched + compiled inside an
 					// internal worker). Give it 10 minutes; if it still doesn't
 					// finish, just upload the webm so the user gets *something*.
 					mp4result = (await runWithTimeout(
