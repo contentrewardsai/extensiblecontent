@@ -95,7 +95,18 @@ const ASSET_PATHS = [
 /**
  * Pinned ESM / WASM for in-browser Kokoro TTS + Whisper (Transformers.js), not in the
  * extension repo. See public/cfs-web/ for the worker + main-thread shim.
+ *
+ * IMPORTANT: kokoro-js bundles its own copy of @huggingface/transformers and that
+ * embeds a specific onnxruntime-web JS runtime. The vendored ORT *.wasm / *.mjs
+ * files MUST match that runtime version exactly — if the JS calls into wasm
+ * helpers (e.g. `Module.getValue`) that the wasm side doesn't export, ORT fails
+ * during session init with cryptic errors like
+ * `TypeError: A.getValue is not a function`. Sources of truth:
+ *   - kokoro-js@1.2.1 → @huggingface/transformers@^3.5.1
+ *   - @huggingface/transformers@3.5.1 → onnxruntime-web@1.22.0-dev.20250409-89f8206ba4
+ * Bump these in lockstep.
  */
+const ORT_VERSION = "1.22.0-dev.20250409-89f8206ba4";
 const NPM_VENDOR = [
 	{
 		out: "public/lib/kokoro/kokoro.web.js",
@@ -103,15 +114,15 @@ const NPM_VENDOR = [
 	},
 	{
 		out: "public/lib/transformers/transformers.min.js",
-		url: "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/transformers.min.js",
+		url: "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js",
 	},
 	{
 		out: "public/lib/transformers/ort-wasm-simd-threaded.jsep.wasm",
-		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.jsep.wasm",
+		url: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/ort-wasm-simd-threaded.jsep.wasm`,
 	},
 	{
 		out: "public/lib/transformers/ort-wasm-simd-threaded.wasm",
-		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.wasm",
+		url: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/ort-wasm-simd-threaded.wasm`,
 	},
 	// ONNX Runtime Web 1.20+ split the JSEP (JavaScript Execution Provider)
 	// glue out into ESM `.mjs` loaders that get *dynamically imported* alongside
@@ -120,11 +131,11 @@ const NPM_VENDOR = [
 	// fetch dynamically imported module: /lib/transformers/ort-wasm-simd-threaded.jsep.mjs".
 	{
 		out: "public/lib/transformers/ort-wasm-simd-threaded.jsep.mjs",
-		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.jsep.mjs",
+		url: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/ort-wasm-simd-threaded.jsep.mjs`,
 	},
 	{
 		out: "public/lib/transformers/ort-wasm-simd-threaded.mjs",
-		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.mjs",
+		url: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/ort-wasm-simd-threaded.mjs`,
 	},
 ];
 
