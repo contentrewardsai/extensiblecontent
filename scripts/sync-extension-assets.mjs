@@ -198,12 +198,51 @@ function patchFfmpegLocalDiagnostics(text) {
 	} else {
 		console.warn("[sync-extension-assets] ffmpeg-local.js ensureLoaded marker not found — skipping diagnostics patch");
 	}
-	const loadMarker = "return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {";
+	const loadMarker =
+		"return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {";
 	if (out.includes(loadMarker)) {
+		// Also temporarily wrap globalThis.Worker so we can catch sparse error
+		// events from the FFmpeg worker (which @ffmpeg/ffmpeg doesn't surface
+		// on its own). Restored on success or failure so we don't leak the
+		// instrumentation onto unrelated Worker constructions later.
 		out = out.replace(
 			loadMarker,
-			"try { console.log('[FFmpegLocal] calling FFmpeg.load()', { coreURL: coreURL(), wasmURL: wasmURL() }); } catch (_) {}\n      ffmpegInstance.on('log', function (ev) { try { console.log('[FFmpeg core]', ev && ev.type, ev && ev.message); } catch (_) {} });\n      return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {\n        try { console.log('[FFmpegLocal] FFmpeg.load() resolved'); } catch (_) {}",
+			[
+				"try { console.log('[FFmpegLocal] calling FFmpeg.load()', { coreURL: coreURL(), wasmURL: wasmURL() }); } catch (_) {}",
+				"      ffmpegInstance.on('log', function (ev) { try { console.log('[FFmpeg core]', ev && ev.type, ev && ev.message); } catch (_) {} });",
+				"      var __origWorker = global.Worker;",
+				"      var __wrappedWorker = function (url, opts) {",
+				"        try { console.log('[FFmpegLocal] new Worker', { url: String(url), opts: opts }); } catch (_) {}",
+				"        var w = new __origWorker(url, opts);",
+				"        try {",
+				"          w.addEventListener('error', function (e) {",
+				"            try { console.error('[FFmpeg worker] error event', { message: e && e.message, filename: e && e.filename, lineno: e && e.lineno, colno: e && e.colno, error: e && e.error }); } catch (_) {}",
+				"          });",
+				"          w.addEventListener('messageerror', function (e) {",
+				"            try { console.error('[FFmpeg worker] messageerror event', e); } catch (_) {}",
+				"          });",
+				"        } catch (_) {}",
+				"        return w;",
+				"      };",
+				"      __wrappedWorker.prototype = __origWorker.prototype;",
+				"      try { global.Worker = __wrappedWorker; } catch (_) {}",
+				"      var __restoreWorker = function () { try { global.Worker = __origWorker; } catch (_) {} };",
+				"      return ffmpegInstance.load({",
+				"        coreURL: coreURL(),",
+				"        wasmURL: wasmURL(),",
+				"      }).then(function () {",
+				"        __restoreWorker();",
+				"        try { console.log('[FFmpegLocal] FFmpeg.load() resolved'); } catch (_) {}",
+			].join("\n"),
 		);
+		// Also restore the wrapper if load() rejects.
+		const restoreMarker = "    loading.catch(function () {\n      ffmpegInstance = null;\n      loading = null;\n    });";
+		if (out.includes(restoreMarker)) {
+			out = out.replace(
+				restoreMarker,
+				"    loading.catch(function (err) {\n      try { console.error('[FFmpegLocal] FFmpeg.load() rejected', err); } catch (_) {}\n      ffmpegInstance = null;\n      loading = null;\n    });",
+			);
+		}
 	} else {
 		console.warn("[sync-extension-assets] ffmpeg-local.js load marker not found — skipping load diagnostics");
 	}

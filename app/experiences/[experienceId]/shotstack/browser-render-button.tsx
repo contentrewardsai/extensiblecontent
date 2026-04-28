@@ -369,12 +369,11 @@ export function BrowserRenderButton({
 			const ext = isMp4 ? "mp4" : "webm";
 			const contentType = blob.type || (isMp4 ? "video/mp4" : "video/webm");
 			if (!isMp4) {
-				const why = mp4result?.error
-					? ` (${mp4result.error})`
-					: ff?.convertToMp4
-						? ""
-						: " (FFmpeg not available)";
-				setMsg(`Uploading WebM — could not transcode to MP4${why}`);
+				// WebM is fully supported in every modern browser including
+				// iOS 16+ Safari, so this is a format choice rather than a
+				// failure. Don't alarm the user; the detailed reason is in the
+				// console for debugging.
+				setMsg("Uploading WebM…");
 			}
 			const fd = new FormData();
 			for (const [k, v] of Object.entries(context.browserRenderFields)) {
@@ -399,11 +398,19 @@ export function BrowserRenderButton({
 			// the fallback reason when we couldn't honour their preference.
 			const dest =
 				j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
-			const workerNote = workerFatal
-				? ` (TTS / STT ran on the main thread — worker unavailable: ${workerFatal})`
-				: "";
-			const fmtNote = isMp4 ? "" : " Saved as WebM instead of MP4.";
-			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}${fmtNote}${workerNote}`);
+			// Worker / format notes are intentionally NOT surfaced to the user
+			// when everything still produced a working video — they're console
+			// diagnostics, not actionable problems for the end-user. The
+			// fallback_message from the server is still surfaced because that
+			// one tells them where their file actually landed (e.g. GHL token
+			// expired so we used Supabase storage instead).
+			if (workerFatal) {
+				console.warn("[BrowserRender] AI worker fell back to main thread:", workerFatal);
+			}
+			if (!isMp4) {
+				console.warn("[BrowserRender] uploaded as WebM (FFmpeg load failed in this browser context)");
+			}
+			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
 			router.refresh();
 		} catch (e) {
 			setMsg(e instanceof Error ? e.message : "Render failed");
