@@ -43,7 +43,18 @@
 	var preflightPromise = null;
 	function preflightAssets() {
 		if (preflightPromise) return preflightPromise;
-		var urls = [WORKER_URL, KOKORO_URL, TRANSFORMERS_URL, "/lib/transformers/ort-wasm-simd-threaded.wasm"];
+		var urls = [
+			WORKER_URL,
+			KOKORO_URL,
+			TRANSFORMERS_URL,
+			"/lib/transformers/ort-wasm-simd-threaded.wasm",
+			"/lib/transformers/ort-wasm-simd-threaded.jsep.wasm",
+			// ONNX Runtime Web 1.20+ JSEP loader. Missing this causes:
+			// "no available backend found. ERR: [wasm] TypeError: Failed to
+			// fetch dynamically imported module: …jsep.mjs"
+			"/lib/transformers/ort-wasm-simd-threaded.jsep.mjs",
+			"/lib/transformers/ort-wasm-simd-threaded.mjs",
+		];
 		preflightPromise = Promise.all(
 			urls.map(function (u) {
 				return fetch(u, { method: "HEAD", credentials: "include" })

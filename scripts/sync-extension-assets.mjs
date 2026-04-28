@@ -113,6 +113,19 @@ const NPM_VENDOR = [
 		out: "public/lib/transformers/ort-wasm-simd-threaded.wasm",
 		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.wasm",
 	},
+	// ONNX Runtime Web 1.20+ split the JSEP (JavaScript Execution Provider)
+	// glue out into ESM `.mjs` loaders that get *dynamically imported* alongside
+	// the .wasm files. Without these the worker (and main-thread fallback)
+	// dies with: "no available backend found. ERR: [wasm] TypeError: Failed to
+	// fetch dynamically imported module: /lib/transformers/ort-wasm-simd-threaded.jsep.mjs".
+	{
+		out: "public/lib/transformers/ort-wasm-simd-threaded.jsep.mjs",
+		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.jsep.mjs",
+	},
+	{
+		out: "public/lib/transformers/ort-wasm-simd-threaded.mjs",
+		url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0-dev.20241016-2b8fc5529b/dist/ort-wasm-simd-threaded.mjs",
+	},
 ];
 
 async function ensureDir(f) {
