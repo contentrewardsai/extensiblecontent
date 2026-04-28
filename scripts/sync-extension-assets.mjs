@@ -160,6 +160,42 @@ function patchFfmpegLocal(relPath, outRelPath) {
 	return relPath === "shared/ffmpeg-local.js" && outRelPath === "public/shared/ffmpeg-local.js";
 }
 
+/**
+ * Widen kokoro.web.js's `env` proxy so we can mutate ORT settings beyond
+ * `wasmPaths`. Ships with ONLY `wasmPaths` exposed:
+ *   const Mf={set wasmPaths(e){Wg.backends.onnx.wasm.wasmPaths=e}, get wasmPaths(){…}};
+ *
+ * We need `numThreads` (so we can force single-threaded ORT and avoid the
+ * silent module-Worker pthread-spawn hang under COEP credentialless) and
+ * `proxy` (so we can disable the auto-spawned proxy worker for the same
+ * reason). We also expose `backends` as a passthrough for advanced consumers.
+ *
+ * Returns a Buffer with the patch applied (or the original if the marker
+ * isn't found, e.g. kokoro version drift).
+ */
+function patchKokoroEnvProxy(buf) {
+	const text = buf.toString("utf8");
+	const marker =
+		"const Mf={set wasmPaths(e){Wg.backends.onnx.wasm.wasmPaths=e},get wasmPaths(){return Wg.backends.onnx.wasm.wasmPaths}};";
+	if (!text.includes(marker)) {
+		console.warn(
+			"[sync-extension-assets] kokoro env proxy marker not found — skipping numThreads patch (kokoro upstream may have changed)",
+		);
+		return buf;
+	}
+	const widened =
+		"const Mf={" +
+		"set wasmPaths(e){Wg.backends.onnx.wasm.wasmPaths=e}," +
+		"get wasmPaths(){return Wg.backends.onnx.wasm.wasmPaths}," +
+		"set numThreads(e){Wg.backends.onnx.wasm.numThreads=e}," +
+		"get numThreads(){return Wg.backends.onnx.wasm.numThreads}," +
+		"set proxy(e){Wg.backends.onnx.wasm.proxy=e}," +
+		"get proxy(){return Wg.backends.onnx.wasm.proxy}," +
+		"get backends(){return Wg.backends}" +
+		"};";
+	return Buffer.from(text.replace(marker, widened), "utf8");
+}
+
 async function run() {
 	let count = 0;
 	for (const rel of ASSET_PATHS) {
@@ -212,7 +248,11 @@ async function run() {
 			throw new Error(`Failed ${url}: ${res.status} ${res.statusText}`);
 		}
 		const buf = Buffer.from(await res.arrayBuffer());
-		await writeBuffer(dest, buf);
+		let body = buf;
+		if (out === "public/lib/kokoro/kokoro.web.js") {
+			body = patchKokoroEnvProxy(buf);
+		}
+		await writeBuffer(dest, body);
 		count++;
 	}
 	const versionFile = join(PUBLIC, "generator", ".extension-assets-version");

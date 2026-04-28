@@ -83,8 +83,17 @@ async function ensureKokoro() {
 	const { KokoroTTS, env } = mod;
 	if (!KokoroTTS) throw new Error("kokoro.web.js did not export KokoroTTS");
 	const wasmBase = `${ORIGIN}/lib/transformers/`;
-	if (env && "wasmPaths" in env) {
-		env.wasmPaths = wasmBase;
+	// Force single-threaded ORT. The threaded build's pthread Workers spawn
+	// silently and can stall the parent forever in some COEP setups; numThreads=1
+	// avoids the pthread pool entirely. See cfs-web-ai.js ensureMainKokoro().
+	if (env) {
+		if ("wasmPaths" in env) env.wasmPaths = wasmBase;
+		if ("numThreads" in env) env.numThreads = 1;
+		if ("proxy" in env) env.proxy = false;
+		if (env.backends?.onnx?.wasm) {
+			env.backends.onnx.wasm.numThreads = 1;
+			env.backends.onnx.wasm.proxy = false;
+		}
 	}
 	kokoroTts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
 		dtype: "q8",
@@ -150,7 +159,8 @@ async function ensureAsr() {
 		env.useWasmCache = true;
 		if (env.backends?.onnx?.wasm) {
 			env.backends.onnx.wasm.wasmPaths = wasmBase;
-			env.backends.onnx.wasm.numThreads = self.crossOriginIsolated ? 4 : 1;
+			env.backends.onnx.wasm.numThreads = 1;
+			env.backends.onnx.wasm.proxy = false;
 		}
 	}
 	asrPipeline = await pipeline("automatic-speech-recognition", "Xenova/whisper-tiny.en", {

@@ -234,8 +234,21 @@
 		var KokoroTTS = mod.KokoroTTS;
 		var env = mod.env;
 		if (!KokoroTTS) throw new Error("kokoro.web.js did not export KokoroTTS");
+		// Force ORT into single-threaded mode. The threaded build silently
+		// hangs in some Chrome contexts (COEP credentialless) because the
+		// pthread module Workers it spawns die without a proper error event,
+		// so ORT waits forever for a "loaded" ack that never comes.
+		// numThreads=1 skips the pthread pool entirely.
 		try {
-			if (env && "wasmPaths" in env) env.wasmPaths = ORT_WASM_BASE;
+			if (env) {
+				if ("wasmPaths" in env) env.wasmPaths = ORT_WASM_BASE;
+				if ("numThreads" in env) env.numThreads = 1;
+				if ("proxy" in env) env.proxy = false;
+				if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+					env.backends.onnx.wasm.numThreads = 1;
+					env.backends.onnx.wasm.proxy = false;
+				}
+			}
 		} catch (_) {}
 		mtKokoro = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
 			dtype: "q8",
@@ -266,7 +279,9 @@
 				env.useWasmCache = true;
 				if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
 					env.backends.onnx.wasm.wasmPaths = ORT_WASM_BASE;
-					env.backends.onnx.wasm.numThreads = global.crossOriginIsolated ? 4 : 1;
+					// Single-threaded — see ensureMainKokoro() for why.
+					env.backends.onnx.wasm.numThreads = 1;
+					env.backends.onnx.wasm.proxy = false;
 				}
 			}
 		} catch (_) {}
