@@ -149,7 +149,9 @@ export async function POST(request: NextRequest) {
 		file_url: uploadResult.fileUrl,
 		storage_type: uploadResult.storageType,
 		fallback_reason: uploadResult.fallbackReason ?? null,
-		fallback_message: uploadResult.fallbackReason ? describeFallback(uploadResult.fallbackReason) : null,
+		fallback_message: uploadResult.fallbackReason
+			? `${describeFallback(uploadResult.fallbackReason)}${uploadResult.fallbackDetail ? ` (${uploadResult.fallbackDetail})` : ""}`
+			: null,
 		project_id,
 		template_id,
 		owner_id,

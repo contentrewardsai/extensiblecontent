@@ -107,7 +107,9 @@ export async function uploadTemplateThumbnail(params: {
 		thumbnailUrl: uploadResult.fileUrl,
 		thumbnailUpdatedAt,
 		storageType: uploadResult.storageType,
-		fallbackMessage: uploadResult.fallbackReason ? describeFallback(uploadResult.fallbackReason) : null,
+		fallbackMessage: uploadResult.fallbackReason
+			? `${describeFallback(uploadResult.fallbackReason)}${uploadResult.fallbackDetail ? ` (${uploadResult.fallbackDetail})` : ""}`
+			: null,
 	};
 }
 

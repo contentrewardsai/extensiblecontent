@@ -23,6 +23,13 @@ export interface PerformUploadResult {
 	storageType: "supabase" | "ghl";
 	storageMeta: Record<string, unknown>;
 	fallbackReason?: "no_ghl_connection" | "no_location" | "upload_failed";
+	/**
+	 * When fallbackReason === 'upload_failed', this carries the underlying
+	 * exception message (e.g. "GHL media upload failed (401): Unauthorized") so
+	 * the API caller can surface it to the user. Not stored separately on the
+	 * row — `storageMeta.ghl_upload_error` already captures it.
+	 */
+	fallbackDetail?: string;
 }
 
 /**
@@ -59,12 +66,14 @@ export async function performStorageUpload(input: PerformUploadInput): Promise<P
 		} catch (err) {
 			// Auto-fall-back per product decision: don't block the render, but
 			// mark the reason so the UI can surface "Saved to CRAI instead".
+			const detail = err instanceof Error ? err.message : String(err);
 			console.error("[storage] GHL upload failed, falling back to supabase:", err);
 			fallbackReason = "upload_failed";
-			return uploadToSupabase(input, fallbackReason, {
+			const result = await uploadToSupabase(input, fallbackReason, {
 				attempted_ghl_location_id: target.locationId,
-				ghl_upload_error: err instanceof Error ? err.message : String(err),
+				ghl_upload_error: detail,
 			});
+			return { ...result, fallbackDetail: detail };
 		}
 	}
 
