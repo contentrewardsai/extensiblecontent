@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ensureCfsGeneratorLoaded } from "./ensure-cfs-generator";
 import type { ShotstackEditorContext } from "./shotstack-editor-context";
@@ -142,24 +142,21 @@ export function BrowserRenderButton({
 		setIsolated(typeof crossOriginIsolated !== "undefined" ? !!crossOriginIsolated : false);
 	}, []);
 
-	const onRenderRef = useRef<(() => void) | null>(null);
-	const autoRanRef = useRef(false);
-	// Auto-run when the button was opened via "Open in new tab to render"
-	// (the originating click sets ?render=1 on the URL). This lets us honour a
-	// user's click that we couldn't service in the embedded frame.
+	// When opened via "Open in new tab to render" the URL carries `?render=1`.
+	// We *don't* auto-run on mount: the timeline player's AudioContext can only
+	// start in the running state when created inside a user-gesture stack, and
+	// `window.open()` doesn't transfer activation reliably across tabs. Instead
+	// we surface a single big primary CTA so the next click is a real gesture
+	// in *this* tab. Tracked via state so we can switch the button copy.
+	const [pendingFromOpen, setPendingFromOpen] = useState(false);
 	useEffect(() => {
 		if (canRun !== true || isolated !== true) return;
-		if (autoRanRef.current) return;
 		try {
 			const url = new URL(window.location.href);
 			if (url.searchParams.get("render") !== "1") return;
-			autoRanRef.current = true;
+			setPendingFromOpen(true);
 			url.searchParams.delete("render");
 			window.history.replaceState(null, "", url.toString());
-			// Defer one tick so the newly-bound `onRender` closure runs.
-			setTimeout(() => {
-				onRenderRef.current?.();
-			}, 0);
 		} catch {
 			/* ignore */
 		}
@@ -182,7 +179,35 @@ export function BrowserRenderButton({
 
 	const onRender = async () => {
 		if (canRun !== true) return;
+		// MUST run synchronously inside this user-gesture handler before any
+		// `await`. Creating + resuming an AudioContext here marks the page as
+		// "audio activated", so the AudioContext that pixi-timeline-player
+		// spins up later (after our async TTS / FFmpeg downloads) is allowed
+		// to start in the running state rather than throwing the
+		// "AudioContext was not allowed to start" warning and outputting
+		// silence. We also stash the primer on a global so we can keep it
+		// open if the player wants to inherit a context.
+		try {
+			const w = window as unknown as {
+				AudioContext?: typeof AudioContext;
+				webkitAudioContext?: typeof AudioContext;
+				__CFS_audioContext?: AudioContext;
+			};
+			const Ctor = w.AudioContext || w.webkitAudioContext;
+			if (Ctor && !w.__CFS_audioContext) {
+				const primer = new Ctor();
+				w.__CFS_audioContext = primer;
+				if (primer.state === "suspended") {
+					primer.resume().catch(() => {});
+				}
+			} else if (w.__CFS_audioContext && w.__CFS_audioContext.state === "suspended") {
+				w.__CFS_audioContext.resume().catch(() => {});
+			}
+		} catch {
+			/* ignore — worst case the player handles its own context */
+		}
 		setBusy(true);
+		setPendingFromOpen(false);
 		setMsg(null);
 		try {
 			setMsg("Loading editor scripts…");
@@ -350,7 +375,6 @@ export function BrowserRenderButton({
 			setBusy(false);
 		}
 	};
-	onRenderRef.current = onRender;
 
 	if (canRun === null) {
 		return (
@@ -396,11 +420,24 @@ export function BrowserRenderButton({
 		);
 	}
 
+	const buttonLabel = busy
+		? "Rendering…"
+		: pendingFromOpen
+			? "Click to start render"
+			: isToolbar
+				? "Render in browser (free)"
+				: "Browser render (free)";
+	const buttonClass = pendingFromOpen && !busy ? `${baseBtn} bg-accent-9 text-white border-accent-9` : baseBtn;
 	return (
 		<div className={isToolbar ? "inline-flex flex-col gap-0.5" : "inline-flex flex-col items-end gap-0.5"}>
-			<button type="button" className={baseBtn} disabled={disabled || busy} onClick={onRender}>
-				{busy ? "Rendering…" : isToolbar ? "Render in browser (free)" : "Browser render (free)"}
+			<button type="button" className={buttonClass} disabled={disabled || busy} onClick={onRender}>
+				{buttonLabel}
 			</button>
+			{pendingFromOpen && !busy && !msg ? (
+				<span className={isToolbar ? "text-2 text-gray-10" : "text-2 text-gray-10 text-right max-w-xs"}>
+					This tab is ready — click to render (a click is required to enable audio playback).
+				</span>
+			) : null}
 			{msg && !isToolbar ? <span className="text-2 text-gray-10 text-right max-w-xs">{msg}</span> : null}
 			{msg && isToolbar ? <span className="text-2 text-gray-10">{msg}</span> : null}
 		</div>
