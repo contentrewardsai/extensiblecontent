@@ -172,8 +172,21 @@
 				var p = pending.get(d.id);
 				if (!p) return;
 				pending.delete(d.id);
-				if (d.ok) p.resolve(d);
-				else p.reject(new Error(d.error || "AI worker error"));
+				if (!d.ok) {
+					p.reject(new Error(d.error || "AI worker error"));
+					return;
+				}
+				// Normalise to the same shape the main-thread path resolves
+				// with, so dispatch() doesn't have to re-shape per backend:
+				//   tts → Blob
+				//   stt → { text, words? }
+				var kind = p.__call && p.__call.kind;
+				if (kind === "tts") {
+					if (d.blob instanceof Blob) p.resolve(d.blob);
+					else p.reject(new Error("Worker returned no audio blob"));
+				} else {
+					p.resolve({ text: String((d && d.text) || ""), words: d && d.words });
+				}
 			}
 		};
 		worker.onerror = function (e) {
@@ -417,13 +430,10 @@
 				killWorker("postMessage failed: " + ((e && e.message) || String(e)));
 				runOnMainThread(call).then(resolve, reject);
 			}
-		}).then(function (r) {
-			if (call.kind === "tts") {
-				if (r && r.blob instanceof Blob) return r.blob;
-				throw new Error("No audio blob from worker");
-			}
-			return { text: String((r && r.text) || ""), words: r && r.words };
 		});
+		// Both backends already resolve with the public shape:
+		//   tts → Blob, stt → { text, words? }
+		// (worker.onmessage normalises; runOnMainThread returns natively).
 	}
 
 	function callTts(text, voice) {
