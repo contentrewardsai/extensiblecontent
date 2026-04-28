@@ -126,8 +126,37 @@ export async function getLocationTokenFromAgency(
 // ---------------------------------------------------------------------------
 
 /**
+ * Placeholder values inserted by `webhooks` and `connect-whop/callback` when a
+ * `ghl_locations` row is created before the actual GHL OAuth install completes.
+ * Sending these to /oauth/token returns a 401 ("Invalid refresh token") that
+ * looks like a generic auth failure but actually means "this connection was
+ * never finished".
+ */
+const PLACEHOLDER_TOKENS = new Set(["pending", "pending-link"]);
+
+function isPlaceholderToken(t: string | null | undefined): boolean {
+	return !t || PLACEHOLDER_TOKENS.has(t);
+}
+
+/**
  * Returns a valid access token for a ghl_locations row, refreshing if needed.
- * Updates the DB with the new token on refresh.
+ *
+ * HighLevel OAuth notes:
+ *   - access_token  → 24h
+ *   - refresh_token → up to 1 year, but **rotates on every refresh**.
+ *     The old refresh_token is invalidated immediately (or after a short grace
+ *     period). If we ever fail to persist the rotated value, the next call
+ *     here sends a stale token and HighLevel returns 401, locking the user
+ *     out until they reconnect.
+ *
+ * To make that lockout impossible we:
+ *   1. Refuse to call /oauth/token with a placeholder refresh_token (never
+ *      had a real token; user needs to install the GHL app first).
+ *   2. Validate the refresh response actually contains both an access_token
+ *      AND a refresh_token; if rotation didn't happen, keep the existing one.
+ *   3. Throw if the DB write fails — better to surface the error to the caller
+ *      than to silently return an access_token whose paired refresh_token was
+ *      never persisted.
  */
 export async function getValidLocationToken(
 	ghlLocationDbId: string,
@@ -137,7 +166,7 @@ export async function getValidLocationToken(
 	const { data: loc, error } = await supabase
 		.from("ghl_locations")
 		.select(
-			"id, access_token, refresh_token, token_expires_at, connection_id, is_active",
+			"id, location_id, access_token, refresh_token, token_expires_at, connection_id, is_active",
 		)
 		.eq("id", ghlLocationDbId)
 		.single();
@@ -151,20 +180,64 @@ export async function getValidLocationToken(
 		return loc.access_token;
 	}
 
+	if (isPlaceholderToken(loc.refresh_token)) {
+		throw new Error(
+			`GHL location ${loc.location_id ?? ghlLocationDbId} has placeholder tokens — the user needs to install / reconnect the GHL app to populate real OAuth credentials.`,
+		);
+	}
+
+	console.log(
+		`[ghl] refreshing token for location ${loc.location_id ?? ghlLocationDbId} (expired ${Math.round((Date.now() - expiresAt) / 1000)}s ago)`,
+	);
+
 	const refreshed = await refreshAccessToken(loc.refresh_token, "Location");
+
+	if (!refreshed.access_token) {
+		throw new Error("GHL refresh returned no access_token");
+	}
+
+	// HighLevel always rotates, but be defensive: if rotation somehow didn't
+	// happen, keep the existing refresh_token rather than persisting `undefined`
+	// and locking the user out on the next call.
+	const nextRefreshToken = refreshed.refresh_token || loc.refresh_token;
+	if (!refreshed.refresh_token) {
+		console.warn(
+			`[ghl] refresh response did not include a new refresh_token for location ${loc.location_id ?? ghlLocationDbId} — keeping existing one`,
+		);
+	}
+
 	const newExpiresAt = new Date(
 		Date.now() + refreshed.expires_in * 1000,
 	).toISOString();
 
-	await supabase
+	const { error: updateErr } = await supabase
 		.from("ghl_locations")
 		.update({
 			access_token: refreshed.access_token,
-			refresh_token: refreshed.refresh_token,
+			refresh_token: nextRefreshToken,
 			token_expires_at: newExpiresAt,
 			updated_at: new Date().toISOString(),
 		})
 		.eq("id", ghlLocationDbId);
+
+	if (updateErr) {
+		// Do NOT return the access_token here — we just used (and therefore
+		// invalidated) the previous refresh_token at HighLevel. If we don't
+		// persist the new one, the next refresh call will fail with 401 and
+		// the user will be locked out. Better to fail loudly now so the
+		// caller can surface a "please reconnect" message.
+		console.error(
+			`[ghl] failed to persist rotated tokens for location ${loc.location_id ?? ghlLocationDbId}:`,
+			updateErr,
+		);
+		throw new Error(
+			`Failed to persist refreshed GHL tokens — please reconnect HighLevel: ${updateErr.message}`,
+		);
+	}
+
+	console.log(
+		`[ghl] rotated tokens for location ${loc.location_id ?? ghlLocationDbId} (next expiry ${newExpiresAt})`,
+	);
 
 	return refreshed.access_token;
 }

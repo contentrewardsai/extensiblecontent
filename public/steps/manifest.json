@@ -1,0 +1,5 @@
+{
+	"_comment": "Stub manifest for the web build of the editor. The Chrome-extension version of step-generator-ui-loader.js fetches /steps/manifest.json to discover step plugins; we don't ship any in the web app, so this empty manifest just suppresses the 404 noise in the console.",
+	"version": "1",
+	"steps": []
+}
