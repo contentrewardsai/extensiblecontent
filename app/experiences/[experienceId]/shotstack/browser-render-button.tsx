@@ -15,6 +15,7 @@ type CfsAiProgress = {
 	total?: number;
 	status?: string;
 	error?: string;
+	message?: string;
 };
 
 function detectChromium() {
@@ -174,14 +175,19 @@ export function BrowserRenderButton({
 			const wAi = window as unknown as {
 				__CFS_subscribeAiProgress?: (fn: (d: CfsAiProgress) => void) => () => void;
 			};
-			let aiFatal: string | null = null;
+			// `fatal` means the worker died — but the shim transparently retries
+			// on the main thread, so it's a soft warning not a render-killer.
+			let workerFatal: string | null = null;
 			const unsub =
 				typeof wAi.__CFS_subscribeAiProgress === "function"
 					? wAi.__CFS_subscribeAiProgress((d) => {
 							if (d.type === "fatal") {
-								// Worker died — narration will be silent for this render.
-								// Surface it so the user knows; the engine will keep going.
-								aiFatal = d.error || "AI worker failed";
+								workerFatal = d.error || "AI worker failed";
+								setMsg("AI worker unavailable — running TTS / STT on the main thread (slower).");
+								return;
+							}
+							if (d.type === "info" && d.message) {
+								setMsg(d.message);
 								return;
 							}
 							if (d.type !== "progress") return;
@@ -276,9 +282,11 @@ export function BrowserRenderButton({
 			// the fallback reason when we couldn't honour their preference.
 			const dest =
 				j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
-			const ttsNote = aiFatal ? ` Narration is silent because in-browser TTS failed: ${aiFatal}` : "";
+			const workerNote = workerFatal
+				? ` (TTS / STT ran on the main thread — worker unavailable: ${workerFatal})`
+				: "";
 			const fmtNote = isMp4 ? "" : " Saved as WebM instead of MP4.";
-			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}${fmtNote}${ttsNote}`);
+			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}${fmtNote}${workerNote}`);
 			router.refresh();
 		} catch (e) {
 			setMsg(e instanceof Error ? e.message : "Render failed");
