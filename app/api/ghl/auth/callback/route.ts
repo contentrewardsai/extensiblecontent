@@ -108,8 +108,27 @@ export async function GET(request: NextRequest) {
 		console.log(
 			"[ghl-callback] Stored tokens for companyId:",
 			tokenData.companyId,
-			"— awaiting Connection Key linking.",
+			"— no userId in state; user will be linked on Custom Page load.",
 		);
+
+		if (userType === "Location" && tokenData.locationId) {
+			const expiresAt = new Date(
+				Date.now() + tokenData.expires_in * 1000,
+			).toISOString();
+			await supabase.from("ghl_locations").upsert(
+				{
+					connection_id: connection.id,
+					location_id: tokenData.locationId,
+					access_token: tokenData.access_token,
+					refresh_token: tokenData.refresh_token,
+					token_expires_at: expiresAt,
+					is_active: true,
+					updated_at: new Date().toISOString(),
+				},
+				{ onConflict: "location_id" },
+			);
+		}
+
 		const successUrl = new URL("/api/ghl/auth/success", origin);
 		successUrl.searchParams.set("pending", "true");
 		successUrl.searchParams.set("companyId", tokenData.companyId);
@@ -159,7 +178,7 @@ async function handlePostConnection(
 				is_active: true,
 				updated_at: new Date().toISOString(),
 			},
-			{ onConflict: "connection_id,location_id" },
+			{ onConflict: "location_id" },
 		);
 
 		const successUrl = new URL("/api/ghl/auth/success", origin);

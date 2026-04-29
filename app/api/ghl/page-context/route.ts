@@ -29,22 +29,32 @@ export async function GET(request: NextRequest) {
 	const supabase = getServiceSupabase();
 	let locationName: string | null = null;
 
-	// Activation status: when we know a locationId we look up its tokens and
-	// surface a per-location HighLevel install URL if the row is still on
-	// placeholder credentials. The Custom Page renders an "Activate this
-	// location" button driven by these fields.
+	// Reauthorization status: when we know a locationId we look up its
+	// tokens and surface a per-location HighLevel reauth URL if NO row
+	// holds real (non-placeholder) credentials.
+	//
+	// We deliberately list ALL rows for this location_id rather than using
+	// `.maybeSingle()` because earlier flows could produce two rows for the
+	// same location_id: a synthetic placeholder created by `auto-link` and
+	// a real one created later by the OAuth callback (they live under
+	// different `connection_id`s, so the per-connection unique constraint
+	// doesn't dedupe them). If even one real row exists, the location has
+	// usable credentials and we don't show the banner.
 	let activationNeeded = false;
 	let activationInstallUrl: string | null = null;
 	if (locationId) {
-		const { data: locTokens } = await supabase
+		const { data: locRows } = await supabase
 			.from("ghl_locations")
 			.select("access_token, location_name")
-			.eq("location_id", locationId)
-			.maybeSingle();
-		if (locTokens?.location_name) locationName = locTokens.location_name;
-		const tokenIsPlaceholder =
-			!locTokens || PLACEHOLDER_TOKENS.has(locTokens.access_token ?? "");
-		if (tokenIsPlaceholder) {
+			.eq("location_id", locationId);
+		const realRow = locRows?.find(
+			(r) => r.access_token && !PLACEHOLDER_TOKENS.has(r.access_token),
+		);
+		const fallbackRow = realRow ?? locRows?.[0] ?? null;
+		if (fallbackRow?.location_name && !locationName) {
+			locationName = fallbackRow.location_name;
+		}
+		if (!realRow) {
 			activationNeeded = true;
 			activationInstallUrl = buildLocationInstallUrl(locationId);
 		}

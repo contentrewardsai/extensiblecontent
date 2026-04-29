@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 					is_active: true,
 					updated_at: new Date().toISOString(),
 				},
-				{ onConflict: "connection_id,location_id" },
+				{ onConflict: "location_id" },
 			);
 
 			results.push({ locationId, ok: true });

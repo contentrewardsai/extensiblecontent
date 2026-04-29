@@ -96,22 +96,20 @@ export async function linkWhopUserToGhl(args: {
 	}
 
 	if (locationId) {
-		const { data: loc } = await supabase
-			.from("ghl_locations")
-			.select("id")
-			.eq("connection_id", connectionId)
-			.eq("location_id", locationId)
-			.maybeSingle();
-		if (!loc) {
-			await supabase.from("ghl_locations").insert({
+		await supabase.from("ghl_locations").upsert(
+			{
 				connection_id: connectionId,
 				location_id: locationId,
 				access_token: "pending-link",
 				refresh_token: "pending-link",
 				token_expires_at: new Date(0).toISOString(),
 				is_active: true,
-			});
-		}
+			},
+			{
+				onConflict: "location_id",
+				ignoreDuplicates: true,
+			},
+		);
 	}
 
 	await supabase

@@ -752,10 +752,10 @@ export default function GhlSettingsPage() {
 
 			{ctx?.activation?.needed && ctx.activation.installUrl && (
 				<div style={styles.warningBanner}>
-					<strong>Activate this location.</strong> The Extensible Content
-					app needs to be installed on this HighLevel location before it
-					can upload to your media library, post to social channels, or
-					render videos through ShotStack.
+					<strong>Reconnect HighLevel.</strong> The app is installed on
+					this location, but we don&apos;t have valid API tokens for it
+					yet (or they expired). Re-authorize to enable media library
+					uploads, social posting, and ShotStack renders.
 					<div style={{ marginTop: 10 }}>
 						<a
 							href={ctx.activation.installUrl}
@@ -767,13 +767,13 @@ export default function GhlSettingsPage() {
 								textDecoration: "none",
 							}}
 						>
-							Open install page in HighLevel →
+							Re-authorize in HighLevel →
 						</a>
 					</div>
 					<p style={{ ...styles.muted, marginTop: 8, fontSize: 12 }}>
-						The new tab will land on this location&apos;s integration page
-						in HighLevel — click <strong>Install</strong> there. When it
-						completes you&apos;ll be redirected back here automatically.
+						Opens this location&apos;s integration page in HighLevel.
+						Click <strong>Reauthorize</strong> (or Reinstall) there —
+						HighLevel will redirect back to us with fresh tokens.
 					</p>
 				</div>
 			)}

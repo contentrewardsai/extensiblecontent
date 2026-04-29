@@ -1,23 +1,26 @@
 /**
- * Build the per-location install URL inside the HighLevel UI.
+ * Build the per-location app management URL inside the HighLevel UI.
  *
- * HighLevel hosts two install entry points:
- *   1. `marketplace.leadconnectorhq.com/oauth/chooselocation?...` — the
- *      universal location picker. Requires a correct `appVersionId` query
- *      param, which doesn't always survive Marketplace UI changes.
- *   2. `app.leadconnectorhq.com/v2/location/<locationId>/integration/...`
- *      — opens the integration page for one specific location. From there
- *      the user clicks Install and HL bounces back to our redirect_uri
- *      with an OAuth code, exactly the same as chooselocation does. No
- *      `appVersionId` query param needed; the version is in the path.
+ * Used in two scenarios for an app that is already installed on a location
+ * (i.e. the user is viewing our Custom Page so HL knows about us):
  *
- * We use #2 wherever we already know the location id (i.e. inside the GHL
- * Custom Page iframe). It's also more user-friendly because the user lands
- * directly on the install screen for the location they're already in.
+ *   - **First-time token capture failed.** HL fired the OAuth callback to
+ *     our `redirect_uri` but our handler errored, so we never stored
+ *     access/refresh tokens. The location row exists with placeholder
+ *     credentials.
+ *   - **Refresh token expired or was revoked.** We had real tokens once
+ *     but `getValidLocationToken` now returns 401 from HL. The location
+ *     row holds stale credentials.
  *
- * The URL uses the white-label domain (`leadconnectorhq.com`). HighLevel
- * agencies on `gohighlevel.com` redirect through the same flow; the
- * white-label form works in both.
+ * In both cases the user clicks **Reauthorize** on this page and HL
+ * re-runs the OAuth handshake against our `redirect_uri`, sending fresh
+ * tokens.
+ *
+ * URL form:
+ *   https://app.leadconnectorhq.com/v2/location/<locationId>/integration/<appId>/versions/<versionId>
+ *
+ * Uses the white-label domain (`leadconnectorhq.com`). The non-white-label
+ * `app.gohighlevel.com` redirects through the same flow.
  */
 export function buildLocationInstallUrl(locationId: string): string | null {
 	const clientId = process.env.GHL_CLIENT_ID;
