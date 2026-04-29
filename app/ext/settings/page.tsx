@@ -33,6 +33,7 @@ interface PageContext {
 	locationId: string;
 	locationName: string | null;
 	companyId?: string;
+	activation?: { needed: boolean; installUrl: string | null } | null;
 	user?: {
 		name: string | null;
 		email: string;
@@ -747,6 +748,34 @@ export default function GhlSettingsPage() {
 			)}
 			{errorParam && (
 				<div style={styles.errorBanner}>Connection error: {errorParam}</div>
+			)}
+
+			{ctx?.activation?.needed && ctx.activation.installUrl && (
+				<div style={styles.warningBanner}>
+					<strong>Activate this location.</strong> The Extensible Content
+					app needs to be installed on this HighLevel location before it
+					can upload to your media library, post to social channels, or
+					render videos through ShotStack.
+					<div style={{ marginTop: 10 }}>
+						<a
+							href={ctx.activation.installUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							style={{
+								...styles.primaryBtn,
+								display: "inline-block",
+								textDecoration: "none",
+							}}
+						>
+							Open install page in HighLevel →
+						</a>
+					</div>
+					<p style={{ ...styles.muted, marginTop: 8, fontSize: 12 }}>
+						The new tab will land on this location&apos;s integration page
+						in HighLevel — click <strong>Install</strong> there. When it
+						completes you&apos;ll be redirected back here automatically.
+					</p>
+				</div>
 			)}
 
 			{/* Whop Account */}

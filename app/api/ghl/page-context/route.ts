@@ -1,6 +1,9 @@
 import type { NextRequest } from "next/server";
-import { getServiceSupabase } from "@/lib/supabase-service";
+import { buildLocationInstallUrl } from "@/lib/ghl-install";
 import { getSpendableCredits } from "@/lib/shotstack-ledger";
+import { getServiceSupabase } from "@/lib/supabase-service";
+
+const PLACEHOLDER_TOKENS = new Set(["pending", "pending-link"]);
 
 /**
  * GET /api/ghl/page-context?companyId=...
@@ -25,6 +28,31 @@ export async function GET(request: NextRequest) {
 
 	const supabase = getServiceSupabase();
 	let locationName: string | null = null;
+
+	// Activation status: when we know a locationId we look up its tokens and
+	// surface a per-location HighLevel install URL if the row is still on
+	// placeholder credentials. The Custom Page renders an "Activate this
+	// location" button driven by these fields.
+	let activationNeeded = false;
+	let activationInstallUrl: string | null = null;
+	if (locationId) {
+		const { data: locTokens } = await supabase
+			.from("ghl_locations")
+			.select("access_token, location_name")
+			.eq("location_id", locationId)
+			.maybeSingle();
+		if (locTokens?.location_name) locationName = locTokens.location_name;
+		const tokenIsPlaceholder =
+			!locTokens || PLACEHOLDER_TOKENS.has(locTokens.access_token ?? "");
+		if (tokenIsPlaceholder) {
+			activationNeeded = true;
+			activationInstallUrl = buildLocationInstallUrl(locationId);
+		}
+	}
+
+	const activation = locationId
+		? { needed: activationNeeded, installUrl: activationInstallUrl }
+		: null;
 
 	// In the many-to-many model, a GHL company / location may have multiple
 	// linked Whop users, so we can't pick one from companyId alone. The caller
@@ -69,6 +97,7 @@ export async function GET(request: NextRequest) {
 			companyId: companyId ?? null,
 			locationId: locationId ?? null,
 			locationName,
+			activation,
 		});
 	}
 
@@ -120,6 +149,7 @@ export async function GET(request: NextRequest) {
 					companyId: companyId ?? null,
 					locationId: locationId ?? null,
 					locationName,
+					activation,
 				});
 			}
 		}
@@ -163,6 +193,7 @@ export async function GET(request: NextRequest) {
 			whopLinked: false,
 			locationId: locationId ?? null,
 			locationName,
+			activation,
 		});
 	}
 
@@ -170,6 +201,7 @@ export async function GET(request: NextRequest) {
 		whopLinked: true,
 		locationId: locationId ?? null,
 		locationName,
+		activation,
 		user: {
 			name: user.name,
 			email: user.email,
