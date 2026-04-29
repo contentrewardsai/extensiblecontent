@@ -72,6 +72,12 @@ const nextConfig: NextConfig = {
 	],
 	rewrites: async () => [
 		{
+			// Keeps every public `/api/ext-auth/...` URL neutral (HighLevel
+			// rejects apps that expose `ghl` in any URL they can see, including
+			// the redirect_uri we give to Whop during the Custom Auth flow which
+			// briefly shows in the user's address bar). All Custom Auth endpoints
+			// — authorize, token, refresh, test, userinfo, whop-callback — live
+			// behind this single rewrite.
 			source: "/api/ext-auth/:path*",
 			destination: "/api/ghl/external-auth/:path*",
 		},
@@ -82,14 +88,6 @@ const nextConfig: NextConfig = {
 		{
 			source: "/api/ext-hooks",
 			destination: "/api/ghl/webhooks",
-		},
-		{
-			source: "/api/ext-login",
-			destination: "/api/ghl/external-auth/login",
-		},
-		{
-			source: "/api/ext-validate",
-			destination: "/api/ghl/external-auth/validate",
 		},
 		{
 			source: "/api/ext-callback",

@@ -170,12 +170,6 @@ export default function GhlSettingsPage() {
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
 
-	// Connection Key fallback
-	const [showKeyForm, setShowKeyForm] = useState(false);
-	const [keyInput, setKeyInput] = useState("");
-	const [keyLoading, setKeyLoading] = useState(false);
-	const [keyError, setKeyError] = useState<string | null>(null);
-
 	// Effective GHL identifiers. Initialized from URL; upgraded by SSO if/when
 	// it arrives. The "Link Whop Account" button uses whichever is available.
 	const [ghlCompanyId, setGhlCompanyId] = useState<string | null>(
@@ -309,7 +303,10 @@ export default function GhlSettingsPage() {
 	);
 
 	// Initial load: resolve the active Whop user via the backend cookie
-	// (/api/ghl/me), then pull page context. Runs once on mount.
+	// (/api/ghl/me) — set during the Custom Auth (External Authentication)
+	// flow when GHL bounced the user through Whop OAuth. Then auto-link the
+	// Whop user to the GHL company/location they're currently viewing
+	// (idempotent), and pull page context. Runs once on mount.
 	const initRan = useRef(false);
 	useEffect(() => {
 		if (initRan.current) return;
@@ -335,27 +332,47 @@ export default function GhlSettingsPage() {
 
 			if (cancelled) return;
 
-			// No context at all: show link prompt. This should only happen if
-			// the GHL Custom Page URL is missing ?location_id={{location.id}}
-			// AND SSO hasn't responded yet AND there's no cookie.
-			if (!urlLocationId && !urlCompanyId && !cookieUserId) {
+			if (!cookieUserId) {
+				// No cookie means the user reached this page without going
+				// through GHL's Custom Auth flow (or the cookie was cleared /
+				// blocked by third-party-cookie policies). Surface the manual
+				// "Sign in with Whop" fallback.
 				setNeedsLink(true);
 				setLoading(false);
 				return;
+			}
+
+			// Auto-link: idempotent upsert that records this Whop user as
+			// having access to the current GHL company/location. Silently
+			// best-effort — if it fails, page-context will still tell us
+			// whether access exists from a prior session.
+			if (urlCompanyId || urlLocationId) {
+				try {
+					await fetch("/api/ghl/auto-link", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							companyId: urlCompanyId ?? undefined,
+							locationId: urlLocationId ?? undefined,
+						}),
+					});
+				} catch {
+					/* ignore */
+				}
 			}
 
 			try {
 				const data = await loadPageContext({
 					companyId: urlCompanyId ?? undefined,
 					locationId: urlLocationId ?? undefined,
-					userId: cookieUserId ?? undefined,
+					userId: cookieUserId,
 				});
 
 				if (cancelled) return;
 
 				if (data.whopLinked) {
 					setCtx(data);
-					if (cookieUserId) setCurrentUserId(cookieUserId);
+					setCurrentUserId(cookieUserId);
 					setLoading(false);
 					return;
 				}
@@ -580,51 +597,6 @@ export default function GhlSettingsPage() {
 		);
 	}, [ghlLocationId, ghlCompanyId, ghlSsoPayload]);
 
-	const handleKeyLink = async (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!keyInput.trim()) return;
-
-		setKeyLoading(true);
-		setKeyError(null);
-
-		try {
-			const res = await fetch("/api/ext-validate", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					connectionKey: keyInput.trim(),
-					...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
-				}),
-			});
-
-			if (!res.ok) {
-				const data = (await res.json().catch(() => ({}))) as Record<
-					string,
-					string
-				>;
-				throw new Error(data.error || "Invalid connection key");
-			}
-
-			const result = (await res.json()) as { userId?: string };
-			const uid = result.userId;
-			if (!uid) throw new Error("Could not identify user");
-
-			const data = await loadPageContext({
-				userId: uid,
-				...(ghlCompanyId ? { companyId: ghlCompanyId } : {}),
-				...(ghlLocationId ? { locationId: ghlLocationId } : {}),
-			});
-			setCtx(data);
-			setCurrentUserId(uid);
-			setNeedsLink(false);
-			setShowKeyForm(false);
-		} catch (err) {
-			setKeyError(err instanceof Error ? err.message : "Link failed");
-		} finally {
-			setKeyLoading(false);
-		}
-	};
-
 	if (loading) {
 		return (
 			<div style={styles.container}>
@@ -636,11 +608,15 @@ export default function GhlSettingsPage() {
 	}
 
 	if (needsLink) {
-		// Picker shows every Whop account linked to this GHL location, sourced
-		// from the backend (ghl_connection_users). This is shared team data —
-		// any teammate viewing the Custom Page can pick any of their linked
-		// accounts without having OAuthed in *this* browser.
-		const pickerUsers = connectedUsers;
+		// Reached when there's no `ec_whop_user` cookie. With the External
+		// Authentication flow active in HighLevel, GHL is supposed to send the
+		// user through Whop OAuth before the Custom Page iframe ever loads, so
+		// this state is rare. It happens when:
+		//   - The user opened /ext/settings outside of GHL (manual URL).
+		//   - The third-party cookie was blocked by the browser.
+		//   - GHL Custom Auth is misconfigured for this app.
+		// We offer a manual "Sign in with Whop" popup as a fallback so the
+		// user can self-recover without leaving the page.
 		const canLink = !!ghlLocationId || !!ghlCompanyId || !!ghlSsoPayload;
 
 		return (
@@ -702,50 +678,10 @@ export default function GhlSettingsPage() {
 						</div>
 					)}
 
-					{pickerUsers.length > 0 && (
-						<>
-							<p style={{ ...styles.muted, marginBottom: 8 }}>
-								Whop accounts linked to this{" "}
-								{ghlCompanyId ? "company" : "location"}. Click to continue
-								as any of them:
-							</p>
-							<div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-								{pickerUsers.map((u) => (
-									<div key={u.userId} style={styles.knownUserRow}>
-										<button
-											type="button"
-											onClick={() => handleQuickSwitch(u.userId)}
-											style={styles.knownUserBtn}
-										>
-											<div style={styles.userAvatar}>
-												{(u.name?.[0] || u.email?.[0] || "?").toUpperCase()}
-											</div>
-											<div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-												<p style={{ ...styles.body, fontWeight: 500 }}>
-													{u.name || u.email || u.userId}
-												</p>
-												{u.name && u.email && (
-													<p style={styles.muted}>{u.email}</p>
-												)}
-											</div>
-										</button>
-									</div>
-								))}
-							</div>
-							<div style={{ margin: "4px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
-								<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
-								<span style={{ fontSize: 12, color: "#888" }}>or</span>
-								<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
-							</div>
-						</>
-					)}
-
-					{pickerUsers.length === 0 && (
-						<p style={styles.body}>
-							Link your Whop account to access your workflows, templates, credits,
-							and billing from within GoHighLevel.
-						</p>
-					)}
+					<p style={styles.body}>
+						Sign in with Whop to access your workflows, templates, credits,
+						and billing from within GoHighLevel.
+					</p>
 
 					<button
 						type="button"
@@ -753,7 +689,7 @@ export default function GhlSettingsPage() {
 						disabled={!canLink}
 						style={{
 							...styles.primaryBtn,
-							marginTop: 4,
+							marginTop: 12,
 							width: "100%",
 							padding: "12px 20px",
 							fontSize: 15,
@@ -761,60 +697,8 @@ export default function GhlSettingsPage() {
 							cursor: canLink ? "pointer" : "not-allowed",
 						}}
 					>
-						{pickerUsers.length > 0 ? "Link a different Whop account" : "Link Whop Account"}
+						Sign in with Whop
 					</button>
-
-					<div style={{ margin: "20px 0 12px", display: "flex", alignItems: "center", gap: 12 }}>
-						<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
-						<span style={{ fontSize: 12, color: "#888" }}>or</span>
-						<div style={{ flex: 1, height: 1, background: "#e1e4e8" }} />
-					</div>
-
-					{!showKeyForm ? (
-						<button
-							type="button"
-							onClick={() => setShowKeyForm(true)}
-							style={styles.secondaryBtn}
-						>
-							Use a Connection Key instead
-						</button>
-					) : (
-						<form
-							onSubmit={handleKeyLink}
-							style={{ display: "flex", flexDirection: "column", gap: 10 }}
-						>
-							<p style={styles.muted}>
-								Paste the Connection Key from your Extensible Content dashboard
-								(Integrations page).
-							</p>
-							<input
-								type="password"
-								value={keyInput}
-								onChange={(e) => setKeyInput(e.target.value)}
-								placeholder="ec_..."
-								autoComplete="off"
-								style={{
-									fontSize: 14,
-									padding: "10px 12px",
-									borderRadius: 8,
-									border: "1px solid #d0d5dd",
-									fontFamily: "monospace",
-								}}
-								disabled={keyLoading}
-							/>
-							{keyError && <p style={styles.errorBanner}>{keyError}</p>}
-							<button
-								type="submit"
-								disabled={keyLoading || !keyInput.trim()}
-								style={{
-									...styles.primaryBtn,
-									opacity: keyLoading || !keyInput.trim() ? 0.5 : 1,
-								}}
-							>
-								{keyLoading ? "Linking…" : "Link with Key"}
-							</button>
-						</form>
-					)}
 
 					<p style={{ ...styles.muted, marginTop: 16, fontSize: 11 }}>
 						{hasAnyContext ? (
