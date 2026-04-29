@@ -385,7 +385,7 @@ export function ShotstackEditorHost({
 	const saveLabel = isBuiltin ? "Save as copy" : isDirty ? "Save*" : "Save";
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className="flex flex-col gap-2">
 			<div className="flex flex-wrap items-center gap-3">
 				<Link href={context.backUrl} className="text-3 text-gray-12 underline">
 					← Back to templates
@@ -407,20 +407,27 @@ export function ShotstackEditorHost({
 					context={context}
 				/>
 				{!isBuiltin && isDirty ? <span className="text-2 text-gray-10">Unsaved changes</span> : null}
+				{/* Add-content toolbar: undo/redo/copy/paste + Add Text/Image/Shape buttons */}
+				<div
+					ref={addContentRef}
+					className="cfs-editor-add-content-sidebar"
+					style={{
+						display: "inline-flex",
+						flexWrap: "wrap",
+						gap: "4px",
+						alignItems: "center",
+					}}
+				/>
 			</div>
 			{saveState ? <p className="text-3 text-gray-11">{saveState}</p> : null}
 			{status === "loading" ? <p className="text-3 text-gray-10">Loading editor…</p> : null}
 			{status === "error" ? <p className="text-3 text-red-11">{message}</p> : null}
-			{/* Add-content toolbar: rendered by the unified editor when addContentContainer is provided */}
-			<div
-				ref={addContentRef}
-				className="cfs-editor-add-content-sidebar"
-				style={{ minHeight: status === "ready" ? undefined : 0 }}
-			/>
 			<div
 				ref={mountRef}
-				className="min-h-[480px] border border-gray-a4 rounded-lg bg-gray-a1 overflow-auto cfs-unified-editor-host"
+				className="border border-gray-a4 rounded-lg bg-gray-a1 overflow-hidden cfs-unified-editor-host"
+				style={{ height: "calc(100vh - 120px)", maxHeight: "calc(100vh - 120px)" }}
 			/>
 		</div>
 	);
 }
+
