@@ -63,15 +63,14 @@ export async function GET(request: NextRequest) {
 		scope:
 			"medias.readonly medias.write socialplanner/post.readonly socialplanner/post.write socialplanner/account.readonly oauth.readonly oauth.write",
 		state,
-		// `loginWindowOpenMode=self` makes the OAuth screen reuse the current
-		// window for the HighLevel login redirect rather than opening a new
-		// window, which was the source of the "log out and log in again"
-		// confusion: the popup loaded in an unauthenticated state.
-		loginWindowOpenMode: "self",
 		...(appVersionId ? { appVersionId } : {}),
 	});
 
+	// Use app.leadconnectorhq.com — the user's session cookie lives on the
+	// `app.` subdomain, not on `marketplace.`. Using the marketplace domain
+	// would show "Please login to the CRM" even when the user is already
+	// signed in on app.leadconnectorhq.com.
 	return Response.redirect(
-		`https://marketplace.leadconnectorhq.com/oauth/chooselocation?${params}`,
+		`https://app.leadconnectorhq.com/oauth/chooselocation?${params}`,
 	);
 }

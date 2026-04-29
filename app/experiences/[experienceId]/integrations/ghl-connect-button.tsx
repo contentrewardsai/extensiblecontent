@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Opens HighLevel's OAuth location chooser so the Whop user can authorise
+ * Extensible Content to access their HighLevel sub-account(s). Our backend
+ * stores the tokens and links them to this Whop user — Extensible Content
+ * sits in the middle holding credentials for both platforms.
+ */
 export function GhlConnectButton({ userId }: { userId: string }) {
 	const handleConnect = () => {
 		window.open(
