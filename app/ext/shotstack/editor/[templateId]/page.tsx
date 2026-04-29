@@ -157,6 +157,7 @@ function buildGhlEditorContext({
 		editorUrlPrefix: "/ext/shotstack/editor",
 		backUrl: `/ext/shotstack${backQs.toString() ? `?${backQs.toString()}` : ""}`,
 		thumbnailUploadUrl: "/api/ghl/shotstack-templates/:id/thumbnail",
+		imageUploadUrl: "/api/ghl/shotstack-templates/upload-image",
 	};
 }
 

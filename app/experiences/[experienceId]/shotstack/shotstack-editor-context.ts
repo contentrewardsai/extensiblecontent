@@ -44,4 +44,15 @@ export interface ShotstackEditorContext {
 	 * re-verify the caller.
 	 */
 	thumbnailUploadUrl?: string;
+	/**
+	 * Optional: full URL of the image-upload endpoint used by the visual
+	 * editor to persist user-added images to Supabase storage. When set, the
+	 * host intercepts `addImage` calls and replaces data-URL sources with
+	 * persistent HTTP URLs so the template JSON stays compact and the images
+	 * work in both Pixi.js browser renders and ShotStack cloud renders.
+	 *
+	 * The same `browserRenderFields` are appended so the server can
+	 * re-verify the caller.
+	 */
+	imageUploadUrl?: string;
 }

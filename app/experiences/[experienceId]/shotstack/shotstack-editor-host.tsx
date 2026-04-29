@@ -19,11 +19,23 @@ type FabricLikeCanvas = {
 	toDataURL?: (options: { format?: string; quality?: number; multiplier?: number }) => string;
 };
 
+type FabricObject = {
+	type?: string;
+	src?: string;
+	set?: (key: string, value: unknown) => void;
+};
+
+type FabricCanvas = FabricLikeCanvas & {
+	getObjects?: () => FabricObject[];
+	renderAll?: () => void;
+};
+
 type UnifiedEditorInstance = {
 	getShotstackTemplate?: () => Record<string, unknown>;
 	hasPendingChanges?: () => boolean;
 	markSaved?: () => void;
-	getCanvas?: () => FabricLikeCanvas | null;
+	getCanvas?: () => FabricCanvas | null;
+	addImage?: () => void;
 	events?: EditEvents;
 	destroy?: () => void;
 };
@@ -33,7 +45,12 @@ declare global {
 		__CFS_unifiedEditor?: {
 			create: (
 				container: HTMLElement,
-				options: { template?: unknown; extension?: unknown; values?: unknown },
+				options: {
+					template?: unknown;
+					extension?: unknown;
+					values?: unknown;
+					addContentContainer?: HTMLElement;
+				},
 			) => UnifiedEditorInstance;
 		};
 		__CFS_generationStorage?: { getProjectFolderHandle?: () => null };
@@ -102,6 +119,7 @@ export function ShotstackEditorHost({
 }) {
 	const router = useRouter();
 	const mountRef = useRef<HTMLDivElement | null>(null);
+	const addContentRef = useRef<HTMLDivElement | null>(null);
 	const editorRef = useRef<UnifiedEditorInstance | null>(null);
 	const savingRef = useRef(false);
 	const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -121,7 +139,16 @@ export function ShotstackEditorHost({
 			return;
 		}
 		el.innerHTML = "";
-		const inst = window.__CFS_unifiedEditor.create(el, { template: initialEdit, extension: {} });
+		// Create the add-content container so the unified editor renders the
+		// "Add Text / Add Image / Add Shape / …" toolbar buttons.
+		const addEl = addContentRef.current;
+		if (addEl) addEl.innerHTML = "";
+
+		const inst = window.__CFS_unifiedEditor.create(el, {
+			template: initialEdit,
+			extension: {},
+			addContentContainer: addEl ?? undefined,
+		});
 		editorRef.current = inst;
 		setStatus("ready");
 	}, [initialEdit]);
@@ -233,6 +260,51 @@ export function ShotstackEditorHost({
 		[context],
 	);
 
+	/**
+	 * Scan all Fabric Image objects on the canvas for data-URL sources
+	 * and upload them to Supabase, replacing the src with a persistent
+	 * HTTP URL. This ensures the ShotStack JSON stays compact and all
+	 * images render correctly in Pixi.js video exports and ShotStack
+	 * cloud renders.
+	 */
+	const uploadDataUrlImages = useCallback(async () => {
+		if (!context.imageUploadUrl) return;
+		const canvas = editorRef.current?.getCanvas?.();
+		if (!canvas?.getObjects) return;
+		const objects = canvas.getObjects();
+		const dataUrlImages = objects.filter(
+			(o: FabricObject) =>
+				o.type === "image" && typeof o.src === "string" && o.src.startsWith("data:"),
+		);
+		if (dataUrlImages.length === 0) return;
+		for (const obj of dataUrlImages) {
+			const blob = dataUrlToBlob(obj.src!);
+			if (!blob) continue;
+			const fd = new FormData();
+			for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
+			fd.append("file", blob, `canvas-image-${Date.now()}.png`);
+			try {
+				const res = await fetch(context.imageUploadUrl, {
+					method: "POST",
+					body: fd,
+					credentials: "include",
+				});
+				if (!res.ok) {
+					const j = (await res.json().catch(() => ({}))) as { error?: string };
+					console.warn("[EditorHost] Image upload failed:", j.error || res.status);
+					continue;
+				}
+				const { url } = (await res.json()) as { url: string };
+				if (url && obj.set) {
+					obj.set("src", url);
+				}
+			} catch (err) {
+				console.warn("[EditorHost] Image upload error:", err);
+			}
+		}
+		canvas.renderAll?.();
+	}, [context]);
+
 	const save = useCallback(
 		async (opts: { silent?: boolean } = {}): Promise<void> => {
 			const inst = editorRef.current;
@@ -244,6 +316,8 @@ export function ShotstackEditorHost({
 			savingRef.current = true;
 			if (!opts.silent) setSaveState("Saving…");
 			try {
+				// Upload any data-URL images to Supabase before serializing.
+				await uploadDataUrlImages();
 				const edit = inst.getShotstackTemplate();
 				const savedId = await persistEdit(edit);
 				inst.markSaved?.();
@@ -262,7 +336,7 @@ export function ShotstackEditorHost({
 				savingRef.current = false;
 			}
 		},
-		[captureThumbnail, context, persistEdit, router, templateId],
+		[captureThumbnail, context, persistEdit, router, templateId, uploadDataUrlImages],
 	);
 
 	useEffect(() => {
@@ -337,6 +411,12 @@ export function ShotstackEditorHost({
 			{saveState ? <p className="text-3 text-gray-11">{saveState}</p> : null}
 			{status === "loading" ? <p className="text-3 text-gray-10">Loading editor…</p> : null}
 			{status === "error" ? <p className="text-3 text-red-11">{message}</p> : null}
+			{/* Add-content toolbar: rendered by the unified editor when addContentContainer is provided */}
+			<div
+				ref={addContentRef}
+				className="cfs-editor-add-content-sidebar"
+				style={{ minHeight: status === "ready" ? undefined : 0 }}
+			/>
 			<div
 				ref={mountRef}
 				className="min-h-[480px] border border-gray-a4 rounded-lg bg-gray-a1 overflow-auto cfs-unified-editor-host"
