@@ -35,9 +35,9 @@ export async function uploadToGhlMediaLibrary(params: {
 	const { token } = await getValidTokenForLocation(params.internalUserId, params.locationId);
 
 	const form = new FormData();
-	// GHL requires `hosted: true` to store the file on their CDN and return a URL.
-	// Without it, the API expects the caller to supply a pre-hosted URL instead.
-	form.append("hosted", "true");
+	// GHL's `hosted` flag controls whether the API expects a `fileUrl` (hosted=true)
+	// or a binary `file` field (hosted=false). We upload the raw bytes, so hosted=false.
+	form.append("hosted", "false");
 	form.append("name", params.filename);
 	if (params.parentId) form.append("parentId", params.parentId);
 	form.append("file", new Blob([params.bytes], { type: params.contentType }), params.filename);
