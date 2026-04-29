@@ -35,7 +35,7 @@ async function preflightFfmpegWasm(): Promise<void> {
 	const paths = ["/lib/ffmpeg/ffmpeg-core.js", "/lib/ffmpeg/ffmpeg-core.wasm"];
 	for (const p of paths) {
 		try {
-			const res = await fetch(p, { method: "HEAD", credentials: "include" });
+			const res = await fetch(p, { method: "HEAD", credentials: "same-origin" });
 			if (!res.ok) {
 				throw new Error(`${p} returned HTTP ${res.status} — FFmpeg assets aren't deployed. Ask ops to rerun the build.`);
 			}
@@ -59,7 +59,7 @@ async function warmFfmpegWasmCache(onProgress: (msg: string) => void): Promise<v
 	const url = "/lib/ffmpeg/ffmpeg-core.wasm";
 	let res: Response;
 	try {
-		res = await fetch(url, { credentials: "include" });
+		res = await fetch(url, { credentials: "same-origin" });
 	} catch (err) {
 		throw new Error(`Could not start ffmpeg-core.wasm download: ${err instanceof Error ? err.message : String(err)}`);
 	}
@@ -341,8 +341,8 @@ export function BrowserRenderButton({
 									lastTick = Date.now();
 									setMsg(s);
 								}),
-								90_000,
-								"FFmpeg load timed out after 90s — worker likely hung; uploading WebM instead.",
+								65_000,
+								"FFmpeg load timed out — worker likely hung; uploading WebM instead.",
 							);
 							console.log("[BrowserRender] FFmpeg ensureLoaded resolved");
 						} finally {
