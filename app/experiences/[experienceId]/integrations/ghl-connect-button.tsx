@@ -11,7 +11,6 @@ export function GhlConnectButton({ userId }: { userId: string }) {
 		window.open(
 			`/api/ghl/auth/start?userId=${encodeURIComponent(userId)}`,
 			"_blank",
-			"width=700,height=800",
 		);
 	};
 
