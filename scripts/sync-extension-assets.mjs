@@ -401,37 +401,25 @@ async function run() {
 		if (typeof body === "string") {
 			body = Buffer.from(body, "utf8");
 		}
+		// Binary files (.wasm) must NOT be converted to UTF-8 text — that
+		// corrupts bytes that aren't valid UTF-8 sequences (shrinks the file
+		// and produces a WASM CompileError at runtime).
+		if (rel.endsWith(".wasm")) {
+			await writeBuffer(dest, body);
+			count++;
+			continue;
+		}
 		let text = body.toString("utf8");
 		if (patchFfmpegLocal(rel, outRel)) {
 			text = patchFfmpegLocalDiagnostics(text);
 			if (!text.includes("location.origin + '/lib/ffmpeg/ffmpeg-core.js'")) {
 				text = text.replace(
-					`  function coreURL() {
-    return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.js');
-  }`,
-					`  function coreURL() {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-      return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.js');
-    }
-    if (typeof location !== 'undefined' && location.origin) {
-      return location.origin + '/lib/ffmpeg/ffmpeg-core.js';
-    }
-    return '/lib/ffmpeg/ffmpeg-core.js';
-  }`,
+					`  function coreURL() {\n    return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.js');\n  }`,
+					`  function coreURL() {\n    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {\n      return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.js');\n    }\n    if (typeof location !== 'undefined' && location.origin) {\n      return location.origin + '/lib/ffmpeg/ffmpeg-core.js';\n    }\n    return '/lib/ffmpeg/ffmpeg-core.js';\n  }`,
 				);
 				text = text.replace(
-					`  function wasmURL() {
-    return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.wasm');
-  }`,
-					`  function wasmURL() {
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-      return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.wasm');
-    }
-    if (typeof location !== 'undefined' && location.origin) {
-      return location.origin + '/lib/ffmpeg/ffmpeg-core.wasm';
-    }
-    return '/lib/ffmpeg/ffmpeg-core.wasm';
-  }`,
+					`  function wasmURL() {\n    return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.wasm');\n  }`,
+					`  function wasmURL() {\n    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {\n      return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.wasm');\n    }\n    if (typeof location !== 'undefined' && location.origin) {\n      return location.origin + '/lib/ffmpeg/ffmpeg-core.wasm';\n    }\n    return '/lib/ffmpeg/ffmpeg-core.wasm';\n  }`,
 				);
 			}
 		}
