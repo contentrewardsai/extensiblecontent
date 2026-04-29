@@ -133,6 +133,8 @@
 		});
 	}
 
+	var workerBlobUrl = null;
+
 	function getWorker() {
 		if (workerDead) return null;
 		if (worker) return worker;
@@ -141,13 +143,39 @@
 			workerDeadReason = "Web Worker unsupported";
 			return null;
 		}
-		if (typeof global.crossOriginIsolated !== "undefined" && !global.crossOriginIsolated) {
-			workerDead = true;
-			workerDeadReason = "Page is not crossOriginIsolated";
+		// If we haven't fetched the worker Blob URL yet, kick off the fetch
+		// and return null (caller will use main-thread for this first call;
+		// the worker will be ready for subsequent calls).
+		if (!workerBlobUrl) {
+			fetch(WORKER_URL, { credentials: "same-origin" })
+				.then(function (r) {
+					if (!r.ok) throw new Error("HTTP " + r.status);
+					return r.text();
+				})
+				.then(function (text) {
+					// Inside a blob: worker, self.location.origin is "null" (literal
+					// string), so the worker's `ORIGIN` constant would be wrong.
+					// Prepend a line that sets it to the real page origin.
+					var preamble = "const __BLOB_ORIGIN = " + JSON.stringify(ORIGIN) + ";\n";
+					// The worker defines ORIGIN on line 14 as:
+					//   const ORIGIN = typeof self !== "undefined" && self.location && ...
+					// We override it by rewriting that const to use our injected value.
+					var patched = text.replace(
+						/^const ORIGIN = .+$/m,
+						"const ORIGIN = typeof __BLOB_ORIGIN !== 'undefined' ? __BLOB_ORIGIN : " +
+						"(typeof self !== 'undefined' && self.location && self.location.origin ? self.location.origin : '');"
+					);
+					var blob = new Blob([preamble + patched], { type: "text/javascript" });
+					workerBlobUrl = URL.createObjectURL(blob);
+					try { console.log("[CFS AI] worker Blob URL ready"); } catch (_) {}
+				})
+				.catch(function (e) {
+					try { console.warn("[CFS AI] failed to fetch worker for Blob URL:", e); } catch (_) {}
+				});
 			return null;
 		}
 		try {
-			worker = new Worker(WORKER_URL, { type: "module" });
+			worker = new Worker(workerBlobUrl, { type: "module" });
 		} catch (e) {
 			killWorker("Could not create AI worker: " + ((e && e.message) || String(e)));
 			return null;
@@ -452,20 +480,20 @@
 		};
 	};
 
-	if (typeof global.crossOriginIsolated !== "undefined" && global.crossOriginIsolated) {
-		if (typeof global.__CFS_ttsApiUrl === "string" && global.__CFS_ttsApiUrl) {
-			/* default-tts strategy 1 wins — do not override */
-		} else {
-			global.__CFS_ttsGenerate = function (text, opts) {
-				return callTts(text, opts && opts.voice);
-			};
-		}
-		if (typeof global.__CFS_sttApiUrl === "string" && global.__CFS_sttApiUrl) {
-			/* default-stt API wins */
-		} else {
-			global.__CFS_sttGenerate = function (audioBlob, _opts) {
-				return callStt(audioBlob);
-			};
-		}
+	// Always register TTS/STT hooks so the template engine uses Kokoro/Whisper
+	// in any context (GHL iframe, standalone, etc.) — not just crossOriginIsolated.
+	if (typeof global.__CFS_ttsApiUrl === "string" && global.__CFS_ttsApiUrl) {
+		/* default-tts strategy 1 wins — do not override */
+	} else {
+		global.__CFS_ttsGenerate = function (text, opts) {
+			return callTts(text, opts && opts.voice);
+		};
+	}
+	if (typeof global.__CFS_sttApiUrl === "string" && global.__CFS_sttApiUrl) {
+		/* default-stt API wins */
+	} else {
+		global.__CFS_sttGenerate = function (audioBlob, _opts) {
+			return callStt(audioBlob);
+		};
 	}
 })(typeof window !== "undefined" ? window : globalThis);

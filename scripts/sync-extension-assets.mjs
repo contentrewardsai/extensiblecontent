@@ -189,34 +189,117 @@ function patchFfmpegLocal(relPath, outRelPath) {
  */
 function patchFfmpegLocalDiagnostics(text) {
 	let out = text;
+
+	// ── 1. Insert workerChunkURL() + fetchWorkerBlobUrl() before ensureLoaded ──
+	// We anchor on the ensureLoaded marker because patchFfmpegLocalDiagnostics
+	// runs BEFORE the URL-expansion patch, so the wasmURL() function still has
+	// the simple `chrome.runtime.getURL(...)` form at this point.
 	const ensureMarker = "function ensureLoaded(report) {";
 	if (out.includes(ensureMarker)) {
-		out = out.replace(
-			ensureMarker,
-			"function ensureLoaded(report) {\n    try { console.log('[FFmpegLocal] ensureLoaded called', { hasInstance: !!ffmpegInstance, loaded: ffmpegInstance && ffmpegInstance.loaded }); } catch (_) {}",
-		);
+		const blobHelpers = [
+			"function workerChunkURL() {",
+			"    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {",
+			"      return chrome.runtime.getURL('lib/ffmpeg/814.ffmpeg.js');",
+			"    }",
+			"    if (typeof location !== 'undefined' && location.origin) {",
+			"      return location.origin + '/lib/ffmpeg/814.ffmpeg.js';",
+			"    }",
+			"    return '/lib/ffmpeg/814.ffmpeg.js';",
+			"  }",
+			"",
+			"  /**",
+			"   * Pre-fetch the FFmpeg worker chunk and return a Blob URL.",
+			"   *",
+			"   * Under Cross-Origin-Embedder-Policy: credentialless (required for",
+			"   * SharedArrayBuffer / crossOriginIsolated), Chrome blocks direct Worker",
+			"   * script loading with a silent, sparse error event (all fields undefined).",
+			"   * Loading the script ourselves and creating a blob: URL side-steps COEP",
+			"   * entirely because blob: URLs are same-origin by definition.",
+			"   *",
+			"   * All URLs used inside the worker (coreURL, wasmURL for importScripts /",
+			"   * fetch) are absolute, so changing the Worker's base URL to blob: has no",
+			"   * effect on them.",
+			"   */",
+			"  var _workerBlobUrlCache = null;",
+			"  function fetchWorkerBlobUrl() {",
+			"    if (_workerBlobUrlCache) return Promise.resolve(_workerBlobUrlCache);",
+			"    var url = workerChunkURL();",
+			"    try { console.log('[FFmpegLocal] fetching worker chunk for Blob URL', url); } catch (_) {}",
+			"    return fetch(url, { credentials: 'same-origin' })",
+			"      .then(function (resp) {",
+			"        if (!resp.ok) throw new Error('Failed to fetch FFmpeg worker chunk (' + resp.status + ')');",
+			"        return resp.text();",
+			"      })",
+			"      .then(function (text) {",
+			"        var blob = new Blob([text], { type: 'application/javascript' });",
+			"        _workerBlobUrlCache = URL.createObjectURL(blob);",
+			"        try { console.log('[FFmpegLocal] worker Blob URL created'); } catch (_) {}",
+			"        return _workerBlobUrlCache;",
+			"      });",
+			"  }",
+			"",
+			"  function ensureLoaded(report) {",
+			"    try { console.log('[FFmpegLocal] ensureLoaded called', { hasInstance: !!ffmpegInstance, loaded: ffmpegInstance && ffmpegInstance.loaded }); } catch (_) {}",
+		].join("\n  ");
+		out = out.replace(ensureMarker, blobHelpers);
 	} else {
 		console.warn("[sync-extension-assets] ffmpeg-local.js ensureLoaded marker not found — skipping diagnostics patch");
 	}
+
+	// Replace the IIFE `loading = (function () {` with `loading = fetchWorkerBlobUrl().then(function (blobUrl) {`
+	const iifeMarker = "loading = (function () {";
+	if (out.includes(iifeMarker)) {
+		out = out.replace(iifeMarker, "loading = fetchWorkerBlobUrl().then(function (blobUrl) {");
+	} else {
+		console.warn("[sync-extension-assets] ffmpeg-local.js IIFE marker not found — skipping Blob URL rewrite");
+	}
+
+	// Replace the closing `})();` of the IIFE with `});` for the .then()
+	// This is the `})();` that closes the loading IIFE, right before `loading.catch`
+	const iifeEnd = "    })();\n\n    loading.catch";
+	if (out.includes(iifeEnd)) {
+		out = out.replace(iifeEnd, "    });\n\n    loading.catch");
+	}
+
+	// Change `return Promise.reject(new Error(...));` to `throw new Error(...);` inside .then()
+	const rejectMarker = "return Promise.reject(new Error('FFmpegWASM.FFmpeg not found \\u2013 is lib/ffmpeg/ffmpeg.js loaded?'));";
+	if (out.includes(rejectMarker)) {
+		out = out.replace(rejectMarker, "throw new Error('FFmpegWASM.FFmpeg not found \\u2013 is lib/ffmpeg/ffmpeg.js loaded?');");
+	} else {
+		// Try with literal dash
+		const rejectMarker2 = "return Promise.reject(new Error('FFmpegWASM.FFmpeg not found";
+		if (out.includes(rejectMarker2)) {
+			out = out.replace(
+				/return Promise\.reject\(new Error\('FFmpegWASM\.FFmpeg not found[^)]*\)\)/,
+				function (m) { return m.replace("return Promise.reject(", "throw ").replace(/\)\s*$/, ""); },
+			);
+		}
+	}
+
 	const loadMarker =
 		"return ffmpegInstance.load({\n        coreURL: coreURL(),\n        wasmURL: wasmURL(),\n      }).then(function () {";
 	if (out.includes(loadMarker)) {
-		// Also temporarily wrap globalThis.Worker so we can catch sparse error
-		// events from the FFmpeg worker (which @ffmpeg/ffmpeg doesn't surface
-		// on its own). Restored on success or failure so we don't leak the
-		// instrumentation onto unrelated Worker constructions later.
+		// Monkey-patch Worker to use Blob URL and race against worker error + timeout
 		out = out.replace(
 			loadMarker,
 			[
-				"try { console.log('[FFmpegLocal] calling FFmpeg.load()', { coreURL: coreURL(), wasmURL: wasmURL() }); } catch (_) {}",
+				"try { console.log('[FFmpegLocal] calling FFmpeg.load()', { coreURL: coreURL(), wasmURL: wasmURL(), workerBlobUrl: blobUrl }); } catch (_) {}",
 				"      ffmpegInstance.on('log', function (ev) { try { console.log('[FFmpeg core]', ev && ev.type, ev && ev.message); } catch (_) {} });",
+				"",
+				"      // Monkey-patch Worker to use Blob URL — bypasses COEP restrictions",
 				"      var __origWorker = global.Worker;",
+				"      var __workerErrorReject = null;",
 				"      var __wrappedWorker = function (url, opts) {",
-				"        try { console.log('[FFmpegLocal] new Worker', { url: String(url), opts: opts }); } catch (_) {}",
-				"        var w = new __origWorker(url, opts);",
+				"        try { console.log('[FFmpegLocal] new Worker (intercepted)', { originalUrl: String(url), blobUrl: blobUrl, opts: opts }); } catch (_) {}",
+				"        var w = new __origWorker(blobUrl, opts);",
 				"        try {",
 				"          w.addEventListener('error', function (e) {",
-				"            try { console.error('[FFmpeg worker] error event', { message: e && e.message, filename: e && e.filename, lineno: e && e.lineno, colno: e && e.colno, error: e && e.error }); } catch (_) {}",
+				"            var detail = { message: e && e.message, filename: e && e.filename, lineno: e && e.lineno, colno: e && e.colno, error: e && e.error };",
+				"            try { console.error('[FFmpeg worker] error event', detail); } catch (_) {}",
+				"            if (typeof __workerErrorReject === 'function') {",
+				"              __workerErrorReject(new Error('FFmpeg worker error: ' + (detail.message || detail.filename || 'unknown')));",
+				"              __workerErrorReject = null;",
+				"            }",
 				"          });",
 				"          w.addEventListener('messageerror', function (e) {",
 				"            try { console.error('[FFmpeg worker] messageerror event', e); } catch (_) {}",
@@ -227,11 +310,26 @@ function patchFfmpegLocalDiagnostics(text) {
 				"      __wrappedWorker.prototype = __origWorker.prototype;",
 				"      try { global.Worker = __wrappedWorker; } catch (_) {}",
 				"      var __restoreWorker = function () { try { global.Worker = __origWorker; } catch (_) {} };",
-				"      return ffmpegInstance.load({",
-				"        coreURL: coreURL(),",
-				"        wasmURL: wasmURL(),",
-				"      }).then(function () {",
+				"",
+				"      var workerErrorPromise = new Promise(function (_resolve, reject) {",
+				"        __workerErrorReject = reject;",
+				"      });",
+				"      var safetyTimeout = new Promise(function (_resolve, reject) {",
+				"        setTimeout(function () {",
+				"          reject(new Error('FFmpeg load() did not resolve within 60s — worker likely hung.'));",
+				"        }, 60000);",
+				"      });",
+				"",
+				"      return Promise.race([",
+				"        ffmpegInstance.load({",
+				"          coreURL: coreURL(),",
+				"          wasmURL: wasmURL(),",
+				"        }),",
+				"        workerErrorPromise,",
+				"        safetyTimeout,",
+				"      ]).then(function () {",
 				"        __restoreWorker();",
+				"        __workerErrorReject = null;",
 				"        try { console.log('[FFmpegLocal] FFmpeg.load() resolved'); } catch (_) {}",
 			].join("\n"),
 		);
@@ -240,7 +338,7 @@ function patchFfmpegLocalDiagnostics(text) {
 		if (out.includes(restoreMarker)) {
 			out = out.replace(
 				restoreMarker,
-				"    loading.catch(function (err) {\n      try { console.error('[FFmpegLocal] FFmpeg.load() rejected', err); } catch (_) {}\n      ffmpegInstance = null;\n      loading = null;\n    });",
+				"    loading.catch(function (err) {\n      try { console.error('[FFmpegLocal] FFmpeg.load() rejected', err); } catch (_) {}\n      try { if (ffmpegInstance && typeof ffmpegInstance.terminate === 'function') ffmpegInstance.terminate(); } catch (_) {}\n      ffmpegInstance = null;\n      loading = null;\n    });",
 			);
 		}
 	} else {

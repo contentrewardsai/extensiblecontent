@@ -5,42 +5,14 @@ const nextConfig: NextConfig = {
 	images: {
 		remotePatterns: [{ hostname: "**" }],
 	},
-	// FFmpeg.wasm (synced to public/lib/ffmpeg) uses SharedArrayBuffer only on the pages that
-	// actually run the in-browser render pipeline. We scope COOP/COEP to just those routes so
-	// the Whop iframe / third-party SDKs on the rest of the app are unaffected.
-	//
-	// We use `credentialless` for COEP so cross-origin subresources without CORP headers still
-	// load (they just load without credentials). This keeps Whop auth iframes and other
-	// third-party scripts working on the shotstack pages that need SharedArrayBuffer.
+	// The single-threaded FFmpeg WASM core and Kokoro TTS (with numThreads=1)
+	// do NOT require SharedArrayBuffer. COOP/COEP headers were previously set
+	// on these routes to enable crossOriginIsolated, but that actually BROKE
+	// Worker loading inside GHL/Whop iframes (Chrome fires a sparse error
+	// event with all fields undefined when COEP credentialless blocks
+	// `new Worker(url)`). Removed so Workers load natively in any context;
+	// the Blob-URL fallback in ffmpeg-local.js still works as a safety net.
 	headers: async () => [
-		{
-			source: "/experiences/:experienceId/shotstack",
-			headers: [
-				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-			],
-		},
-		{
-			source: "/experiences/:experienceId/shotstack/editor/:templateId",
-			headers: [
-				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-			],
-		},
-		{
-			source: "/ext/shotstack/editor/:templateId",
-			headers: [
-				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-			],
-		},
-		{
-			source: "/ext/shotstack/:path*",
-			headers: [
-				{ key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-				{ key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-			],
-		},
 		{
 			source: "/lib/ffmpeg/:file*",
 			headers: [

@@ -131,51 +131,12 @@ export function BrowserRenderButton({
 	const [msg, setMsg] = useState<string | null>(null);
 	// Gate with useEffect so SSR and first client render agree (hydration-safe).
 	const [canRun, setCanRun] = useState<boolean | null>(null);
-	// `crossOriginIsolated` requires COOP/COEP on the page AND the embedding
-	// parent iframe setting `allow="cross-origin-isolated"`. GHL (and some Whop
-	// surfaces) don't grant that, so we expose a "open in new tab" fallback —
-	// the editor URL is standalone-friendly and in a top-level browsing context
-	// the COOP/COEP headers we ship actually take effect.
-	const [isolated, setIsolated] = useState<boolean | null>(null);
 	useEffect(() => {
 		setCanRun(detectChromium());
-		setIsolated(typeof crossOriginIsolated !== "undefined" ? !!crossOriginIsolated : false);
 	}, []);
-
-	// When opened via "Open in new tab to render" the URL carries `?render=1`.
-	// We *don't* auto-run on mount: the timeline player's AudioContext can only
-	// start in the running state when created inside a user-gesture stack, and
-	// `window.open()` doesn't transfer activation reliably across tabs. Instead
-	// we surface a single big primary CTA so the next click is a real gesture
-	// in *this* tab. Tracked via state so we can switch the button copy.
-	const [pendingFromOpen, setPendingFromOpen] = useState(false);
-	useEffect(() => {
-		if (canRun !== true || isolated !== true) return;
-		try {
-			const url = new URL(window.location.href);
-			if (url.searchParams.get("render") !== "1") return;
-			setPendingFromOpen(true);
-			url.searchParams.delete("render");
-			window.history.replaceState(null, "", url.toString());
-		} catch {
-			/* ignore */
-		}
-	}, [canRun, isolated]);
 	const isToolbar = variant === "toolbar";
 	const baseBtn =
 		"text-3 px-3 py-1.5 rounded-md border border-gray-a4 bg-gray-a1 text-gray-12 disabled:opacity-50 disabled:cursor-not-allowed";
-
-	function openStandalone() {
-		try {
-			const url = new URL(window.location.href);
-			url.searchParams.set("render", "1");
-			// If we're embedded (GHL / Whop iframe), _top is often blocked by
-			// the parent's frame-ancestors; always use a fresh window instead.
-			window.open(url.toString(), "_blank", "noopener,noreferrer");
-		} catch {
-			/* ignore */
-		}
-	}
 
 	const onRender = async () => {
 		if (canRun !== true) return;
@@ -207,7 +168,6 @@ export function BrowserRenderButton({
 			/* ignore — worst case the player handles its own context */
 		}
 		setBusy(true);
-		setPendingFromOpen(false);
 		setMsg(null);
 		try {
 			setMsg("Loading editor scripts…");
@@ -240,11 +200,6 @@ export function BrowserRenderButton({
 			// this origin before we kick off `convertToMp4`, which would
 			// otherwise hang indefinitely on a 404 / COEP mismatch.
 			await preflightFfmpegWasm();
-			if (!crossOriginIsolated) {
-				throw new Error(
-					'This page is embedded, so the render pipeline (FFmpeg WASM + Kokoro / Whisper) can\'t use SharedArrayBuffer. Click "Open in new tab to render" below.',
-				);
-			}
 			const wAi = window as unknown as {
 				__CFS_subscribeAiProgress?: (fn: (d: CfsAiProgress) => void) => () => void;
 			};
@@ -440,47 +395,16 @@ export function BrowserRenderButton({
 		);
 	}
 
-	if (isolated === false) {
-		// Embedded in an iframe that doesn't grant `allow="cross-origin-isolated"`
-		// (GHL, some Whop surfaces). We can't render in this frame at all — direct
-		// users to a standalone tab where our COOP/COEP headers actually take effect.
-		return (
-			<div className={isToolbar ? "inline-flex flex-col gap-0.5" : "inline-flex flex-col items-end gap-0.5"}>
-				<button type="button" className={baseBtn} onClick={openStandalone}>
-					{isToolbar ? "Open in new tab to render" : "Open in new tab to render (free)"}
-				</button>
-				<span
-					className={
-						isToolbar
-							? "text-2 text-gray-10"
-							: "text-2 text-gray-10 text-right max-w-xs"
-					}
-					title="SharedArrayBuffer (required by FFmpeg + Kokoro) only works in a top-level browsing context."
-				>
-					Embedded frame can't run the free render — open standalone.
-				</span>
-			</div>
-		);
-	}
-
 	const buttonLabel = busy
 		? "Rendering…"
-		: pendingFromOpen
-			? "Click to start render"
-			: isToolbar
-				? "Render in browser (free)"
-				: "Browser render (free)";
-	const buttonClass = pendingFromOpen && !busy ? `${baseBtn} bg-accent-9 text-white border-accent-9` : baseBtn;
+		: isToolbar
+			? "Render in browser (free)"
+			: "Browser render (free)";
 	return (
 		<div className={isToolbar ? "inline-flex flex-col gap-0.5" : "inline-flex flex-col items-end gap-0.5"}>
-			<button type="button" className={buttonClass} disabled={disabled || busy} onClick={onRender}>
+			<button type="button" className={baseBtn} disabled={disabled || busy} onClick={onRender}>
 				{buttonLabel}
 			</button>
-			{pendingFromOpen && !busy && !msg ? (
-				<span className={isToolbar ? "text-2 text-gray-10" : "text-2 text-gray-10 text-right max-w-xs"}>
-					This tab is ready — click to render (a click is required to enable audio playback).
-				</span>
-			) : null}
 			{msg && !isToolbar ? <span className="text-2 text-gray-10 text-right max-w-xs">{msg}</span> : null}
 			{msg && isToolbar ? <span className="text-2 text-gray-10">{msg}</span> : null}
 		</div>
