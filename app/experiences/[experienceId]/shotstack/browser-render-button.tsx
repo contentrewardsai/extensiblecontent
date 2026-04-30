@@ -117,6 +117,8 @@ export function BrowserRenderButton({
 	getTemplateJson,
 	disabled = false,
 	context,
+	getOutputType,
+	getCanvas,
 }: {
 	templateId: string;
 	templateName: string;
@@ -125,6 +127,10 @@ export function BrowserRenderButton({
 	getTemplateJson?: () => Record<string, unknown> | null;
 	disabled?: boolean;
 	context: ShotstackEditorContext;
+	/** Returns current format selection: 'image', 'video', 'audio', etc. */
+	getOutputType?: () => string;
+	/** Returns the Fabric.js canvas instance for image export. */
+	getCanvas?: () => { toDataURL: (opts: { format: string; quality: number; multiplier: number }) => string } | null;
 }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState(false);
@@ -169,7 +175,88 @@ export function BrowserRenderButton({
 		}
 		setBusy(true);
 		setMsg(null);
+		const outputType = getOutputType?.() ?? "video";
 		try {
+			/* ── IMAGE export: snapshot canvas as PNG ── */
+			if (outputType === "image") {
+				setMsg("Exporting image…");
+				const cv = getCanvas?.();
+				if (!cv?.toDataURL) throw new Error("Canvas not available for image export");
+				const dataUrl = cv.toDataURL({ format: "png", quality: 1, multiplier: 1 });
+				const res = await fetch(dataUrl);
+				const blob = await res.blob();
+				setMsg("Uploading image…");
+				const fd = new FormData();
+				for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
+				fd.append("template_id", templateId);
+				fd.append("file", blob, "render.png");
+				fd.append("content_type", "image/png");
+				const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
+				const j = (await up.json().catch(() => ({}))) as { error?: string; storage_type?: string; fallback_message?: string | null };
+				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
+				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
+				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
+				router.refresh();
+				return;
+			}
+
+			/* ── AUDIO export: render TTS/soundtrack only ── */
+			if (outputType === "audio") {
+				setMsg("Loading editor scripts…");
+				await ensureCfsGeneratorLoaded();
+				type CfsEngine = {
+					applyMergeToTemplate: (t: unknown, m: unknown[]) => unknown;
+					renderTimelineToAudioBlob?: (t: unknown) => Promise<Blob | null>;
+				};
+				const engine = (window as unknown as { __CFS_templateEngine?: CfsEngine }).__CFS_templateEngine;
+				if (!engine?.applyMergeToTemplate || !engine?.renderTimelineToAudioBlob) {
+					throw new Error("Audio render pipeline not available");
+				}
+				let edit = getTemplateJson?.() ?? null;
+				if (!edit) {
+					const tRes = await fetch(buildUrl(context.templatesApiBase, `/${templateId}`, context.templatesApiQuery), { credentials: "include" });
+					if (!tRes.ok) throw new Error("Could not load template");
+					const t = (await tRes.json()) as { edit?: Record<string, unknown> };
+					edit = t?.edit ?? null;
+				}
+				if (!edit) throw new Error("No template JSON");
+				setMsg("Rendering audio (TTS + soundtrack)…");
+				const e = JSON.parse(JSON.stringify(edit)) as { merge?: unknown[] };
+				const merge = Array.isArray(e.merge) ? e.merge : [];
+				const merged = engine.applyMergeToTemplate(e, merge) as Record<string, unknown>;
+				const rawBlob = await runWithTimeout(
+					engine.renderTimelineToAudioBlob(merged),
+					300_000,
+					"Audio render timed out after 5 minutes",
+				);
+				if (!rawBlob) throw new Error("No audio from renderer");
+				/* Try M4A conversion via FFmpeg, fall back to WAV */
+				let audioBlob = rawBlob;
+				let ext = "wav";
+				const ff = (window as unknown as { FFmpegLocal?: { convertToM4a?: (b: Blob) => Promise<{ ok: boolean; blob?: Blob; error?: string }> } }).FFmpegLocal;
+				if (ff?.convertToM4a) {
+					try {
+						setMsg("Converting to M4A…");
+						const result = await ff.convertToM4a(rawBlob);
+						if (result.ok && result.blob) { audioBlob = result.blob; ext = "m4a"; }
+					} catch { /* use WAV */ }
+				}
+				setMsg(`Uploading ${ext.toUpperCase()}…`);
+				const fd = new FormData();
+				for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
+				fd.append("template_id", templateId);
+				fd.append("file", audioBlob, `render.${ext}`);
+				fd.append("content_type", audioBlob.type || (ext === "m4a" ? "audio/mp4" : "audio/wav"));
+				const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
+				const j = (await up.json().catch(() => ({}))) as { error?: string; storage_type?: string; fallback_message?: string | null };
+				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
+				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
+				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
+				router.refresh();
+				return;
+			}
+
+			/* ── VIDEO export (default): existing pipeline ── */
 			setMsg("Loading editor scripts…");
 			await ensureCfsGeneratorLoaded();
 			type CfsEngine = {

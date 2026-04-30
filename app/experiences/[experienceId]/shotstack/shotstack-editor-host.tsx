@@ -35,6 +35,7 @@ type UnifiedEditorInstance = {
 	hasPendingChanges?: () => boolean;
 	markSaved?: () => void;
 	getCanvas?: () => FabricCanvas | null;
+	getOutputType?: () => string;
 	addImage?: () => void;
 	events?: EditEvents;
 	destroy?: () => void;
@@ -405,6 +406,8 @@ export function ShotstackEditorHost({
 					getTemplateJson={() => editorRef.current?.getShotstackTemplate?.() ?? null}
 					disabled={status !== "ready"}
 					context={context}
+					getOutputType={() => editorRef.current?.getOutputType?.() ?? "video"}
+					getCanvas={() => editorRef.current?.getCanvas?.() as { toDataURL: (opts: { format: string; quality: number; multiplier: number }) => string } | null}
 				/>
 				{!isBuiltin && isDirty ? <span className="text-2 text-gray-10">Unsaved changes</span> : null}
 				{/* Add-content toolbar: undo/redo/copy/paste + Add Text/Image/Shape buttons */}
