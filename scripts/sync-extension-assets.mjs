@@ -357,6 +357,102 @@ function patchFfmpegLocalDiagnostics(text) {
 }
 
 /**
+ * Patch template-engine.js for the web app:
+ *
+ * 1. Fix async race in renderTimelineToAudioBlob — player.load() returns a Promise
+ *    but was not awaited, so renderMixedAudioBuffer ran before the player had loaded
+ *    the template, causing "No audio from renderer".
+ */
+function patchTemplateEngine(text) {
+	let out = text;
+	const audioRaceMarker =
+		"const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsMap || undefined });\n" +
+		"      player.load(mergedTemplate);\n" +
+		"      const durationSec = player.getDuration ? player.getDuration() : 10;\n" +
+		"      if (player.renderMixedAudioBuffer) {\n" +
+		"        return player.renderMixedAudioBuffer(durationSec, 0);\n" +
+		"      }\n" +
+		"      return null;";
+	const audioRaceFix =
+		"const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsMap || undefined });\n" +
+		"      return player.load(mergedTemplate).then(function () {\n" +
+		"        const durationSec = player.getDuration ? player.getDuration() : 10;\n" +
+		"        if (player.renderMixedAudioBuffer) {\n" +
+		"          return player.renderMixedAudioBuffer(durationSec, 0);\n" +
+		"        }\n" +
+		"        return null;\n" +
+		"      });";
+	if (out.includes(audioRaceMarker)) {
+		out = out.replace(audioRaceMarker, audioRaceFix);
+	} else {
+		console.warn("[sync-extension-assets] template-engine.js audioRace marker not found — skipping");
+	}
+	return out;
+}
+
+/**
+ * Patch unified-editor.js for the web app:
+ *
+ * 1. New elements start at t=0 spanning the full existing duration instead of
+ *    being appended at the end of the timeline (which inflates video length).
+ *
+ * 2. In-memory clipboard fallback for GHL iframes where the Clipboard API is
+ *    blocked by the browser's Permissions Policy.
+ */
+function patchUnifiedEditor(text) {
+	let out = text;
+
+	// ── Fix: addText start at 0 instead of end ──
+	const addTextMarker = "opts.cfsStart = getTimelineEnd();\n        opts.cfsLength = 5;";
+	const addTextFix    = "opts.cfsStart = 0;\n        opts.cfsLength = getTimelineEnd() || 5;";
+	if (out.includes(addTextMarker)) {
+		out = out.replace(addTextMarker, addTextFix);
+	}
+
+	// ── Fix: addImage start at 0 ──
+	const addImgMarker = "imgOpts.cfsStart = getTimelineEnd();\n              imgOpts.cfsLength = 5;";
+	const addImgFix    = "imgOpts.cfsStart = 0;\n              imgOpts.cfsLength = getTimelineEnd() || 5;";
+	if (out.includes(addImgMarker)) {
+		out = out.replace(addImgMarker, addImgFix);
+	}
+
+	// ── Fix: addShape start at 0 ──
+	const addShapeMarker = "timeProps.cfsStart = getTimelineEnd(); timeProps.cfsLength = 5;";
+	const addShapeFix    = "timeProps.cfsStart = 0; timeProps.cfsLength = getTimelineEnd() || 5;";
+	if (out.includes(addShapeMarker)) {
+		out = out.replace(addShapeMarker, addShapeFix);
+	}
+
+	// ── Fix: importSvg start at 0 ──
+	const svgMarker = "svgOpts.cfsStart = getTimelineEnd();\n            svgOpts.cfsLength = 5;";
+	const svgFix    = "svgOpts.cfsStart = 0;\n            svgOpts.cfsLength = getTimelineEnd() || 5;";
+	if (out.includes(svgMarker)) {
+		out = out.replace(svgMarker, svgFix);
+	}
+
+	// ── Fix: addAudioClip start at 0 ──
+	const audioStartMarker = "var start = Math.max(getTimelineEnd(), lastTotalDuration || 0);\n        var audioTrackIdx";
+	const audioStartFix    = "var start = 0;\n        var audioTrackIdx";
+	if (out.includes(audioStartMarker)) {
+		out = out.replace(audioStartMarker, audioStartFix);
+	}
+	const audioLenMarker = "start: start,\n          length: 10\n        });\n        saveStateDebounced();\n        refreshTimeline();\n        refreshPropertyPanel();\n      }\n    }";
+	const audioLenFix    = "start: start,\n          length: getTimelineEnd() || 10\n        });\n        saveStateDebounced();\n        refreshTimeline();\n        refreshPropertyPanel();\n      }\n    }";
+	if (out.includes(audioLenMarker)) {
+		out = out.replace(audioLenMarker, audioLenFix);
+	}
+
+	// ── Fix: addVideo length ──
+	const vidLenMarker = "group.set('cfsLength', 5);\n        group.set('cfsTrackIndex', 0);";
+	const vidLenFix    = "group.set('cfsLength', getTimelineEnd() || 5);\n        group.set('cfsTrackIndex', 0);";
+	if (out.includes(vidLenMarker)) {
+		out = out.replace(vidLenMarker, vidLenFix);
+	}
+
+	return out;
+}
+
+/**
  * Widen kokoro.web.js's `env` proxy so we can mutate ORT settings beyond
  * `wasmPaths`. Ships with ONLY `wasmPaths` exposed:
  *   const Mf={set wasmPaths(e){Wg.backends.onnx.wasm.wasmPaths=e}, get wasmPaths(){…}};
@@ -422,6 +518,12 @@ async function run() {
 					`  function wasmURL() {\n    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {\n      return chrome.runtime.getURL('lib/ffmpeg/ffmpeg-core.wasm');\n    }\n    if (typeof location !== 'undefined' && location.origin) {\n      return location.origin + '/lib/ffmpeg/ffmpeg-core.wasm';\n    }\n    return '/lib/ffmpeg/ffmpeg-core.wasm';\n  }`,
 				);
 			}
+		}
+		if (rel === "generator/template-engine.js") {
+			text = patchTemplateEngine(text);
+		}
+		if (rel === "generator/editor/unified-editor.js") {
+			text = patchUnifiedEditor(text);
 		}
 		await writeBuffer(dest, text);
 		count++;
