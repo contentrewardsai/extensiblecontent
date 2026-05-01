@@ -230,15 +230,15 @@ export function BrowserRenderButton({
 					"Audio render timed out after 5 minutes",
 				);
 				if (!rawBlob) throw new Error("No audio from renderer");
-				/* Try M4A conversion via FFmpeg, fall back to WAV */
+				/* Try MP3 conversion via FFmpeg, fall back to WAV */
 				let audioBlob = rawBlob;
 				let ext = "wav";
-				const ff = (window as unknown as { FFmpegLocal?: { convertToM4a?: (b: Blob) => Promise<{ ok: boolean; blob?: Blob; error?: string }> } }).FFmpegLocal;
-				if (ff?.convertToM4a) {
+				const ff = (window as unknown as { FFmpegLocal?: { convertToMp3?: (b: Blob) => Promise<{ ok: boolean; blob?: Blob; error?: string }> } }).FFmpegLocal;
+				if (ff?.convertToMp3) {
 					try {
-						setMsg("Converting to M4A…");
-						const result = await ff.convertToM4a(rawBlob);
-						if (result.ok && result.blob) { audioBlob = result.blob; ext = "m4a"; }
+						setMsg("Converting to MP3…");
+						const result = await ff.convertToMp3(rawBlob);
+						if (result.ok && result.blob) { audioBlob = result.blob; ext = "mp3"; }
 					} catch { /* use WAV */ }
 				}
 				setMsg(`Uploading ${ext.toUpperCase()}…`);
@@ -246,7 +246,7 @@ export function BrowserRenderButton({
 				for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
 				fd.append("template_id", templateId);
 				fd.append("file", audioBlob, `render.${ext}`);
-				fd.append("content_type", audioBlob.type || (ext === "m4a" ? "audio/mp4" : "audio/wav"));
+				fd.append("content_type", audioBlob.type || (ext === "mp3" ? "audio/mpeg" : "audio/wav"));
 				const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
 				const j = (await up.json().catch(() => ({}))) as { error?: string; storage_type?: string; fallback_message?: string | null };
 				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
