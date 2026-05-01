@@ -8,6 +8,20 @@ import { performStorageUpload } from "@/lib/storage-upload";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { getMemberProjectIdsForUser, shotstackListOrFilter } from "@/lib/whop-shotstack-template-routes";
 
+/** Map a MIME type to a file extension. Handles audio, video, and image. */
+function mimeToExt(mime: string): string {
+	const m = mime.toLowerCase();
+	if (m.includes("webm")) return "webm";
+	if (m.includes("wav")) return "wav";
+	if (m.includes("audio/mp4") || m.includes("m4a")) return "m4a";
+	if (m.includes("audio/mpeg") || m.includes("mp3")) return "mp3";
+	if (m.includes("audio/ogg")) return "ogg";
+	if (m.includes("image/png")) return "png";
+	if (m.includes("image/jpeg") || m.includes("image/jpg")) return "jpg";
+	if (m.includes("image/webp")) return "webp";
+	return "mp4";
+}
+
 /**
  * POST /api/ghl/shotstack/browser-render
  *
@@ -73,12 +87,12 @@ export async function POST(request: NextRequest) {
 		return Response.json({ error: "Template not found" }, { status: 404 });
 	}
 
-	// See /api/whop/shotstack/browser-render — we derive ext from the blob MIME
-	// so WebM fallbacks don't end up with a .mp4 filename.
+	// Derive extension and content type from the blob's MIME. The client may also
+	// send an explicit `content_type` form field (e.g. audio exports send "audio/wav").
 	const rawType = file.type && file.type !== "application/octet-stream" ? file.type : "";
-	const isWebm = rawType.includes("webm");
-	const contentType = rawType || (isWebm ? "video/webm" : "video/mp4");
-	const ext = isWebm ? "webm" : "mp4";
+	const clientType = String(form.get("content_type") ?? "").trim();
+	const contentType = rawType || clientType || "video/mp4";
+	const ext = mimeToExt(contentType);
 	const fileBuffer = await file.arrayBuffer();
 
 	const { data: projectRow } = await supabase.from("projects").select("quota_bytes").eq("id", project_id).maybeSingle();
