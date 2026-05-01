@@ -1,0 +1,964 @@
+/* ========================================================================
+   Unified Editor — Dark Theme
+   Matches generator.css design system (zinc/blue)
+   ======================================================================== */
+
+/* --- Editor Root --- */
+.cfs-unified-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 100%;
+  height: 100%;
+  background: var(--gen-bg, #09090b);
+}
+
+/* --- Toolbar --- */
+.cfs-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--gen-surface, #18181b);
+  border-bottom: 1px solid var(--gen-border, #27272a);
+}
+
+.cfs-editor-toolbar.cfs-toolbar-in-preview {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.cfs-editor-toolbar button {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  cursor: pointer;
+  transition: all 150ms ease;
+  font-family: inherit;
+}
+
+.cfs-editor-toolbar button:hover {
+  background: var(--gen-border, #27272a);
+  border-color: var(--gen-muted, #71717a);
+}
+
+.cfs-editor-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cfs-editor-toolbar button.primary {
+  background: var(--gen-accent, #3b82f6);
+  border-color: var(--gen-accent, #3b82f6);
+  color: #fff;
+}
+
+.cfs-editor-toolbar button.primary:hover {
+  background: var(--gen-accent-hover, #2563eb);
+}
+
+.cfs-editor-toolbar select {
+  padding: 4px 8px;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  font-size: 11px;
+  font-family: inherit;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 22px;
+}
+
+.cfs-editor-toolbar label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gen-muted, #71717a);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- Custom Dimensions --- */
+.cfs-editor-custom-dims input {
+  padding: 4px 8px;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  font-size: 11px;
+  text-align: center;
+  font-family: ui-monospace, monospace;
+}
+
+.cfs-editor-custom-dims input:focus {
+  outline: none;
+  border-color: var(--gen-accent, #3b82f6);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
+}
+
+/* --- Canvas Row --- */
+.cfs-editor-canvas-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* --- Canvas Wrap --- */
+.cfs-editor-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+  background: var(--gen-bg, #09090b);
+  /* Subtle dot pattern like the React mockup */
+  background-image: radial-gradient(circle, rgba(39, 39, 42, 0.4) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.cfs-editor-canvas-frame {
+  flex-shrink: 0;
+  flex-grow: 0;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.cfs-editor-canvas-wrap [data-fabric-canvas] {
+  box-shadow: none;
+  flex-shrink: 0;
+  flex-grow: 0;
+  display: block;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.cfs-editor-canvas-wrap [data-fabric-canvas] canvas {
+  pointer-events: auto;
+  display: block;
+  box-sizing: border-box;
+}
+
+
+/* --- Right Column (Layers + Properties) --- */
+.cfs-editor-right-column {
+  width: 220px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  background: var(--gen-surface, #18181b);
+  border-left: 1px solid var(--gen-border, #27272a);
+  overflow: hidden;
+}
+
+/* --- Layers Panel --- */
+.cfs-editor-layers-panel {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--gen-border, #27272a);
+  overflow-y: auto;
+  max-height: 180px;
+}
+
+.cfs-editor-panel-heading {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted, #71717a);
+  margin-bottom: 6px;
+}
+
+/* --- Layer Items --- */
+.cfs-layer-item {
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 150ms ease;
+  color: var(--gen-text-secondary, #a1a1aa);
+}
+
+.cfs-layer-item:hover {
+  background: rgba(39, 39, 42, 0.6);
+  color: var(--gen-text, #e4e4e7);
+}
+
+.cfs-layer-item.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border-left: 2px solid var(--gen-accent, #3b82f6);
+  padding-left: 6px;
+}
+
+/* --- Property Panel --- */
+.cfs-editor-property-panel {
+  flex: 1;
+  padding: 12px 14px 16px;
+  font-size: 12px;
+  overflow-y: auto;
+}
+
+.cfs-prop-linked {
+  font-size: 10px;
+  color: var(--gen-muted, #71717a);
+  margin-bottom: 4px;
+}
+
+.cfs-prop-linked .cfs-prop-label strong {
+  color: var(--gen-text, #e4e4e7);
+}
+
+.cfs-properties-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 0;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted, #71717a);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: color 150ms ease;
+}
+
+.cfs-properties-toggle:hover {
+  color: var(--gen-text, #e4e4e7);
+}
+
+.cfs-properties-chevron {
+  display: inline-block;
+  width: 14px;
+  margin-right: 4px;
+  font-size: 10px;
+}
+
+.cfs-properties-form-wrap {
+  overflow: hidden;
+}
+
+.cfs-properties-form-wrap.cfs-properties-collapsed {
+  max-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.cfs-properties-empty {
+  color: var(--gen-muted, #71717a);
+  font-size: 11px;
+}
+
+.cfs-properties-editing {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--gen-text, #e4e4e7);
+  margin-bottom: 10px;
+  padding-bottom: 0;
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cfs-editor-property-panel .cfs-prop-row {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* When cfs-prop-row is inside the generator sidebar, auto-upgrade to gen-prop-group style */
+.gen-properties-panel .cfs-prop-row {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gen-properties-panel .cfs-prop-row > label,
+.cfs-editor-property-panel label {
+  color: #71717a;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  line-height: 1;
+}
+
+.gen-properties-panel .cfs-prop-row input,
+.gen-properties-panel .cfs-prop-row textarea,
+.cfs-editor-property-panel input,
+.cfs-editor-property-panel textarea {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  line-height: 1.4;
+}
+
+.gen-properties-panel .cfs-prop-row select,
+.cfs-editor-property-panel select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding: 6px 24px 6px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--gen-text, #e4e4e7);
+  background-color: #09090b;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2352525b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  cursor: pointer;
+}
+
+.gen-properties-panel .cfs-prop-row input:focus,
+.gen-properties-panel .cfs-prop-row select:focus,
+.gen-properties-panel .cfs-prop-row textarea:focus,
+.cfs-editor-property-panel input:focus,
+.cfs-editor-property-panel select:focus,
+.cfs-editor-property-panel textarea:focus {
+  border-color: var(--gen-accent, #3b82f6);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+/* --- Section label used inside property forms --- */
+.cfs-prop-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #52525b;
+  border-bottom: 1px solid #27272a;
+  padding: 0 0 4px;
+  margin: 16px 0 8px;
+  line-height: 1;
+}
+
+.cfs-prop-section-label::after {
+  display: none;
+}
+
+/* --- Rich Caption Prop Sections --- */
+.cfs-prop-section {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(39, 39, 42, 0.5);
+}
+.cfs-prop-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.cfs-prop-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #52525b;
+  margin-bottom: 8px;
+  line-height: 1;
+}
+
+/* Side-by-side property pairs */
+.gen-prop-pair,
+.cfs-prop-row.gen-prop-pair {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 8px;
+  align-items: flex-end;
+}
+.gen-prop-pair > .gen-prop-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* --- Delete & Action Buttons --- */
+.cfs-btn-delete {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(69, 10, 10, 0.3);
+  border: 1px solid rgba(153, 27, 27, 0.5);
+  border-radius: 4px;
+  color: #f87171;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.cfs-btn-delete:hover {
+  background: rgba(127, 29, 29, 0.5);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+.cfs-prop-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cfs-btn-secondary {
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--gen-field-bg, #050507);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.cfs-btn-secondary:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+}
+
+/* --- Alignment --- */
+.cfs-prop-align {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 4px;
+  background: var(--gen-field-bg, #050507);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+}
+
+.cfs-prop-align .cfs-prop-label {
+  margin-right: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted, #71717a);
+}
+
+.cfs-btn-align {
+  padding: 5px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--gen-muted, #71717a);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.cfs-btn-align:hover {
+  background: #3f3f46;
+  color: #fafafa;
+}
+
+/* ========================================================================
+   Timeline
+   ======================================================================== */
+.cfs-editor-timeline-wrap {
+  border-top: 1px solid var(--gen-border, #27272a);
+  background: var(--gen-surface, #18181b);
+  height: 240px;
+  min-height: 120px;
+  max-height: 320px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cfs-editor-timeline {
+  padding: 0;
+  font-size: 10px;
+  color: var(--gen-muted, #71717a);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.cfs-editor-timeline-ruler {
+  height: 24px;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  margin-top: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--gen-border, #27272a);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding-left: 0;
+}
+
+.cfs-editor-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 36px;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.3);
+}
+
+.cfs-editor-track-label {
+  flex-shrink: 0;
+  width: 120px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--gen-muted, #71717a);
+  padding: 0 8px;
+  border-right: 1px solid rgba(39, 39, 42, 0.3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfs-editor-track {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+
+/* --- Clips --- */
+.cfs-editor-clip {
+  height: 28px;
+  min-width: 40px;
+  background: rgba(59, 130, 246, 0.3);
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  border-radius: 4px;
+  flex-shrink: 0;
+  cursor: grab;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  color: #93c5fd;
+  overflow: hidden;
+  user-select: none;
+  transition: background 150ms ease;
+}
+
+.cfs-editor-clip:hover {
+  background: rgba(59, 130, 246, 0.4);
+}
+
+.cfs-editor-clip-audio {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.5);
+  color: #a5b4fc;
+}
+
+.cfs-editor-clip-tts { background: rgba(5, 150, 105, 0.3); border-color: rgba(5, 150, 105, 0.5); color: #6ee7b7; }
+.cfs-editor-clip-caption { background: rgba(13, 148, 136, 0.3); border-color: rgba(13, 148, 136, 0.5); color: #5eead4; }
+.cfs-editor-clip-tti { background: rgba(124, 58, 237, 0.3); border-color: rgba(124, 58, 237, 0.5); color: #c4b5fd; }
+.cfs-editor-clip-luma { background: rgba(79, 70, 229, 0.3); border-color: rgba(79, 70, 229, 0.5); color: #a5b4fc; }
+.cfs-editor-clip-html { background: rgba(220, 38, 38, 0.3); border-color: rgba(220, 38, 38, 0.5); color: #fca5a5; }
+
+/* Per-chunk sub-clips for captions and TTS */
+.cfs-editor-clip-caption-chunk {
+  background: rgba(20, 184, 166, 0.35);
+  border-color: rgba(20, 184, 166, 0.6);
+  color: #99f6e4;
+  border-radius: 3px;
+  font-size: 9px;
+  height: 26px;
+}
+.cfs-editor-clip-caption-chunk:hover {
+  background: rgba(20, 184, 166, 0.5);
+}
+.cfs-editor-clip-tts-chunk {
+  background: rgba(16, 185, 129, 0.35);
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #a7f3d0;
+  border-radius: 3px;
+  font-size: 9px;
+  height: 26px;
+}
+.cfs-editor-clip-tts-chunk:hover {
+  background: rgba(16, 185, 129, 0.5);
+}
+
+/* --- Clip Resize Handles --- */
+.cfs-editor-clip-resize {
+  flex: 0 0 6px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0.1);
+  transition: background 150ms ease;
+}
+.cfs-editor-clip-resize:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.cfs-editor-clip-resize-left { border-radius: 4px 0 0 4px; }
+.cfs-editor-clip-resize-right { border-radius: 0 4px 4px 0; }
+
+/* --- Selected clip --- */
+.cfs-editor-clip-selected {
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 8px rgba(59, 130, 246, 0.4);
+  z-index: 5;
+}
+
+/* --- Locked track --- */
+.cfs-editor-track-locked .cfs-editor-clip {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.cfs-editor-track-locked .cfs-editor-track-label {
+  color: #52525b;
+  font-style: italic;
+}
+
+/* --- Razor guideline --- */
+.cfs-editor-razor-line {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  border-left: 2px dashed #e11d48;
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* --- Timeline Resize & Playhead --- */
+.cfs-editor-timeline-resize-wrap {
+  position: relative;
+}
+
+.cfs-editor-timeline-resize-handle:hover {
+  background: var(--gen-accent, #3b82f6) !important;
+}
+
+.cfs-editor-timeline-area {
+  min-height: 80px;
+  flex: 1;
+  overflow: auto;
+}
+
+.cfs-editor-playhead {
+  top: 0;
+  bottom: 0;
+}
+
+/* Diamond-shaped playhead handle */
+.cfs-editor-playhead > div:first-child {
+  width: 10px !important;
+  height: 10px !important;
+  left: -4px !important;
+  top: -2px !important;
+  transform: rotate(45deg);
+  border-radius: 1px !important;
+}
+
+.cfs-editor-timeline-toolbar {
+  flex-wrap: wrap;
+  height: 40px;
+  min-height: 40px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--gen-border, #27272a);
+  background: rgba(9, 9, 11, 0.5);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cfs-editor-timeline-toolbar button {
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  flex-shrink: 0;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  cursor: pointer;
+  transition: all 150ms ease;
+  font-family: inherit;
+}
+
+.cfs-editor-timeline-toolbar button:hover {
+  background: var(--gen-border, #27272a);
+  border-color: var(--gen-muted, #71717a);
+}
+
+/* ========================================================================
+   Book Mode
+   ======================================================================== */
+.cfs-editor-canvas-wrap.book-mode {
+  flex-direction: column;
+  align-items: center;
+}
+
+.cfs-editor-canvas-page {
+  position: relative;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  border: 1px solid var(--gen-border, #27272a);
+}
+
+.cfs-editor-canvas-page .page-break-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -12px;
+  height: 2px;
+  background: var(--gen-accent, #3b82f6);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.cfs-editor-book-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--gen-surface, #18181b);
+  border-top: 1px solid var(--gen-border, #27272a);
+}
+
+.cfs-editor-book-pages {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.cfs-editor-book-page-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 11px;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.cfs-editor-book-page-btn.active {
+  background: var(--gen-accent, #3b82f6);
+  border-color: var(--gen-accent, #3b82f6);
+  color: #fff;
+}
+
+/* --- Export Group --- */
+.cfs-editor-export-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.cfs-editor-export-group button {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+/* --- Dimensions Display --- */
+.cfs-editor-dimensions {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--gen-muted, #71717a);
+  font-family: ui-monospace, monospace;
+}
+
+/* --- Context Menu --- */
+.cfs-editor-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 140px;
+  padding: 4px 0;
+  background: var(--gen-surface, #18181b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.cfs-editor-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 11px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--gen-text, #e4e4e7);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.cfs-editor-context-menu button:hover {
+  background: var(--gen-border, #27272a);
+}
+
+/* --- Recording Status --- */
+.cfs-recording-status {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: var(--gen-surface, #18181b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--gen-muted, #71717a);
+  z-index: 100;
+  display: none;
+}
+
+/* --- Walkthrough Panel --- */
+.cfs-editor-walkthrough-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  background: var(--gen-bg, #09090b);
+}
+
+.cfs-walkthrough-section {
+  margin-bottom: 20px;
+}
+
+.cfs-walkthrough-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--gen-text, #e4e4e7);
+}
+
+.cfs-walkthrough-code {
+  margin: 0 0 8px 0;
+  padding: 12px;
+  background: #0c0c0e;
+  color: #d4d4d4;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 240px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid var(--gen-border, #27272a);
+}
+
+.cfs-walkthrough-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.cfs-editor-hint {
+  font-size: 11px;
+  color: var(--gen-muted, #71717a);
+  margin: 8px 0;
+}
+
+.cfs-editor-hint.error {
+  color: var(--gen-danger, #ef4444);
+}
+
+/* --- E-Learning --- */
+.cfs-editor-elearning-content h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.cfs-editor-elearning-content p {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* --- Walkthrough Edit --- */
+.cfs-walkthrough-edit-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--gen-border, #27272a);
+}
+
+.cfs-walkthrough-edit-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+}
+
+.cfs-walkthrough-edit-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.cfs-walkthrough-edit-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cfs-walkthrough-edit-step label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gen-text, #e4e4e7);
+}
+
+.cfs-walkthrough-edit-step textarea,
+.cfs-walkthrough-edit-step input[type="text"] {
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--gen-bg, #09090b);
+  border: 1px solid var(--gen-border, #27272a);
+  border-radius: 4px;
+  color: var(--gen-text, #e4e4e7);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.cfs-walkthrough-edit-step textarea {
+  min-height: 36px;
+  resize: vertical;
+}

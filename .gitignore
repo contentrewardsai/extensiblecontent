@@ -17,20 +17,10 @@
 /ExtensibleContent
 
 # Vendored extension assets synced via `pnpm sync:generator-assets`.
-# These come from the ExtensibleContentExtension repo at a pinned commit and must not be
-# committed (≈33MB of ffmpeg-core.wasm alone). Run the sync script after install.
-/public/generator/
-/public/shared/
-/public/lib/ffmpeg/
-/public/lib/fabric.min.js
-/public/lib/fabric-textbaseline-patch.js
-/public/lib/pixi.min.js
-/public/lib/pixi-unsafe-eval.min.js
-/public/lib/html2canvas.min.js
-/public/lib/socket.io.min.js
-/public/lib/Sortable.min.js
-/public/lib/kokoro/
-/public/lib/transformers/
+# All public/ assets are tracked in git so the web app deploys with full
+# browser rendering support (ffmpeg, pixi, kokoro TTS, whisper STT) without
+# requiring the Chrome extension. Total ≈69 MB, no single file exceeds
+# GitHub's 100 MB limit.
 
 # next.js
 /.next/

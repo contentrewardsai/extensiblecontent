@@ -1,0 +1,3286 @@
+/* ========================================================================
+   Content Generator — Modern Dark Theme
+   Zinc/Blue design system inspired by professional video editor UIs.
+   ======================================================================== */
+
+/* --- Design Tokens --- */
+:root {
+  --gen-bg: #09090b;
+  --gen-surface: #18181b;
+  --gen-surface-hover: #1f1f23;
+  --gen-border: #27272a;
+  --gen-border-subtle: rgba(39, 39, 42, 0.6);
+  --gen-text: #e4e4e7;
+  /* Primary foreground for inline styles that use var(--gen-fg, …) in the editor */
+  --gen-fg: #e4e4e7;
+  --gen-text-secondary: #a1a1aa;
+  --gen-muted: #71717a;
+  /* Input wells — slightly darker than panel (mock: zinc-950 fields) */
+  --gen-field-bg: #050507;
+  --gen-accent: #3b82f6;
+  --gen-accent-hover: #2563eb;
+  --gen-accent-glow: rgba(59, 130, 246, 0.15);
+  --gen-accent-border: rgba(59, 130, 246, 0.3);
+  --gen-success: #22c55e;
+  --gen-danger: #ef4444;
+  --gen-danger-subtle: rgba(239, 68, 68, 0.15);
+  --gen-sidebar-width: 340px;
+  --gen-radius-sm: 4px;
+  --gen-radius-md: 6px;
+  --gen-radius-lg: 8px;
+  --gen-transition: 150ms ease;
+}
+
+/* --- Base --- */
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--gen-text);
+  background: var(--gen-bg);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gen-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gen-muted);
+}
+
+/* --- Layout --- */
+.gen-layout {
+  display: flex;
+  flex-direction: row;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+}
+
+/* --- Sidebar --- */
+.gen-sidebar {
+  flex-shrink: 0;
+  width: var(--gen-sidebar-width);
+  min-width: 300px;
+  background: var(--gen-surface);
+  border-right: 1px solid var(--gen-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+  z-index: 20;
+}
+
+.gen-generator-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* --- Panel Header --- */
+.gen-generator-title {
+  margin: 0;
+  padding: 14px 16px 0 16px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gen-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.gen-generator-title .gen-title-icon {
+  color: var(--gen-accent);
+  flex-shrink: 0;
+}
+
+/* --- Tab Navigation --- */
+.gen-sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gen-border);
+  flex-shrink: 0;
+}
+
+.gen-tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  border-radius: var(--gen-radius-md);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+  color: #71717a;
+  background: transparent;
+}
+
+.gen-tab-btn:hover {
+  color: #a1a1aa;
+  background: rgba(39, 39, 42, 0.5);
+}
+
+.gen-tab-btn.active {
+  color: #fafafa;
+  background: #27272a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.gen-tab-btn svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+/* --- Tab Content --- */
+.gen-tab-content {
+  display: none;
+}
+
+.gen-tab-content.active {
+  display: block;
+  animation: genFadeIn 200ms ease;
+}
+
+@keyframes genFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Scrollable sidebar body */
+.gen-sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 80px;
+}
+
+/* --- Accordion Sections --- */
+.gen-accordion {
+  border-bottom: 1px solid rgba(39, 39, 42, 0.6);
+}
+
+.gen-accordion:last-child {
+  border-bottom: none;
+}
+
+.gen-accordion-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e4e4e7;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--gen-transition), color var(--gen-transition);
+  text-align: left;
+  letter-spacing: 0.01em;
+}
+
+.gen-accordion-trigger:hover {
+  background: rgba(39, 39, 42, 0.45);
+  color: #fafafa;
+}
+
+.gen-accordion-trigger .gen-accordion-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gen-accordion-trigger .gen-accordion-left svg {
+  color: #71717a;
+  flex-shrink: 0;
+  transition: color var(--gen-transition);
+}
+
+.gen-accordion-trigger:hover .gen-accordion-left svg {
+  color: #a1a1aa;
+}
+
+.gen-accordion-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-accordion-extra {
+  font-weight: 400;
+  font-size: 10px;
+  color: #52525b;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gen-accordion-trigger .gen-accordion-chevron {
+  color: #52525b;
+  transition: transform var(--gen-transition), color var(--gen-transition);
+  flex-shrink: 0;
+}
+
+.gen-accordion-trigger:hover .gen-accordion-chevron {
+  color: #71717a;
+}
+
+.gen-accordion.open > .gen-accordion-trigger .gen-accordion-chevron {
+  transform: rotate(90deg);
+}
+
+.gen-accordion-body {
+  display: none;
+  padding: 4px 16px 16px;
+  background: rgba(9, 9, 11, 0.2);
+}
+
+.gen-accordion.open > .gen-accordion-body {
+  display: block;
+  animation: genFadeIn 200ms ease;
+}
+
+/* --- Form Elements --- */
+.gen-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.gen-form-group.inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gen-form-label,
+.gen-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gen-muted);
+  margin-bottom: 1px;
+  line-height: 1;
+}
+
+/* Inputs & Selects */
+.gen-template-list select,
+.gen-variable-item input[type="text"],
+.gen-variable-item input[type="number"],
+.gen-variable-item select,
+.gen-variable-item textarea,
+.gen-step-section select,
+.gen-step-section input[type="text"],
+.gen-step-section input[type="datetime-local"],
+.gen-step-section textarea,
+select,
+input[type="text"],
+input[type="number"] {
+  width: 100%;
+  padding: 6px 10px;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  font-size: 11px;
+  font-family: inherit;
+  transition: border-color var(--gen-transition), box-shadow var(--gen-transition);
+  outline: none;
+  line-height: 1.4;
+}
+
+select:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus {
+  border-color: var(--gen-accent);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+.gen-variable-item input[type="color"] {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+}
+
+.gen-variable-item textarea {
+  min-height: 100px;
+  resize: vertical;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.gen-variable-item input[type="file"] {
+  width: 100%;
+  font-size: 11px;
+  color: var(--gen-muted);
+}
+
+/* --- Template Section --- */
+.gen-template-list {
+  flex: 0 0 auto;
+  padding: 12px 16px;
+}
+
+.gen-template-picker-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gen-template-copy-row {
+  margin-top: 8px;
+}
+.gen-template-copy-row > label {
+  display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px; color: var(--gen-text-secondary);
+}
+.gen-template-copy-row select { flex: 1; min-width: 0; }
+
+.gen-template-select-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.gen-template-copy-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gen-template-hint-secondary {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--gen-muted);
+}
+
+.gen-template-list label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted);
+  margin-bottom: 6px;
+}
+
+.gen-template-hint {
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: var(--gen-muted);
+  line-height: 1.4;
+}
+
+.gen-template-hint code {
+  font-size: 10px;
+  background: var(--gen-bg);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+}
+
+.gen-plugin-description {
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: var(--gen-muted);
+  line-height: 1.4;
+  background: rgba(9, 9, 11, 0.5);
+  padding: 8px 10px;
+  border-radius: var(--gen-radius-sm);
+  border: 1px solid var(--gen-border-subtle);
+}
+
+/* --- Variables Panel --- */
+.gen-variables {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.gen-variable-item {
+  margin-bottom: 12px;
+}
+
+.gen-variable-item label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--gen-text-secondary);
+}
+
+.gen-variable-item .list-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gen-variable-item .list-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.gen-variable-item .list-row input {
+  flex: 1;
+}
+
+.gen-variable-item .list-row button {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--gen-danger-subtle);
+  color: var(--gen-danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: background var(--gen-transition);
+}
+
+.gen-variable-item .list-row button:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.gen-variable-item .add-list-item {
+  padding: 5px 10px;
+  background: var(--gen-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--gen-radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background var(--gen-transition);
+}
+
+.gen-variable-item .add-list-item:hover {
+  background: var(--gen-accent-hover);
+}
+
+.gen-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gen-checkbox-wrap input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--gen-accent);
+  border-radius: 3px;
+}
+
+/* --- Editor Elements / Layers --- */
+.gen-editor-elements {
+  padding: 0;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* ========================================================================
+   Canvas Tools — Icon buttons in grid
+   ======================================================================== */
+.gen-add-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.gen-tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.gen-tool-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--gen-border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.gen-tool-divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--gen-border);
+  margin: 6px 0;
+}
+
+.gen-tool-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text-secondary);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+.gen-tool-icon-btn:hover {
+  background: var(--gen-surface-hover);
+  color: var(--gen-text);
+  border-color: var(--gen-muted);
+}
+
+.gen-tool-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.gen-tool-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ========================================================================
+   Layers (Tracks) — NLE Track Stack
+   ======================================================================== */
+.gen-layers-panel {
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-md);
+  overflow: hidden;
+}
+
+.gen-layers-panel .cfs-editor-panel-heading {
+  display: none; /* accordion provides heading */
+}
+
+.gen-track-group {
+  border-bottom: 1px solid rgba(39, 39, 42, 0.4);
+}
+
+.gen-track-group:last-child {
+  border-bottom: none;
+}
+
+.gen-track-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--gen-surface);
+  border-bottom: 1px solid rgba(39, 39, 42, 0.4);
+  cursor: pointer;
+  transition: background var(--gen-transition);
+  user-select: none;
+}
+
+.gen-track-header:hover {
+  background: var(--gen-surface-hover);
+}
+
+.gen-track-header.active {
+  background: var(--gen-surface-hover);
+}
+
+.gen-track-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gen-track-header-left svg {
+  width: 12px;
+  height: 12px;
+  color: var(--gen-text-secondary);
+  flex-shrink: 0;
+}
+
+.gen-track-header.active .gen-track-header-left svg {
+  color: var(--gen-accent);
+}
+
+.gen-track-header-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gen-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gen-track-header.active .gen-track-header-name {
+  color: rgba(191, 219, 254, 1); /* blue-100 */
+}
+
+.gen-track-controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.gen-track-controls button {
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--gen-muted);
+  cursor: pointer;
+  transition: color var(--gen-transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gen-track-controls button:hover {
+  color: var(--gen-text);
+}
+
+.gen-track-controls button.gen-track-delete:hover {
+  color: var(--gen-danger);
+}
+
+.gen-track-controls button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.gen-track-clip {
+  padding: 5px 10px 5px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--gen-transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.25);
+  color: var(--gen-text-secondary);
+}
+
+.gen-track-clip:last-child {
+  border-bottom: none;
+}
+
+.gen-track-clip::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 6px;
+  height: 1px;
+  background: var(--gen-border);
+  transform: translateY(-50%);
+}
+
+.gen-track-clip:hover {
+  background: rgba(39, 39, 42, 0.3);
+}
+
+.gen-track-clip.active {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--gen-accent);
+}
+
+.gen-track-clip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.gen-track-clip-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: inherit;
+}
+
+.gen-track-clip-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.gen-clip-hide-img-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--gen-muted, #888);
+  cursor: pointer;
+}
+
+.gen-clip-hide-img-btn:hover {
+  background: rgba(39, 39, 42, 0.35);
+  color: var(--gen-text-secondary);
+}
+
+.gen-clip-hide-img-btn.gen-clip-hide-img-active {
+  color: var(--gen-accent, #3b82f6);
+}
+
+.gen-clip-hide-img-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gen-track-empty {
+  padding: 5px 10px 5px 16px;
+  font-size: 10px;
+  color: var(--gen-muted);
+  font-style: italic;
+}
+
+.gen-add-track-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--gen-text-secondary);
+  background: rgba(24, 24, 27, 0.3);
+  border: 1px dashed var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+.gen-add-track-btn:hover {
+  color: var(--gen-text);
+  background: var(--gen-surface-hover);
+  border-color: var(--gen-muted);
+}
+
+.gen-add-track-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ========================================================================
+   Properties Panel — NLE-Style Sectioned Inspector
+   ======================================================================== */
+.gen-properties-panel {
+  margin-top: 0;
+  padding: 0;
+}
+
+.gen-properties-panel .cfs-editor-panel-heading {
+  display: none;
+}
+
+/* Properties form container — tighter padding to match the reference */
+.gen-properties-panel .cfs-properties-form {
+  padding: 4px 0 0;
+}
+
+/* ── Section headers (LAYOUT & POSITION, TYPOGRAPHY, etc.) ── */
+.gen-prop-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #52525b;
+  border-bottom: 1px solid #27272a;
+  padding: 0 0 4px;
+  margin: 16px 0 8px;
+  line-height: 1;
+}
+
+.gen-prop-section-label::after {
+  display: none; /* removed gradient — using solid border now */
+}
+
+.gen-prop-section-label:first-child {
+  margin-top: 2px;
+  padding-top: 0;
+}
+
+/* ── Layout grids ── */
+.gen-prop-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.gen-prop-grid-4 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Auto-pair: 2-column layout for side-by-side fields */
+.gen-prop-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* Auto-quad: 4-column layout for compact fields */
+.gen-prop-quad {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* ── Form group ── */
+.gen-prop-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+/* When inside a grid, remove the extra bottom margin */
+.gen-prop-pair > .gen-prop-group,
+.gen-prop-quad > .gen-prop-group {
+  margin-bottom: 0;
+}
+
+.gen-prop-group > label,
+.gen-prop-group-label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #71717a;
+  line-height: 1;
+}
+
+/* ── Inputs ── */
+.gen-prop-input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  transition: border-color var(--gen-transition), box-shadow var(--gen-transition);
+  outline: none;
+  line-height: 1.4;
+}
+
+.gen-prop-input:focus {
+  border-color: var(--gen-accent);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+.gen-prop-input::placeholder {
+  color: #52525b;
+}
+
+/* Numeric inputs in the property panel — monospaced for alignment */
+.gen-prop-input[type="number"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  -moz-appearance: textfield;
+}
+
+.gen-prop-input[type="number"]::-webkit-inner-spin-button,
+.gen-prop-input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0;
+}
+
+.gen-prop-input[type="number"]:hover::-webkit-inner-spin-button,
+.gen-prop-input[type="number"]:hover::-webkit-outer-spin-button {
+  opacity: 0.6;
+}
+
+textarea.gen-prop-input {
+  resize: vertical;
+  min-height: 56px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 6px 10px;
+}
+
+select.gen-prop-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #09090b;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2352525b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  cursor: pointer;
+}
+
+select.gen-prop-input:hover {
+  border-color: #3f3f46;
+}
+
+/* ── Segmented control (Fixed / Responsive) ── */
+.gen-segmented-control {
+  display: flex;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  padding: 2px;
+  margin-bottom: 12px;
+  gap: 2px;
+}
+
+.gen-segmented-btn {
+  flex: 1;
+  padding: 5px 4px;
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+  color: #71717a;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background var(--gen-transition), color var(--gen-transition), box-shadow var(--gen-transition);
+  letter-spacing: 0.01em;
+}
+
+.gen-segmented-btn:hover {
+  color: #a1a1aa;
+  background: rgba(39, 39, 42, 0.3);
+}
+
+.gen-segmented-btn.active {
+  background: #27272a;
+  color: #fafafa;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Color + text input pair ── */
+.gen-color-pair {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.gen-color-swatch {
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  background: #09090b;
+  transition: border-color var(--gen-transition);
+}
+
+.gen-color-swatch:hover {
+  border-color: #3f3f46;
+}
+
+/* ── Alignment buttons ── */
+.gen-align-group {
+  display: flex;
+  gap: 1px;
+  background: #09090b;
+  border: 1px solid #27272a;
+  padding: 3px;
+  border-radius: var(--gen-radius-sm);
+  width: max-content;
+  margin-top: 2px;
+  margin-bottom: 10px;
+}
+
+.gen-align-btn {
+  width: 28px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #71717a;
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+.gen-align-btn:hover {
+  background: rgba(39, 39, 42, 0.6);
+  color: #e4e4e7;
+}
+
+.gen-align-btn.active {
+  background: #3f3f46;
+  color: #fafafa;
+}
+
+.gen-align-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ========================================================================
+   Merge Field Cards
+   ======================================================================== */
+.gen-merge-card {
+  background: rgba(24, 24, 27, 0.6);
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  padding: 8px;
+  margin-bottom: 8px;
+  position: relative;
+  transition: border-color var(--gen-transition), background var(--gen-transition);
+}
+
+.gen-merge-card:hover {
+  border-color: #3f3f46;
+}
+
+.gen-merge-card.unlinked {
+  background: rgba(69, 10, 10, 0.15);
+  border-color: rgba(153, 27, 27, 0.35);
+}
+
+.gen-merge-unlinked-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(153, 27, 27, 0.12);
+  border: 1px solid rgba(153, 27, 27, 0.2);
+  border-radius: 3px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+}
+
+.gen-merge-unlinked-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--gen-danger);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gen-merge-unlinked-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.gen-merge-unlinked-actions button {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(153, 27, 27, 0.3);
+  background: rgba(153, 27, 27, 0.15);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+.gen-merge-unlinked-actions .gen-merge-addback {
+  color: var(--gen-accent);
+}
+
+.gen-merge-unlinked-actions .gen-merge-addback:hover {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.gen-merge-unlinked-actions .gen-merge-delete-mf {
+  color: var(--gen-danger);
+}
+
+.gen-merge-unlinked-actions .gen-merge-delete-mf:hover {
+  background: rgba(153, 27, 27, 0.35);
+}
+
+.gen-merge-key-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.gen-merge-brace {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: #52525b;
+}
+
+.gen-merge-key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: #60a5fa;
+  background: rgba(23, 37, 84, 0.35);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 3px;
+  outline: none;
+}
+
+.gen-merge-key-input:focus {
+  border-color: var(--gen-accent);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
+}
+
+.gen-merge-card-delete {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(239, 68, 68, 0.12);
+  border: none;
+  border-radius: 50%;
+  color: var(--gen-danger);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--gen-transition);
+}
+
+.gen-merge-card:hover .gen-merge-card-delete {
+  opacity: 1;
+}
+
+.gen-merge-card-delete:hover {
+  background: var(--gen-danger);
+  color: #fff;
+}
+
+.gen-merge-card-delete svg {
+  width: 10px;
+  height: 10px;
+}
+
+.gen-merge-add-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #60a5fa;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+.gen-merge-add-btn:hover {
+  background: rgba(30, 58, 138, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.gen-merge-add-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Inline Merge Field Container (Template text section) ── */
+.gen-merge-fields-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gen-merge-tpl-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+}
+
+.gen-merge-tpl-code {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(9, 9, 11, 0.8);
+  border: 1px solid #27272a;
+  color: #a1a1aa;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* ── Editable template text textarea ── */
+textarea.gen-merge-tpl-code.gen-merge-tpl-editable {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 40px;
+  max-height: 160px;
+  outline: none;
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  color: #d4d4d8;
+}
+textarea.gen-merge-tpl-code.gen-merge-tpl-editable:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+  color: #e4e4e7;
+}
+textarea.gen-merge-tpl-code.gen-merge-tpl-editable::placeholder {
+  color: #52525b;
+  font-style: italic;
+}
+
+/* ── Merge Field Block (card per placeholder) ── */
+.gen-merge-field-block {
+  background: rgba(23, 37, 84, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.gen-merge-field-block:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(23, 37, 84, 0.18);
+}
+
+.gen-merge-field-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e4e4e7;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gen-merge-field-key-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.12);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+/* ── Merge Field Row (Default/Value row) ── */
+.gen-merge-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.gen-merge-field-row-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  color: #52525b;
+  min-width: 46px;
+  text-align: right;
+}
+
+.gen-merge-field-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  background: rgba(9, 9, 11, 0.7);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 3px;
+  color: #e4e4e7;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.gen-merge-field-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4);
+}
+
+.gen-merge-field-input::placeholder {
+  color: #3f3f46;
+}
+
+/* ── Merge Field Color Swatch ── */
+.gen-merge-color-swatch {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 3px;
+  cursor: pointer;
+  background: #09090b;
+  flex-shrink: 0;
+  transition: border-color 150ms ease;
+}
+
+.gen-merge-color-swatch:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+/* ── Merge Field Hex Value ── */
+.gen-merge-field-hex {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #a1a1aa;
+}
+
+/* ========================================================================
+   Delete Clip Button
+   ======================================================================== */
+.gen-delete-clip-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+  color: #f87171;
+  background: rgba(69, 10, 10, 0.3);
+  border: 1px solid rgba(153, 27, 27, 0.5);
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+  margin-top: 2px;
+}
+
+.gen-delete-clip-btn:hover {
+  background: rgba(127, 29, 29, 0.5);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+/* ── Properties Header Bar ── */
+.gen-props-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.gen-props-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-props-header-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--gen-muted);
+  flex-shrink: 0;
+}
+
+.gen-props-header-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gen-text);
+  letter-spacing: 0.01em;
+}
+
+.gen-props-header-type {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gen-text-secondary);
+  padding: 2px 8px;
+  border-radius: var(--gen-radius-sm);
+  background: var(--gen-surface);
+  border: 1px solid var(--gen-border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gen-props-header-type svg {
+  width: 10px;
+  height: 10px;
+  color: var(--gen-muted);
+}
+
+/* ── Properties Editing Indicator ── */
+.gen-properties-panel .cfs-properties-editing {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--gen-text);
+  margin-bottom: 6px;
+  padding: 0;
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Section containers for grouped content ── */
+.gen-prop-section-wrap {
+  background: var(--gen-field-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-md);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+/* Empty / hint states */
+.gen-prop-empty {
+  font-size: 10px;
+  color: #52525b;
+  font-style: italic;
+  padding: 12px 16px;
+  text-align: center;
+  border: 1px dashed rgba(39, 39, 42, 0.8);
+  border-radius: var(--gen-radius-sm);
+  margin: 8px 16px;
+  letter-spacing: 0.01em;
+}
+
+/* Code / pre-style template snippets in inspector (low specificity; inline styles may still win) */
+.cfs-properties-form-wrap code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--gen-fg);
+}
+
+/* Legacy add-content button compat */
+.gen-add-content-btn {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text-secondary);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gen-add-content-btn:hover {
+  background: var(--gen-border);
+  color: var(--gen-text);
+  border-color: var(--gen-muted);
+}
+
+.gen-layers-panel .cfs-layer-item {
+  padding: 5px 10px 5px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background var(--gen-transition);
+  position: relative;
+  color: var(--gen-text-secondary);
+  border-bottom: 1px solid rgba(39, 39, 42, 0.25);
+}
+
+.gen-layers-panel .cfs-layer-item::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: 6px;
+  height: 1px;
+  background: var(--gen-border);
+  transform: translateY(-50%);
+}
+
+.gen-layers-panel .cfs-layer-item:hover {
+  background: rgba(39, 39, 42, 0.3);
+}
+
+.gen-layers-panel .cfs-layer-item.active {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--gen-accent);
+}
+
+
+/* --- Editor Actions --- */
+.gen-editor-actions {
+  padding: 12px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gen-editor-actions label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--gen-muted);
+}
+
+.gen-editor-actions button {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+/* --- Buttons --- */
+button, .gen-editor-actions button {
+  font-family: inherit;
+}
+
+button.secondary,
+.gen-preview-toolbar button.secondary,
+.gen-editor-actions button {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  cursor: pointer;
+  transition: all var(--gen-transition);
+}
+
+button.secondary:hover,
+.gen-preview-toolbar button.secondary:hover,
+.gen-editor-actions button:hover {
+  background: var(--gen-border);
+  border-color: var(--gen-muted);
+}
+
+button.primary,
+.gen-preview-toolbar button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--gen-accent);
+  border: none;
+  border-radius: var(--gen-radius-sm);
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--gen-transition);
+}
+
+button.primary:hover,
+.gen-preview-toolbar button:hover {
+  background: var(--gen-accent-hover);
+}
+
+/* --- Preview Area --- */
+.gen-preview-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--gen-bg);
+  overflow: hidden;
+  position: relative;
+}
+
+.gen-preview-toolbar {
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--gen-border-subtle);
+  background: rgba(24, 24, 27, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.gen-dims-badge {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--gen-muted);
+  padding: 5px 12px;
+  background: rgba(39, 39, 42, 0.5);
+  border: 1px solid rgba(63, 63, 70, 0.5);
+  border-radius: var(--gen-radius-md);
+}
+
+.gen-project-select {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--gen-surface);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  font-family: inherit;
+}
+
+.gen-project-row-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--gen-border);
+  flex-shrink: 0;
+}
+
+.gen-project-row-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gen-muted);
+}
+
+.gen-project-select-sidebar {
+  width: 100%;
+  max-width: 100%;
+}
+
+.gen-project-toolbar-hint {
+  font-size: 11px;
+  padding: 4px 8px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gen-template-clipboard-banner {
+  font-size: 11px;
+  margin: 0 14px 8px;
+  padding: 8px 10px;
+  background: var(--gen-accent-glow);
+  border: 1px solid var(--gen-accent-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text-secondary);
+}
+
+.gen-template-staged-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  align-items: center;
+}
+
+.gen-preview-toolbar button {
+  padding: 6px 12px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gen-preview-toolbar button.secondary {
+  background: var(--gen-bg);
+  color: var(--gen-text-secondary);
+  border: 1px solid var(--gen-border);
+}
+
+.gen-preview-toolbar button.secondary:hover {
+  background: var(--gen-border);
+  color: var(--gen-text);
+}
+
+/* Accent export button */
+.gen-preview-toolbar button.gen-export-primary {
+  background: var(--gen-accent-glow);
+  color: var(--gen-accent);
+  border: 1px solid var(--gen-accent-border);
+}
+
+.gen-preview-toolbar button.gen-export-primary:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+/* --- Error Banner --- */
+.gen-export-error-banner {
+  padding: 8px 16px;
+  background: var(--gen-danger-subtle);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--gen-text);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gen-export-error-banner button {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.gen-bulk-status {
+  padding: 8px 16px;
+  background: var(--gen-surface);
+  border-bottom: 1px solid var(--gen-border);
+  color: var(--gen-muted);
+  font-size: 12px;
+}
+
+/* --- Preview Frame --- */
+.gen-preview-frame-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 400px;
+}
+
+.gen-preview-frame-wrap iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  border: none;
+  background: #fff;
+}
+
+.gen-preview-inline {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+  background: #fff;
+  color: #111;
+}
+
+.gen-preview-inline .simple-text-output {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+/* --- Preview Plugin Wrap --- */
+.gen-preview-plugin-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--gen-bg);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.gen-preview-plugin-wrap.gen-preview-white-outer {
+  background: #ffffff;
+}
+
+/* --- Audio Controls --- */
+.gen-audio-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.gen-audio-controls button {
+  padding: 8px 16px;
+  background: var(--gen-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--gen-radius-md);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gen-audio-controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gen-stt-transcript {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--gen-surface);
+  border-radius: var(--gen-radius-lg);
+  min-height: 100px;
+  white-space: pre-wrap;
+}
+
+/* --- Sidebar Footer --- */
+.gen-open-sidepanel {
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--gen-border);
+}
+
+.gen-open-sidepanel a {
+  color: var(--gen-accent);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color var(--gen-transition);
+}
+
+.gen-open-sidepanel a:hover {
+  color: var(--gen-accent-hover);
+  text-decoration: underline;
+}
+
+/* --- Import JSON Wrap --- */
+.gen-import-json-wrap {
+  margin: 8px 0 0 0;
+}
+
+.gen-import-json-wrap .gen-muted {
+  color: var(--gen-muted);
+}
+
+/* --- Editor Section (legacy) --- */
+.gen-editor-section {
+  padding: 12px 16px;
+  border-top: 1px solid var(--gen-border);
+}
+
+.gen-editor-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+}
+
+.gen-editor-section textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 8px 10px;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.gen-save-template-btn {
+  margin-top: 6px;
+  padding: 6px 12px;
+  background: var(--gen-success);
+  color: #fff;
+  border: none;
+  border-radius: var(--gen-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  transition: filter var(--gen-transition);
+}
+
+.gen-save-template-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* --- Project Dropdown --- */
+.gen-project-select {
+  padding: 5px 10px;
+  font-size: 11px;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  color: var(--gen-text);
+  cursor: pointer;
+  min-width: 120px;
+  max-width: 200px;
+}
+
+/* Dimensions display in toolbar */
+.gen-dims-badge {
+  background: rgba(39, 39, 42, 0.5);
+  padding: 5px 12px;
+  border-radius: var(--gen-radius-md);
+  border: 1px solid rgba(63, 63, 70, 0.5);
+  font-size: 11px;
+  color: var(--gen-muted);
+  font-family: ui-monospace, monospace;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* --- Toast Notification --- */
+.gen-toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: var(--gen-border);
+  border: 1px solid var(--gen-muted);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 50px;
+  font-size: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+
+.gen-toast.visible {
+  display: flex;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.gen-toast svg {
+  color: var(--gen-accent);
+  flex-shrink: 0;
+}
+
+/* --- Ad Card Styles --- */
+.gen-ad-card-wrap {
+  display: inline-block;
+  padding: 24px;
+  background: #e5e7eb;
+}
+.gen-ad-card-wrap .ad-card {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.gen-ad-card-wrap .ad-card .note-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: #e8e8ed;
+  border-bottom: 1px solid #d1d5db;
+}
+.gen-ad-card-wrap .ad-card .note-buttons { display: flex; gap: 6px; }
+.gen-ad-card-wrap .ad-card .note-btn { width: 12px; height: 12px; border-radius: 50%; }
+.gen-ad-card-wrap .ad-card .btn-red { background: #ff5f57; }
+.gen-ad-card-wrap .ad-card .btn-yellow { background: #febc2e; }
+.gen-ad-card-wrap .ad-card .btn-green { background: #28c840; }
+.gen-ad-card-wrap .ad-card .profile { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.gen-ad-card-wrap .ad-card .profile.hide-profile { display: none; }
+.gen-ad-card-wrap .ad-card .profile img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+.gen-ad-card-wrap .ad-card .profile img.hidden { display: none; }
+.gen-ad-card-wrap .ad-card .info { display: flex; flex-direction: column; gap: 2px; }
+.gen-ad-card-wrap .ad-card .name { font-weight: 700; color: #000; font-size: 16px; }
+.gen-ad-card-wrap .ad-card .handle { font-weight: 400; color: #657786; font-size: 14px; }
+.gen-ad-card-wrap .ad-card #noteTitle { font-weight: 700; color: #000; font-size: 18px; margin-bottom: 10px; }
+.gen-ad-card-wrap .ad-card #textPreview { color: #000; font-size: 15px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+
+/* Twitter style */
+.gen-ad-card-wrap .ad-card.twitter-style {
+  background: #fff; border-radius: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); padding: 20px 24px; max-width: 520px;
+}
+.gen-ad-card-wrap .ad-card.twitter-style .note-header { display: none; }
+.gen-ad-card-wrap .ad-card.twitter-style .profile img { display: none; }
+.gen-ad-card-wrap .ad-card.twitter-style .profile { display: block; margin-bottom: 12px; }
+.gen-ad-card-wrap .ad-card.twitter-style #noteTitle { display: none; }
+.gen-ad-card-wrap .ad-card.twitter-style #textPreview { font-weight: 400; font-size: 15px; }
+
+/* Facebook style */
+.gen-ad-card-wrap .ad-card.facebook-style {
+  background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); padding: 16px 20px; max-width: 520px;
+}
+.gen-ad-card-wrap .ad-card.facebook-style .note-header { display: none; }
+.gen-ad-card-wrap .ad-card.facebook-style .profile { display: flex; }
+.gen-ad-card-wrap .ad-card.facebook-style #noteTitle { display: none; }
+.gen-ad-card-wrap .ad-card.facebook-style #textPreview { font-weight: 400; font-size: 15px; }
+
+/* Apple Notes style */
+.gen-ad-card-wrap .ad-card.note-style {
+  background: #fffbe6; border-radius: 12px; border: 1px solid #e5e0c8; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 0; max-width: 520px; overflow: hidden;
+}
+.gen-ad-card-wrap .ad-card.note-style .note-header { display: flex; }
+.gen-ad-card-wrap .ad-card.note-style .profile { display: none; }
+.gen-ad-card-wrap .ad-card.note-style .profile .name,
+.gen-ad-card-wrap .ad-card.note-style .profile .handle { display: none; }
+.gen-ad-card-wrap .ad-card.note-style #noteTitle { display: block; padding: 16px 20px 0; font-size: 18px; font-weight: bold; }
+.gen-ad-card-wrap .ad-card.note-style #textPreview { font-weight: 700; padding: 12px 20px 20px; font-size: 15px; }
+.gen-ad-card-wrap .ad-card.note-style .note-content { padding: 0 20px 20px; }
+
+/* Ad card mode: hide Add content, show only Layers + Properties */
+.gen-editor-elements.gen-ad-card-mode > .gen-section-label:first-child,
+.gen-editor-elements.gen-ad-card-mode > .gen-add-content {
+  display: none;
+}
+
+/* Legacy template list - fallback */
+.gen-template-list-legacy {
+  border-top: 1px solid var(--gen-border);
+  padding-top: 12px;
+}
+
+/* ========================================================================
+   Generation History
+   ======================================================================== */
+.gen-history-section {
+  border-top: 1px solid var(--gen-border);
+  padding: 10px 16px 6px;
+}
+.gen-history-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.gen-history-header .gen-section-label { margin-bottom: 0; }
+.gen-history-count {
+  font-size: 9px; background: var(--gen-border); color: var(--gen-muted); padding: 1px 6px; border-radius: 8px; margin-left: 6px;
+}
+.gen-history-filters { display: flex; gap: 3px; margin-bottom: 8px; flex-wrap: wrap; }
+.gen-history-filter-btn {
+  padding: 3px 8px; font-size: 10px; background: var(--gen-bg); border: 1px solid var(--gen-border); border-radius: var(--gen-radius-sm); color: var(--gen-muted); cursor: pointer; transition: all var(--gen-transition);
+}
+.gen-history-filter-btn.active { background: var(--gen-accent); color: #fff; border-color: var(--gen-accent); }
+.gen-history-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; max-height: 320px; overflow-y: auto;
+}
+.gen-history-item {
+  position: relative; border: 1px solid var(--gen-border); border-radius: var(--gen-radius-md); overflow: hidden; cursor: pointer; background: var(--gen-bg); transition: border-color var(--gen-transition);
+}
+.gen-history-item:hover { border-color: var(--gen-accent); }
+.gen-history-item.selected { border-color: var(--gen-accent); box-shadow: 0 0 0 1px var(--gen-accent); }
+.gen-history-thumb {
+  width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--gen-surface);
+}
+.gen-history-thumb-placeholder {
+  width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 20px; color: var(--gen-muted); background: var(--gen-surface);
+}
+.gen-history-badge {
+  position: absolute; top: 2px; right: 2px; font-size: 8px; padding: 1px 4px; border-radius: 3px; color: #fff; line-height: 1.2;
+}
+.gen-history-badge.local { background: var(--gen-accent); }
+.gen-history-badge.staging { background: #f59e0b; }
+.gen-history-badge.production { background: var(--gen-success); }
+.gen-history-checkbox { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; accent-color: var(--gen-accent); }
+.gen-history-meta {
+  padding: 3px 4px; font-size: 9px; color: var(--gen-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gen-history-actions {
+  display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--gen-border);
+}
+.gen-history-actions button {
+  padding: 3px 8px; font-size: 10px; border: 1px solid var(--gen-border); border-radius: var(--gen-radius-sm); background: var(--gen-surface); color: var(--gen-text); cursor: pointer;
+}
+.gen-history-actions button.danger { color: var(--gen-danger); border-color: var(--gen-danger); }
+.gen-history-project-group { margin-bottom: 8px; }
+.gen-history-project-name {
+  font-size: 10px; font-weight: 600; color: var(--gen-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; cursor: pointer;
+}
+.gen-history-project-name:hover { color: var(--gen-text); }
+.gen-history-empty { font-size: 11px; color: var(--gen-muted); padding: 8px 0; }
+
+/* ========================================================================
+   Generation Preview Modal
+   ======================================================================== */
+.gen-preview-overlay {
+  position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(4px);
+}
+.gen-preview-dialog {
+  background: var(--gen-surface); border: 1px solid var(--gen-border); border-radius: 10px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+}
+.gen-preview-dialog-header {
+  display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--gen-border); font-size: 12px; color: var(--gen-muted); flex-shrink: 0;
+}
+.gen-preview-close {
+  background: none; border: none; color: var(--gen-muted); font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: var(--gen-radius-sm); line-height: 1;
+}
+.gen-preview-close:hover { background: var(--gen-surface-hover); color: var(--gen-text); }
+.gen-preview-dialog-body {
+  overflow: auto; display: flex; align-items: center; justify-content: center; min-height: 120px;
+}
+.gen-preview-dialog-body img { max-width: 100%; max-height: 80vh; display: block; }
+.gen-preview-dialog-body video { max-width: 100%; max-height: 80vh; display: block; }
+.gen-preview-dialog-body audio { width: 100%; min-width: 320px; margin: 24px 16px; }
+
+/* Upload preview */
+.gen-upload-preview {
+  margin: 8px 0; border-radius: var(--gen-radius-md); overflow: hidden; background: var(--gen-bg); border: 1px solid var(--gen-border);
+}
+.gen-upload-preview img,
+.gen-upload-preview video { max-width: 100%; max-height: 180px; display: block; margin: 0 auto; }
+.gen-upload-preview audio { width: 100%; display: block; }
+
+/* ========================================================================
+   Step Generator Sections
+   ======================================================================== */
+.gen-step-sections { margin-top: 8px; display: flex; flex-direction: column; }
+/* Ordering: ShotStack (default 0) → Generations (1) → Upload Post (2) */
+#cfs-generation-history-section { order: 1; }
+#cfs-uploadpost-gen-section { order: 2; }
+.gen-step-section { border-top: 1px solid var(--gen-border); padding: 10px 16px 6px; }
+.gen-step-section .gen-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gen-muted); margin-bottom: 6px; }
+.gen-step-section .step-gen-field { margin-bottom: 8px; }
+.gen-step-section .step-gen-field label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 2px; color: var(--gen-text-secondary); }
+.gen-step-section .step-gen-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.gen-step-section .step-gen-actions button {
+  padding: 4px 10px; font-size: 11px; border: 1px solid var(--gen-border); border-radius: var(--gen-radius-sm); cursor: pointer; background: var(--gen-bg); color: var(--gen-text); transition: all var(--gen-transition);
+}
+.gen-step-section .step-gen-actions button.primary { background: var(--gen-accent); color: #fff; border-color: var(--gen-accent); }
+.gen-step-section .step-gen-status { font-size: 11px; margin-top: 4px; min-height: 14px; }
+.gen-step-section .step-gen-status.success { color: var(--gen-success); }
+.gen-step-section .step-gen-status.error { color: var(--gen-danger); }
+
+/* ========================================================================
+   Section Divider Labels
+   ======================================================================== */
+.gen-section-divider {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted);
+  border-bottom: 1px solid var(--gen-border);
+  padding-bottom: 4px;
+  margin-top: 14px;
+  margin-bottom: 8px;
+}
+
+/* ========================================================================
+   Editor Toolbar in Sidebar — vertical form layout
+   Converts the horizontal cfs-editor-toolbar into a sidebar-friendly grid.
+   ======================================================================== */
+.gen-editor-toolbar-sidebar {
+  font-size: 12px;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar {
+  display: flex !important;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 !important;
+  background: none !important;
+  border: none !important;
+  align-items: stretch;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar > label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted);
+  margin-bottom: -6px;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar .cfs-editor-dimensions {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  margin: 0;
+  font-size: 12px;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar .cfs-editor-custom-dims {
+  display: flex;
+  gap: 0;
+  align-items: center;
+}
+
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar .cfs-editor-custom-dims input {
+  flex: 1;
+  width: auto;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+/* Hide "Save as JSON" and "Back to preview" toolbar buttons when in sidebar (duplicated in Output tab) */
+.gen-editor-toolbar-sidebar .cfs-editor-toolbar button {
+  padding: 6px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* --- Canvas Config Paired Fields (Resolution + Aspect, Dims + Framerate) --- */
+.gen-config-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.gen-config-pair .gen-prop-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gen-config-pair .gen-prop-group > label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted);
+}
+
+/* --- Dimensions Inline (W × H bordered container) --- */
+.gen-dims-inline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: var(--gen-radius-sm);
+  overflow: hidden;
+}
+
+.gen-dims-inline input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  text-align: center;
+  font-family: ui-monospace, monospace;
+  background: transparent;
+  border: none;
+  color: var(--gen-text);
+  outline: none;
+}
+
+.gen-dims-inline input:focus {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.gen-dims-times {
+  color: var(--gen-muted);
+  font-size: 11px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+/* --- Video-Only Fields --- */
+.cfs-video-only-field {
+  display: none;
+}
+
+.cfs-video-only-field > label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gen-muted);
+}
+
+/* ========================================================================
+   Add content labels from unified-editor — hide since accordion provides them
+   ======================================================================== */
+.gen-add-content .gen-add-content-group-label {
+  font-size: 10px !important;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gen-muted) !important;
+  margin: 4px 0 4px 0 !important;
+}
+
+/* Style Add content buttons in sidebar */
+.gen-add-content .gen-add-content-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ========================================================================
+   Output Tab — Render & Upload Sections
+   ======================================================================== */
+.gen-output-render-section,
+.gen-output-upload-section {
+  font-size: 12px;
+}
+
+.gen-output-render-section .gen-export-primary,
+.gen-output-upload-section .gen-export-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--gen-accent-glow);
+  color: var(--gen-accent);
+  border: 1px solid var(--gen-accent-border);
+  border-radius: var(--gen-radius-sm);
+  cursor: pointer;
+  transition: background var(--gen-transition);
+}
+
+.gen-output-render-section .gen-export-primary:hover,
+.gen-output-upload-section .gen-export-primary:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+/* ========================================================================
+   Copy / Save History Dialog
+   ======================================================================== */
+.cfs-copy-dialog-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cfs-copy-dialog {
+  background: var(--gen-surface, #fff);
+  color: var(--gen-text, #18181b);
+  border-radius: var(--gen-radius-lg, 8px);
+  padding: 20px;
+  max-width: 420px;
+  width: 90%;
+  max-height: 70vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+.cfs-copy-dialog h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.cfs-copy-dialog label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gen-muted, #888);
+  margin-bottom: 4px;
+}
+.cfs-copy-dialog input,
+.cfs-copy-dialog select {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--gen-border, #333);
+  border-radius: var(--gen-radius-sm, 4px);
+  background: var(--gen-bg, #09090b);
+  color: var(--gen-text, #fafafa);
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+.cfs-copy-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.cfs-copy-dialog-actions button {
+  padding: 6px 16px;
+  font-size: 13px;
+  border-radius: var(--gen-radius-sm, 4px);
+  cursor: pointer;
+  border: 1px solid var(--gen-border, #333);
+  background: var(--gen-surface, #18181b);
+  color: var(--gen-text, #fafafa);
+}
+.cfs-copy-dialog-actions button.primary {
+  background: var(--gen-accent, #3b82f6);
+  color: #fff;
+  border-color: var(--gen-accent, #3b82f6);
+}
+
+/* ========================================================================
+   Properties Panel — Polish & Micro-interactions
+   ======================================================================== */
+
+/* Accent checkboxes */
+.gen-properties-panel input[type="checkbox"],
+.cfs-properties-form input[type="checkbox"] {
+  accent-color: #3b82f6;
+}
+
+/* Hide-on-image row styling */
+.cfs-prop-hide-on-image-row {
+  margin-bottom: 8px;
+  padding: 6px 0;
+}
+
+.cfs-prop-hide-on-image-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 11px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: #a1a1aa !important;
+  transition: color 150ms ease;
+}
+
+.cfs-prop-hide-on-image-row label:hover {
+  color: #e4e4e7 !important;
+}
+
+.cfs-prop-hide-on-image-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+/* Convert to merge field button styling */
+.cfs-properties-form .cfs-btn-secondary {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(9, 9, 11, 0.8);
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: #a1a1aa;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.cfs-properties-form .cfs-btn-secondary:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #e4e4e7;
+}
+
+/* Smooth section transitions */
+.cfs-properties-form-wrap {
+  animation: genFadeIn 150ms ease;
+}
+
+/* Input number arrows — subtle on hover */
+.cfs-properties-form input[type="number"]::-webkit-inner-spin-button,
+.cfs-properties-form input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.cfs-properties-form input[type="number"]:hover::-webkit-inner-spin-button,
+.cfs-properties-form input[type="number"]:hover::-webkit-outer-spin-button {
+  opacity: 0.4;
+}
+
+/* Linked field info badge */
+.cfs-prop-linked {
+  font-size: 10px;
+  color: #52525b;
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
+}
+
+.cfs-prop-linked strong {
+  color: #a1a1aa;
+  font-weight: 500;
+}
+
+/* ========================================================================
+   Properties Panel — Round 2 Refinement (React Reference Parity)
+   ======================================================================== */
+
+/* ── Editing Heading Badge Row (inline-styles in JS, reinforce via classes) ── */
+.cfs-properties-form > div:first-child {
+  margin-bottom: 10px;
+}
+
+/* ── Tighter form container spacing ── */
+.gen-properties-panel .cfs-properties-form {
+  padding: 6px 14px 14px;
+}
+
+.gen-properties-panel .cfs-properties-form-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Property rows: tighter gaps ── */
+.gen-properties-panel .cfs-prop-row {
+  margin-bottom: 8px;
+  gap: 4px;
+}
+
+/* ── Auto-pair rows: 2-column grid for adjacent prop rows ── */
+.gen-properties-panel .cfs-prop-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.gen-properties-panel .cfs-prop-pair > .cfs-prop-row {
+  margin-bottom: 0;
+}
+
+/* ── Section labels polish ── */
+.gen-properties-panel .cfs-prop-section-label,
+.gen-properties-panel .gen-prop-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #52525b;
+  border-bottom: 1px solid #27272a;
+  padding: 0 0 4px;
+  margin: 14px 0 8px;
+  line-height: 1;
+}
+
+.gen-properties-panel .cfs-prop-section-label:first-child,
+.gen-properties-panel .gen-prop-section-label:first-child {
+  margin-top: 0;
+}
+
+/* ── Labels inside property rows ── */
+.gen-properties-panel .cfs-prop-row > label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+  line-height: 1;
+  margin-bottom: 0;
+}
+
+/* ── Inputs: crisp, compact, consistent ── */
+.gen-properties-panel .cfs-prop-row input[type="text"],
+.gen-properties-panel .cfs-prop-row input[type="number"],
+.gen-properties-panel .cfs-prop-row input[type="url"],
+.gen-properties-panel .cfs-prop-row textarea,
+.gen-properties-panel .cfs-prop-row select {
+  padding: 5px 8px;
+  font-size: 11px;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: #e4e4e7;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+  width: 100%;
+  line-height: 1.4;
+  font-family: inherit;
+}
+
+.gen-properties-panel .cfs-prop-row input:focus,
+.gen-properties-panel .cfs-prop-row textarea:focus,
+.gen-properties-panel .cfs-prop-row select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+/* ── Number inputs: monospace for alignment ── */
+.gen-properties-panel .cfs-prop-row input[type="number"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  -moz-appearance: textfield;
+}
+
+/* ── Select: custom chevron ── */
+.gen-properties-panel .cfs-prop-row select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2352525b' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  cursor: pointer;
+}
+
+.gen-properties-panel .cfs-prop-row select:hover {
+  border-color: #3f3f46;
+}
+
+/* ── Textarea: mono, taller, resizable ── */
+.gen-properties-panel .cfs-prop-row textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ── Inline color + text pair ── */
+.gen-properties-panel .cfs-color-pair,
+.cfs-properties-form .cfs-color-pair {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.gen-properties-panel input[type="color"],
+.cfs-properties-form input[type="color"] {
+  width: 32px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #09090b;
+  flex-shrink: 0;
+}
+
+.gen-properties-panel input[type="color"]:hover,
+.cfs-properties-form input[type="color"]:hover {
+  border-color: #3f3f46;
+}
+
+/* ── Dimension widget: combined W×H inside single border ── */
+.gen-dimensions-widget {
+  display: flex;
+  align-items: center;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  overflow: hidden;
+  transition: border-color 150ms ease;
+}
+
+.gen-dimensions-widget:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.5);
+}
+
+.gen-dimensions-widget input {
+  flex: 1;
+  background: transparent;
+  border: none !important;
+  box-shadow: none !important;
+  text-align: center;
+  padding: 5px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #e4e4e7;
+  outline: none;
+  min-width: 0;
+}
+
+.gen-dimensions-widget .gen-dims-sep {
+  color: #52525b;
+  font-size: 10px;
+  flex-shrink: 0;
+  user-select: none;
+  padding: 0 2px;
+}
+
+/* ── Segmented Control (Fixed / Responsive) refinement ── */
+.gen-segmented-control {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.gen-segmented-btn {
+  padding: 4px 4px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border-radius: 3px;
+  transition: all 120ms ease;
+}
+
+.gen-segmented-btn.active {
+  background: #27272a;
+  color: #fafafa;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Alignment buttons refinement ── */
+.gen-align-group {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.gen-align-btn {
+  width: 28px;
+  height: 24px;
+  border-radius: 3px;
+  transition: all 120ms ease;
+}
+
+.gen-align-btn:hover {
+  background: rgba(39, 39, 42, 0.6);
+  color: #e4e4e7;
+}
+
+.gen-align-btn.active {
+  background: #3f3f46;
+  color: #fafafa;
+}
+
+/* ── Property accordion extra text ── */
+#propsAccordionExtra {
+  font-size: 10px;
+  font-weight: 400;
+  color: #52525b;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Checkbox row improvements ── */
+.cfs-prop-hide-on-image-row {
+  padding: 4px 0 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.3);
+}
+
+.cfs-prop-hide-on-image-row label {
+  font-size: 11px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: #a1a1aa !important;
+  gap: 8px;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.cfs-prop-hide-on-image-row label:hover {
+  color: #e4e4e7 !important;
+}
+
+.cfs-prop-hide-on-image-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #3b82f6;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* ── Merge field cards polish ── */
+.gen-merge-card {
+  background: rgba(24, 24, 27, 0.6);
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 6px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.gen-merge-card:hover {
+  border-color: #3f3f46;
+  background: rgba(24, 24, 27, 0.8);
+}
+
+/* ── Delete clip button polish ── */
+.gen-delete-clip-btn,
+.cfs-btn-delete {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 5px 10px;
+  background: rgba(69, 10, 10, 0.25);
+  border: 1px solid rgba(153, 27, 27, 0.45);
+  border-radius: 4px;
+  color: #f87171;
+  cursor: pointer;
+  transition: all 150ms ease;
+  text-align: center;
+}
+
+.gen-delete-clip-btn:hover,
+.cfs-btn-delete:hover {
+  background: rgba(127, 29, 29, 0.45);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
+/* ── Secondary / action buttons in property panel ── */
+.cfs-properties-form .cfs-btn-secondary,
+.cfs-properties-form .cfs-prop-buttons button {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: #a1a1aa;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.cfs-properties-form .cfs-btn-secondary:hover,
+.cfs-properties-form .cfs-prop-buttons button:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #e4e4e7;
+}
+
+/* ── "Add merge field" button ── */
+.gen-merge-add-btn {
+  font-size: 10px;
+  font-weight: 500;
+  color: #60a5fa;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.gen-merge-add-btn:hover {
+  background: rgba(30, 58, 138, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* ── Empty state — dashed center ── */
+.gen-prop-empty {
+  font-size: 10px;
+  color: #52525b;
+  font-style: italic;
+  padding: 10px 14px;
+  text-align: center;
+  border: 1px dashed rgba(39, 39, 42, 0.8);
+  border-radius: 4px;
+  margin: 6px 14px;
+  letter-spacing: 0.01em;
+}
+
+/* ── Canvas Configuration section: tighter grids ── */
+.gen-accordion-body .gen-prop-grid-2 {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.gen-accordion-body .gen-prop-grid-4 {
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── "Save as JSON" and action buttons in accordion bodies ── */
+.gen-accordion-body button {
+  font-family: inherit;
+}
+
+.gen-accordion-body button.secondary,
+.gen-accordion-body .gen-save-btn {
+  width: 100%;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--gen-bg);
+  border: 1px solid var(--gen-border);
+  border-radius: 4px;
+  color: var(--gen-text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+  text-align: center;
+}
+
+.gen-accordion-body button.secondary:hover,
+.gen-accordion-body .gen-save-btn:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: var(--gen-text);
+}
+
+/* ── Track clips: uniform spacing ── */
+.gen-track-clip {
+  padding: 4px 10px 4px 16px;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.25);
+}
+
+.gen-track-clip.active {
+  background: rgba(59, 130, 246, 0.12);
+  color: #60a5fa;
+}
+
+/* ── Tool icon buttons: consistent sizing ── */
+.gen-tool-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+}
+
+.gen-tool-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Zoom / Resolution label row ── */
+.gen-accordion-body .gen-form-label,
+.gen-accordion-body .gen-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+  margin-bottom: 2px;
+}
+
+/* ── Format type dropdown refinements ── */
+.gen-accordion-body select {
+  padding: 5px 24px 5px 8px;
+  font-size: 11px;
+}
+
+/* ── Template picker section tighter ── */
+.gen-template-list {
+  padding: 10px 14px;
+}
+
+.gen-template-list label {
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+/* ── Accordion body tighter ── */
+.gen-accordion-body {
+  padding: 4px 14px 14px;
+}
+
+/* ── Properties header bar tighter ── */
+.gen-props-header {
+  margin-bottom: 2px;
+}
+
+/* ── Fade in for forms ── */
+.cfs-properties-form {
+  animation: genFadeIn 200ms ease;
+}
+
+
+
+/* ── Subtle inset for section wraps ── */
+.gen-prop-section-wrap {
+  background: rgba(5, 5, 7, 0.5);
+  border: 1px solid rgba(39, 39, 42, 0.5);
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+
+/* ── Compact project row ── */
+.gen-project-row-sidebar {
+  padding: 8px 14px 10px;
+}
+
+/* ── Sidebar scrollable area smooth ── */
+.gen-sidebar-scrollable {
+  scroll-behavior: smooth;
+}
+
+/* ── Plugin description box tighter ── */
+.gen-plugin-description {
+  font-size: 10px;
+  padding: 6px 8px;
+  line-height: 1.5;
+  background: rgba(9, 9, 11, 0.5);
+  border: 1px solid rgba(39, 39, 42, 0.4);
+  border-radius: 4px;
+  color: #52525b;
+}
+
+/* ── Inline-style override: ensure form inputs inside cfs-properties-form respect the design ── */
+.cfs-properties-form input[style*="width"],
+.cfs-properties-form input[style*="max-width"] {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+/* ── Merge field key input inside property form ── */
+.cfs-properties-form input.cfs-prop-audio-url,
+.cfs-properties-form .cfs-prop-row input {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* ── Hint text ── */
+.cfs-prop-hint {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #52525b;
+  background: rgba(9, 9, 11, 0.5);
+  border: 1px solid rgba(39, 39, 42, 0.4);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+/* ── Wrap checkbox row ── */
+.gen-prop-group input[type="checkbox"] {
+  width: 14px !important;
+  height: 14px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ── Color pair clear/X button ── */
+.gen-color-pair .gen-tool-icon-btn {
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0;
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  color: #52525b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+
+.gen-color-pair .gen-tool-icon-btn:hover {
+  background: #27272a;
+  border-color: #3f3f46;
+  color: #f87171;
+}
+
+.gen-color-pair .gen-tool-icon-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Section label: fine-tuned divider ── */
+.gen-prop-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #52525b;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.6);
+  padding-bottom: 4px;
+  margin: 14px 0 8px;
+  line-height: 1;
+}
+
+.gen-prop-section-label:first-child {
+  margin-top: 4px;
+}
+
+/* ── Gen-prop-input tighter padding ── */
+.gen-prop-input {
+  padding: 5px 8px;
+}
+
+/* ── Fill row — non-merge mode: inline swatch + label ── */
+.gen-merge-field-block > label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+  margin-bottom: 2px;
+}
+
+/* ── Segmented control: tighter margin ── */
+.gen-segmented-control {
+  margin-bottom: 8px;
+}
+
+/* ── Quad grid: tighter ── */
+.gen-prop-quad {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* ── Accordion body link between section-labels ── */
+.gen-accordion-body > .gen-prop-section-label + .gen-prop-group {
+  margin-top: 0;
+}
+
+/* ── Prop row label in cfs-properties-form: also apply uppercase ── */
+.cfs-properties-form .gen-prop-group > label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #71717a;
+  line-height: 1;
+}
+
+/* ── Editor right-column property panel: tight overrides ── */
+.cfs-editor-property-panel .gen-prop-group {
+  margin-bottom: 6px;
+  gap: 2px;
+}
+
+.cfs-editor-property-panel .gen-prop-input {
+  padding: 4px 6px;
+  font-size: 10px;
+}
+
+.cfs-editor-property-panel .gen-prop-section-label {
+  font-size: 9px;
+  margin: 10px 0 6px;
+}
+
+/* ── Tweens/effects forms ── */
+.gen-tween-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.gen-tween-pair > .gen-prop-group {
+  margin-bottom: 0;
+}
+
+/* ── Editable merge key input ── */
+.gen-merge-key-input {
+  background: rgba(59,130,246,0.15);
+  border: 1px solid rgba(59,130,246,0.35);
+  border-radius: 3px;
+  color: #93c5fd;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  min-width: 60px;
+  max-width: 120px;
+  text-transform: uppercase;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gen-merge-key-input:focus {
+  border-color: #3b82f6;
+  background: rgba(59,130,246,0.25);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+
+/* ── Merge field type badge (Image, Video, etc.) ── */
+.gen-merge-field-type-badge {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #a1a1aa;
+  background: rgba(161,161,170,0.12);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* ── Unlinked merge field card ── */
+.gen-merge-field-block.gen-merge-field-unlinked {
+  background: rgba(185,28,28,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+}
+.gen-merge-field-block.gen-merge-field-unlinked:hover {
+  background: rgba(185,28,28,0.12);
+}
+.gen-merge-unlinked-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.gen-merge-unlinked-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ef4444;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.gen-merge-unlinked-label svg { stroke: #ef4444; flex-shrink: 0; }
+.gen-merge-unlinked-actions {
+  display: flex;
+  gap: 4px;
+}
+.gen-merge-addback,
+.gen-merge-delete-mf {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+.gen-merge-addback {
+  background: rgba(34,197,94,0.12);
+  color: #4ade80;
+  border-color: rgba(34,197,94,0.25);
+}
+.gen-merge-addback:hover { background: rgba(34,197,94,0.22); }
+.gen-merge-delete-mf {
+  background: rgba(239,68,68,0.10);
+  color: #f87171;
+  border-color: rgba(239,68,68,0.20);
+}
+.gen-merge-delete-mf:hover { background: rgba(239,68,68,0.20); }
+
+/* ── Editor toast notification ── */
+.gen-editor-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10000;
+  background: #18181b;
+  color: #e4e4e7;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #3f3f46;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+}
+.gen-editor-toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}

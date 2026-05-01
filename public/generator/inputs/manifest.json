@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "description": "Registry of generator input types. Each entry is a script path (relative to generator/). Add new input types here; load-from-manifest.js loads these automatically (no index.html edit).",
+  "scripts": [
+    "inputs/text.js",
+    "inputs/textarea.js",
+    "inputs/number.js",
+    "inputs/color.js",
+    "inputs/select.js",
+    "inputs/checkbox.js",
+    "inputs/list.js",
+    "inputs/file.js",
+    "inputs/hidden.js",
+    "inputs/voice.js",
+    "inputs/video.js",
+    "inputs/audio.js"
+  ]
+}

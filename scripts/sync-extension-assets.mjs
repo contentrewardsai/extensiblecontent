@@ -362,6 +362,10 @@ function patchFfmpegLocalDiagnostics(text) {
  * 1. Fix async race in renderTimelineToAudioBlob — player.load() returns a Promise
  *    but was not awaited, so renderMixedAudioBuffer ran before the player had loaded
  *    the template, causing "No audio from renderer".
+ *
+ * 2. Fix destructuring bug — preGenerateTtsForTemplate returns { map, revoke } but the
+ *    audio path named the param `ttsMap` and passed the whole wrapper object to the
+ *    player instead of `.map`. The player couldn't find any TTS URLs → null audio.
  */
 function patchTemplateEngine(text) {
 	let out = text;
@@ -374,7 +378,7 @@ function patchTemplateEngine(text) {
 		"      }\n" +
 		"      return null;";
 	const audioRaceFix =
-		"const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsMap || undefined });\n" +
+		"const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsResult.map || {} });\n" +
 		"      return player.load(mergedTemplate).then(function () {\n" +
 		"        const durationSec = player.getDuration ? player.getDuration() : 10;\n" +
 		"        if (player.renderMixedAudioBuffer) {\n" +
@@ -387,6 +391,20 @@ function patchTemplateEngine(text) {
 	} else {
 		console.warn("[sync-extension-assets] template-engine.js audioRace marker not found — skipping");
 	}
+
+	// Fix destructuring: rename `ttsMap` → `ttsResult` and extract `.revoke` / `.map`
+	const destructureMarker =
+		"return preGenerateTtsForTemplate(mergedTemplate).then(function (ttsMap) {\n" +
+		"      ttsRevoke = ttsMap ? Object.values(ttsMap).filter(function (u) { return typeof u === 'string' && u.startsWith('blob:'); }) : [];";
+	const destructureFix =
+		"return preGenerateTtsForTemplate(mergedTemplate).then(function (ttsResult) {\n" +
+		"      ttsRevoke = ttsResult.revoke || [];";
+	if (out.includes(destructureMarker)) {
+		out = out.replace(destructureMarker, destructureFix);
+	} else {
+		console.warn("[sync-extension-assets] template-engine.js destructure marker not found — skipping");
+	}
+
 	return out;
 }
 

@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "description": "Registry of generator output types. Each entry is a script path (relative to generator/). Add new output types here; load-from-manifest.js loads these automatically (no index.html edit).",
+  "scripts": [
+    "outputs/image.js",
+    "outputs/video.js",
+    "outputs/audio.js",
+    "outputs/book.js"
+  ]
+}
