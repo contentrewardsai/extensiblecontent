@@ -9758,7 +9758,23 @@
                     var blobUrl = URL.createObjectURL(blob);
                     return blobUrl;
                   }).catch(function (fetchErr) {
-                    console.warn('[CFS preview] CORS fetch failed, trying direct URL:', fetchErr);
+                    console.warn('[CFS preview] CORS fetch failed, trying media proxy:', fetchErr);
+                    /* Try server-side proxy to bypass CORS */
+                    var proxyBase = (typeof location !== 'undefined' && location.origin) || '';
+                    if (proxyBase) {
+                      var proxyUrl = proxyBase + '/api/media-proxy?url=' + encodeURIComponent(srcUrl);
+                      return fetch(proxyUrl).then(function (proxyRes) {
+                        if (!proxyRes.ok) throw new Error('Proxy HTTP ' + proxyRes.status);
+                        return proxyRes.blob();
+                      }).then(function (blob) {
+                        var blobUrl = URL.createObjectURL(blob);
+                        console.log('[CFS preview] Media proxy succeeded for:', srcUrl.substring(0, 60));
+                        return blobUrl;
+                      }).catch(function () {
+                        console.warn('[CFS preview] Media proxy also failed, using direct URL');
+                        return srcUrl;
+                      });
+                    }
                     return srcUrl;
                   })
               ).then(function (url) {

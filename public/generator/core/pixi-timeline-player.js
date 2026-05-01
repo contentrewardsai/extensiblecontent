@@ -245,6 +245,32 @@
         resolved[url] = blobUrl;
         revokeList.push(blobUrl);
       }).catch(function (err) {
+        /* CORS fetch failed — try server-side media proxy */
+        var proxyBase = (typeof location !== 'undefined' && location.origin) || '';
+        if (proxyBase) {
+          var proxyUrl = proxyBase + '/api/media-proxy?url=' + encodeURIComponent(url);
+          return fetch(proxyUrl).then(function (proxyRes) {
+            if (!proxyRes.ok) throw new Error('Proxy HTTP ' + proxyRes.status);
+            return proxyRes.blob();
+          }).then(function (blob) {
+            if (!blob) return;
+            var blobUrl = URL.createObjectURL(blob);
+            resolved[url] = blobUrl;
+            revokeList.push(blobUrl);
+          }).catch(function () {
+            /* Proxy also failed — try image canvas fallback */
+            return imageToBlobUrl(url, true).then(function () {
+              if (resolved[url]) return;
+              return imageToBlobUrl(url, false);
+            }).then(function () {
+              if (!resolved[url]) {
+                console.warn('[CFS] Could not resolve media to blob URL:', url);
+                if (typeof global.__CFS_onMediaLoadFailed === 'function') global.__CFS_onMediaLoadFailed(url, err);
+                if (typeof global.window !== 'undefined' && global.window.__CFS_onMediaLoadFailed) global.window.__CFS_onMediaLoadFailed(url, err);
+              }
+            });
+          });
+        }
         return imageToBlobUrl(url, true).then(function () {
           if (resolved[url]) return;
           return imageToBlobUrl(url, false);
