@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ensureCfsGeneratorLoaded } from "./ensure-cfs-generator";
 import type { ShotstackEditorContext } from "./shotstack-editor-context";
 
@@ -132,7 +131,6 @@ export function BrowserRenderButton({
 	/** Returns the Fabric.js canvas instance for image export. */
 	getCanvas?: () => { toDataURL: (opts: { format: string; quality: number; multiplier: number }) => string } | null;
 }) {
-	const router = useRouter();
 	const [busy, setBusy] = useState(false);
 	const [msg, setMsg] = useState<string | null>(null);
 	// Gate with useEffect so SSR and first client render agree (hydration-safe).
@@ -196,7 +194,6 @@ export function BrowserRenderButton({
 				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
 				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
 				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
-				router.refresh();
 				return;
 			}
 
@@ -252,7 +249,6 @@ export function BrowserRenderButton({
 				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
 				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
 				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
-				router.refresh();
 				return;
 			}
 
@@ -453,7 +449,6 @@ export function BrowserRenderButton({
 				console.warn("[BrowserRender] uploaded as WebM (FFmpeg load failed in this browser context)");
 			}
 			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
-			router.refresh();
 		} catch (e) {
 			setMsg(e instanceof Error ? e.message : "Render failed");
 		} finally {
