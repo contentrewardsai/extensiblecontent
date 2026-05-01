@@ -9634,7 +9634,7 @@
         if (coreScene && coreScene.seekToTime && canvas) coreScene.seekToTime(canvas, timelinePlayStartTime);
         canvas.renderAll();
 
-        /* ── Schedule per-chunk audio playback (TTS) ── */
+        /* ── Schedule per-chunk audio playback ── */
         if (canvas && canvas.getObjects) {
           canvas.getObjects().forEach(function (obj) {
             if (obj.cfsAudioType !== 'text-to-speech' || !obj._cfsTtsChunks) return;
@@ -9684,17 +9684,14 @@
 
         /* ── Schedule audio clip + soundtrack playback ── */
         (function scheduleNonTtsAudio() {
-          if (!template || !template.timeline) { console.log('[CFS preview] No template/timeline for audio'); return; }
+          if (!template || !template.timeline) return;
           var entries = [];
-
-          /* Collect audio clips from template timeline tracks */
-          (template.timeline.tracks || []).forEach(function (track, trackIdx) {
-            (track.clips || []).forEach(function (clip, clipIdx) {
+          (template.timeline.tracks || []).forEach(function (track) {
+            (track.clips || []).forEach(function (clip) {
               var asset = clip.asset || {};
               var type = (asset.type || '').toLowerCase();
               if (type !== 'audio') return;
               var src = asset.src || asset.url || '';
-              console.log('[CFS preview] Found audio clip T' + trackIdx + '/C' + clipIdx + ' src=' + (src ? src.substring(0, 80) : '(empty)'));
               if (!src || src.indexOf('{{') !== -1) return;
               var clipStart = typeof clip.start === 'number' ? clip.start : 0;
               var clipLength = clip.length === 'end' || clip.length === 'auto'
@@ -9705,30 +9702,9 @@
               entries.push({ src: src, start: clipStart, length: clipLength, volume: Math.max(0, Math.min(4, vol)) });
             });
           });
-
-          /* Also scan canvas objects for audio-type entries (in case template tracks
-             are out of sync with what the canvas stores, e.g. uploaded blob: files) */
-          if (canvas && canvas.getObjects) {
-            canvas.getObjects().forEach(function (obj) {
-              var audioType = obj.cfsAudioType || (obj.cfsOriginalClip && obj.cfsOriginalClip.asset && obj.cfsOriginalClip.asset.type);
-              if (audioType !== 'audio') return;
-              var src = (obj.cfsOriginalClip && obj.cfsOriginalClip.asset && (obj.cfsOriginalClip.asset.src || obj.cfsOriginalClip.asset.url)) || '';
-              if (!src || src.indexOf('{{') !== -1) return;
-              /* Skip if already collected from template tracks */
-              var alreadyHave = entries.some(function (e) { return e.src === src; });
-              if (alreadyHave) return;
-              var objStart = obj.cfsStart != null ? obj.cfsStart : 0;
-              var objLength = typeof obj.cfsLength === 'number' ? obj.cfsLength : 5;
-              console.log('[CFS preview] Found canvas audio object src=' + src.substring(0, 80));
-              entries.push({ src: src, start: objStart, length: objLength, volume: 1 });
-            });
-          }
-
-          /* Collect soundtrack */
           var soundtrack = template.timeline.soundtrack;
           if (soundtrack && soundtrack.src) {
             var stSrc = soundtrack.src;
-            console.log('[CFS preview] Found soundtrack src=' + (stSrc ? stSrc.substring(0, 80) : '(empty)'));
             if (stSrc && stSrc.indexOf('{{') === -1) {
               var stDur = typeof soundtrack.duration === 'number' ? soundtrack.duration : total;
               var stVol = typeof soundtrack.volume === 'number' ? soundtrack.volume : 1;
@@ -9736,44 +9712,26 @@
               entries.push({ src: stSrc, start: 0, length: stDur, volume: Math.max(0, Math.min(4, stVol)) });
             }
           }
-
-          console.log('[CFS preview] Audio entries to schedule:', entries.length);
           if (!entries.length) return;
-
           entries.forEach(function (entry) {
             var entryEnd = entry.start + entry.length;
             if (timelinePlayStartTime >= entryEnd) return;
-
             function playEntry() {
               if (!isTimelinePlaying) return;
               var srcUrl = entry.src;
-              console.log('[CFS preview] Playing audio entry:', srcUrl.substring(0, 80), 'vol=' + entry.volume);
-              /* For blob:/data: URLs, use directly; for http(s) try fetch for CORS-safe playback */
               (srcUrl.startsWith('blob:') || srcUrl.startsWith('data:')
                 ? Promise.resolve(srcUrl)
                 : fetch(srcUrl, { mode: 'cors' }).then(function (r) {
                     if (!r.ok) throw new Error('HTTP ' + r.status);
                     return r.blob();
-                  }).then(function (blob) {
-                    var blobUrl = URL.createObjectURL(blob);
-                    return blobUrl;
-                  }).catch(function (fetchErr) {
-                    console.warn('[CFS preview] CORS fetch failed, trying media proxy:', fetchErr);
-                    /* Try server-side proxy to bypass CORS */
+                  }).then(function (blob) { return URL.createObjectURL(blob); })
+                  .catch(function () {
                     var proxyBase = (typeof location !== 'undefined' && location.origin) || '';
                     if (proxyBase) {
-                      var proxyUrl = proxyBase + '/api/media-proxy?url=' + encodeURIComponent(srcUrl);
-                      return fetch(proxyUrl).then(function (proxyRes) {
-                        if (!proxyRes.ok) throw new Error('Proxy HTTP ' + proxyRes.status);
-                        return proxyRes.blob();
-                      }).then(function (blob) {
-                        var blobUrl = URL.createObjectURL(blob);
-                        console.log('[CFS preview] Media proxy succeeded for:', srcUrl.substring(0, 60));
-                        return blobUrl;
-                      }).catch(function () {
-                        console.warn('[CFS preview] Media proxy also failed, using direct URL');
-                        return srcUrl;
-                      });
+                      return fetch(proxyBase + '/api/media-proxy?url=' + encodeURIComponent(srcUrl))
+                        .then(function (pr) { if (!pr.ok) throw new Error('Proxy ' + pr.status); return pr.blob(); })
+                        .then(function (b) { return URL.createObjectURL(b); })
+                        .catch(function () { return srcUrl; });
                     }
                     return srcUrl;
                   })
@@ -9782,19 +9740,11 @@
                 var audio = new Audio(url);
                 if (url !== srcUrl && url.startsWith('blob:')) audio._cfsBlobUrl = url;
                 audio.volume = Math.min(1, entry.volume);
-                /* If playhead is partway into the clip, seek */
-                if (timelinePlayStartTime > entry.start) {
-                  audio.currentTime = timelinePlayStartTime - entry.start;
-                }
+                if (timelinePlayStartTime > entry.start) audio.currentTime = timelinePlayStartTime - entry.start;
                 _previewAudioEls.push(audio);
-                audio.play().then(function () {
-                  console.log('[CFS preview] Audio playing successfully:', srcUrl.substring(0, 60));
-                }).catch(function (err) {
-                  console.warn('[CFS preview] Audio play failed for', srcUrl.substring(0, 80), err);
-                });
+                audio.play().catch(function () {});
               });
             }
-
             if (timelinePlayStartTime < entry.start) {
               var delay = (entry.start - timelinePlayStartTime) * 1000;
               setTimeout(function () { if (isTimelinePlaying) playEntry(); }, delay);

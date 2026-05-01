@@ -467,6 +467,182 @@ function patchUnifiedEditor(text) {
 		out = out.replace(vidLenMarker, vidLenFix);
 	}
 
+	// ── Fix: Add non-TTS audio playback (audio clips + soundtrack) to preview ──
+	// The extension's playTimelinePreview only schedules TTS chunks.
+	// We inject a scheduleNonTtsAudio IIFE after the TTS scheduling block.
+	const ttsScheduleEndMarker = "          });\n        }\n\n        function tick() {";
+	const nonTtsAudioBlock =
+		"          });\n" +
+		"        }\n" +
+		"\n" +
+		"        /* ── Schedule audio clip + soundtrack playback ── */\n" +
+		"        (function scheduleNonTtsAudio() {\n" +
+		"          if (!template || !template.timeline) return;\n" +
+		"          var entries = [];\n" +
+		"          (template.timeline.tracks || []).forEach(function (track) {\n" +
+		"            (track.clips || []).forEach(function (clip) {\n" +
+		"              var asset = clip.asset || {};\n" +
+		"              var type = (asset.type || '').toLowerCase();\n" +
+		"              if (type !== 'audio') return;\n" +
+		"              var src = asset.src || asset.url || '';\n" +
+		"              if (!src || src.indexOf('{{') !== -1) return;\n" +
+		"              var clipStart = typeof clip.start === 'number' ? clip.start : 0;\n" +
+		"              var clipLength = clip.length === 'end' || clip.length === 'auto'\n" +
+		"                ? Math.max(0, total - clipStart)\n" +
+		"                : (typeof clip.length === 'number' ? clip.length : 5);\n" +
+		"              var vol = typeof asset.volume === 'number' ? asset.volume : 1;\n" +
+		"              if (vol > 1 && vol <= 100) vol = vol / 100;\n" +
+		"              entries.push({ src: src, start: clipStart, length: clipLength, volume: Math.max(0, Math.min(4, vol)) });\n" +
+		"            });\n" +
+		"          });\n" +
+		"          var soundtrack = template.timeline.soundtrack;\n" +
+		"          if (soundtrack && soundtrack.src) {\n" +
+		"            var stSrc = soundtrack.src;\n" +
+		"            if (stSrc && stSrc.indexOf('{{') === -1) {\n" +
+		"              var stDur = typeof soundtrack.duration === 'number' ? soundtrack.duration : total;\n" +
+		"              var stVol = typeof soundtrack.volume === 'number' ? soundtrack.volume : 1;\n" +
+		"              if (stVol > 1 && stVol <= 100) stVol = stVol / 100;\n" +
+		"              entries.push({ src: stSrc, start: 0, length: stDur, volume: Math.max(0, Math.min(4, stVol)) });\n" +
+		"            }\n" +
+		"          }\n" +
+		"          if (!entries.length) return;\n" +
+		"          entries.forEach(function (entry) {\n" +
+		"            var entryEnd = entry.start + entry.length;\n" +
+		"            if (timelinePlayStartTime >= entryEnd) return;\n" +
+		"            function playEntry() {\n" +
+		"              if (!isTimelinePlaying) return;\n" +
+		"              var srcUrl = entry.src;\n" +
+		"              (srcUrl.startsWith('blob:') || srcUrl.startsWith('data:')\n" +
+		"                ? Promise.resolve(srcUrl)\n" +
+		"                : fetch(srcUrl, { mode: 'cors' }).then(function (r) {\n" +
+		"                    if (!r.ok) throw new Error('HTTP ' + r.status);\n" +
+		"                    return r.blob();\n" +
+		"                  }).then(function (blob) { return URL.createObjectURL(blob); })\n" +
+		"                  .catch(function () {\n" +
+		"                    var proxyBase = (typeof location !== 'undefined' && location.origin) || '';\n" +
+		"                    if (proxyBase) {\n" +
+		"                      return fetch(proxyBase + '/api/media-proxy?url=' + encodeURIComponent(srcUrl))\n" +
+		"                        .then(function (pr) { if (!pr.ok) throw new Error('Proxy ' + pr.status); return pr.blob(); })\n" +
+		"                        .then(function (b) { return URL.createObjectURL(b); })\n" +
+		"                        .catch(function () { return srcUrl; });\n" +
+		"                    }\n" +
+		"                    return srcUrl;\n" +
+		"                  })\n" +
+		"              ).then(function (url) {\n" +
+		"                if (!isTimelinePlaying) return;\n" +
+		"                var audio = new Audio(url);\n" +
+		"                if (url !== srcUrl && url.startsWith('blob:')) audio._cfsBlobUrl = url;\n" +
+		"                audio.volume = Math.min(1, entry.volume);\n" +
+		"                if (timelinePlayStartTime > entry.start) audio.currentTime = timelinePlayStartTime - entry.start;\n" +
+		"                _previewAudioEls.push(audio);\n" +
+		"                audio.play().catch(function () {});\n" +
+		"              });\n" +
+		"            }\n" +
+		"            if (timelinePlayStartTime < entry.start) {\n" +
+		"              var delay = (entry.start - timelinePlayStartTime) * 1000;\n" +
+		"              setTimeout(function () { if (isTimelinePlaying) playEntry(); }, delay);\n" +
+		"            } else {\n" +
+		"              playEntry();\n" +
+		"            }\n" +
+		"          });\n" +
+		"        })();\n" +
+		"\n" +
+		"        function tick() {";
+	if (out.includes(ttsScheduleEndMarker)) {
+		out = out.replace(ttsScheduleEndMarker, nonTtsAudioBlock);
+	} else {
+		console.warn("[sync-extension-assets] unified-editor.js TTS schedule end marker not found — skipping non-TTS audio patch");
+	}
+
+	return out;
+}
+
+/**
+ * Patch pixi-timeline-player.js for the web app:
+ *
+ * 1. CORS media proxy fallback — when fetch(url, {mode:'cors'}) fails for an
+ *    external audio/video URL, retry through /api/media-proxy?url= which fetches
+ *    server-side and returns same-origin data.
+ *
+ * 2. Same proxy fallback in decodeAudio for renderMixedAudioBuffer.
+ */
+function patchPixiTimelinePlayer(text) {
+	let out = text;
+
+	// ── 1. Add version header ──
+	if (!out.startsWith('/* pixi-timeline-player')) {
+		out = '/* pixi-timeline-player v2.1 — media-proxy CORS fallback */\n' + out;
+	}
+
+	// ── 2. Patch fetchOne to try media proxy before image fallback ──
+	const fetchOneCatchMarker =
+		"}).catch(function (err) {\n" +
+		"        return imageToBlobUrl(url, true).then(function () {\n" +
+		"          if (resolved[url]) return;\n" +
+		"          return imageToBlobUrl(url, false);\n" +
+		"        }).then(function () {\n" +
+		"          if (!resolved[url]) {\n" +
+		"            console.warn('[CFS] Could not resolve media to blob URL:', url);";
+	const fetchOneCatchFix =
+		"}).catch(function (err) {\n" +
+		"        /* CORS fetch failed — try server-side media proxy */\n" +
+		"        var proxyBase = (typeof location !== 'undefined' && location.origin) || '';\n" +
+		"        if (proxyBase) {\n" +
+		"          var proxyUrl = proxyBase + '/api/media-proxy?url=' + encodeURIComponent(url);\n" +
+		"          return fetch(proxyUrl).then(function (proxyRes) {\n" +
+		"            if (!proxyRes.ok) throw new Error('Proxy HTTP ' + proxyRes.status);\n" +
+		"            return proxyRes.blob();\n" +
+		"          }).then(function (blob) {\n" +
+		"            if (!blob) return;\n" +
+		"            var blobUrl = URL.createObjectURL(blob);\n" +
+		"            resolved[url] = blobUrl;\n" +
+		"            revokeList.push(blobUrl);\n" +
+		"          }).catch(function () {\n" +
+		"            /* Proxy also failed — try image canvas fallback */\n" +
+		"            return imageToBlobUrl(url, true).then(function () {\n" +
+		"              if (resolved[url]) return;\n" +
+		"              return imageToBlobUrl(url, false);\n" +
+		"            }).then(function () {\n" +
+		"              if (!resolved[url]) {\n" +
+		"                console.warn('[CFS] Could not resolve media to blob URL:', url);\n" +
+		"                if (typeof global.__CFS_onMediaLoadFailed === 'function') global.__CFS_onMediaLoadFailed(url, err);\n" +
+		"                if (typeof global.window !== 'undefined' && global.window.__CFS_onMediaLoadFailed) global.window.__CFS_onMediaLoadFailed(url, err);\n" +
+		"              }\n" +
+		"            });\n" +
+		"          });\n" +
+		"        }\n" +
+		"        return imageToBlobUrl(url, true).then(function () {\n" +
+		"          if (resolved[url]) return;\n" +
+		"          return imageToBlobUrl(url, false);\n" +
+		"        }).then(function () {\n" +
+		"          if (!resolved[url]) {\n" +
+		"            console.warn('[CFS] Could not resolve media to blob URL:', url);";
+	if (out.includes(fetchOneCatchMarker)) {
+		out = out.replace(fetchOneCatchMarker, fetchOneCatchFix);
+	} else {
+		console.warn("[sync-extension-assets] pixi-timeline-player.js fetchOne catch marker not found — skipping CORS proxy patch");
+	}
+
+	// ── 3. Patch decodeAudio to try media proxy when fetch fails ──
+	const decodeAudioMarker =
+		"function decodeAudio(offlineCtx, src) {\n" +
+		"    return fetch(src).then(function (res) {";
+	const decodeAudioFix =
+		"function decodeAudio(offlineCtx, src) {\n" +
+		"    var proxyBase = (typeof location !== 'undefined' && location.origin) || '';\n" +
+		"    return fetch(src).catch(function () {\n" +
+		"      /* CORS fetch failed — try media proxy */\n" +
+		"      if (proxyBase && !src.startsWith('blob:') && !src.startsWith('data:')) {\n" +
+		"        return fetch(proxyBase + '/api/media-proxy?url=' + encodeURIComponent(src));\n" +
+		"      }\n" +
+		"      return Promise.reject(new Error('CORS blocked'));\n" +
+		"    }).then(function (res) {";
+	if (out.includes(decodeAudioMarker)) {
+		out = out.replace(decodeAudioMarker, decodeAudioFix);
+	} else {
+		console.warn("[sync-extension-assets] pixi-timeline-player.js decodeAudio marker not found — skipping");
+	}
+
 	return out;
 }
 
@@ -539,6 +715,9 @@ async function run() {
 		}
 		if (rel === "generator/template-engine.js") {
 			text = patchTemplateEngine(text);
+		}
+		if (rel === "generator/core/pixi-timeline-player.js") {
+			text = patchPixiTimelinePlayer(text);
 		}
 		if (rel === "generator/editor/unified-editor.js") {
 			text = patchUnifiedEditor(text);

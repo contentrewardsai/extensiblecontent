@@ -363,7 +363,14 @@
   }
 
   function decodeAudio(offlineCtx, src) {
-    return fetch(src).then(function (res) {
+    var proxyBase = (typeof location !== 'undefined' && location.origin) || '';
+    return fetch(src).catch(function () {
+      /* CORS fetch failed — try media proxy */
+      if (proxyBase && !src.startsWith('blob:') && !src.startsWith('data:')) {
+        return fetch(proxyBase + '/api/media-proxy?url=' + encodeURIComponent(src));
+      }
+      return Promise.reject(new Error('CORS blocked'));
+    }).then(function (res) {
       if (!res.ok) throw new Error('Audio fetch failed');
       return res.arrayBuffer();
     }).then(function (ab) {

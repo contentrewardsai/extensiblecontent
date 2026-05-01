@@ -266,54 +266,6 @@
   }
 
   /**
-   * Convert a WAV/WebM audio Blob to MP3 locally.
-   * MP3 is the safest format for third-party media libraries (GHL, etc.)
-   * that may reject M4A/AAC containers despite valid audio content.
-   */
-  function convertToMp3(blob, onProgress) {
-    var report = typeof onProgress === 'function' ? onProgress : function () {};
-
-    report('Loading FFmpeg WASM...');
-
-    return ensureLoaded(report)
-      .then(function (ff) {
-        return blob.arrayBuffer().then(function (buf) {
-          var ext = (blob.type || '').indexOf('wav') >= 0 ? 'wav' : 'webm';
-          var inputName = 'input.' + ext;
-          var outputName = 'output.mp3';
-          report('Writing input file...');
-          return ff.writeFile(inputName, new Uint8Array(buf))
-            .then(function () {
-              report('Converting to MP3...');
-              return ff.exec([
-                '-i', inputName,
-                '-vn',
-                '-c:a', 'libmp3lame',
-                '-b:a', '192k',
-                '-q:a', '2',
-                outputName,
-              ]);
-            })
-            .then(function () {
-              report('Reading output...');
-              return ff.readFile(outputName);
-            })
-            .then(function (data) {
-              var mp3Blob = new Blob([data], { type: 'audio/mpeg' });
-              ff.deleteFile(inputName).catch(function () {});
-              ff.deleteFile(outputName).catch(function () {});
-              report('Conversion complete.');
-              return { ok: true, blob: mp3Blob };
-            });
-        });
-      })
-      .catch(function (err) {
-        var msg = err && err.message ? err.message : String(err);
-        return { ok: false, error: msg };
-      });
-  }
-
-  /**
    * Best-effort duration in seconds from media blob (parses ffmpeg -i log line).
    * @returns {Promise<number>} 0 if unknown
    */
@@ -514,7 +466,6 @@
     ensureLoaded: ensureLoaded,
     convertToMp4: convertToMp4,
     convertToM4a: convertToM4a,
-    convertToMp3: convertToMp3,
     probeDurationSeconds: probeDurationSeconds,
     extractSegment: extractSegment,
     extractAudioFromVideo: extractAudioFromVideo,
