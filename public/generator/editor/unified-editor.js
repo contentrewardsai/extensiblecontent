@@ -9684,17 +9684,17 @@
 
         /* ── Schedule audio clip + soundtrack playback ── */
         (function scheduleNonTtsAudio() {
-          if (!template || !template.timeline) return;
+          if (!template || !template.timeline) { console.log('[CFS preview] No template/timeline for audio'); return; }
           var entries = [];
-          var mergeObj = {};
 
           /* Collect audio clips from template timeline tracks */
-          (template.timeline.tracks || []).forEach(function (track) {
-            (track.clips || []).forEach(function (clip) {
+          (template.timeline.tracks || []).forEach(function (track, trackIdx) {
+            (track.clips || []).forEach(function (clip, clipIdx) {
               var asset = clip.asset || {};
               var type = (asset.type || '').toLowerCase();
               if (type !== 'audio') return;
               var src = asset.src || asset.url || '';
+              console.log('[CFS preview] Found audio clip T' + trackIdx + '/C' + clipIdx + ' src=' + (src ? src.substring(0, 80) : '(empty)'));
               if (!src || src.indexOf('{{') !== -1) return;
               var clipStart = typeof clip.start === 'number' ? clip.start : 0;
               var clipLength = clip.length === 'end' || clip.length === 'auto'
@@ -9706,10 +9706,29 @@
             });
           });
 
+          /* Also scan canvas objects for audio-type entries (in case template tracks
+             are out of sync with what the canvas stores, e.g. uploaded blob: files) */
+          if (canvas && canvas.getObjects) {
+            canvas.getObjects().forEach(function (obj) {
+              var audioType = obj.cfsAudioType || (obj.cfsOriginalClip && obj.cfsOriginalClip.asset && obj.cfsOriginalClip.asset.type);
+              if (audioType !== 'audio') return;
+              var src = (obj.cfsOriginalClip && obj.cfsOriginalClip.asset && (obj.cfsOriginalClip.asset.src || obj.cfsOriginalClip.asset.url)) || '';
+              if (!src || src.indexOf('{{') !== -1) return;
+              /* Skip if already collected from template tracks */
+              var alreadyHave = entries.some(function (e) { return e.src === src; });
+              if (alreadyHave) return;
+              var objStart = obj.cfsStart != null ? obj.cfsStart : 0;
+              var objLength = typeof obj.cfsLength === 'number' ? obj.cfsLength : 5;
+              console.log('[CFS preview] Found canvas audio object src=' + src.substring(0, 80));
+              entries.push({ src: src, start: objStart, length: objLength, volume: 1 });
+            });
+          }
+
           /* Collect soundtrack */
           var soundtrack = template.timeline.soundtrack;
           if (soundtrack && soundtrack.src) {
             var stSrc = soundtrack.src;
+            console.log('[CFS preview] Found soundtrack src=' + (stSrc ? stSrc.substring(0, 80) : '(empty)'));
             if (stSrc && stSrc.indexOf('{{') === -1) {
               var stDur = typeof soundtrack.duration === 'number' ? soundtrack.duration : total;
               var stVol = typeof soundtrack.volume === 'number' ? soundtrack.volume : 1;
@@ -9718,6 +9737,7 @@
             }
           }
 
+          console.log('[CFS preview] Audio entries to schedule:', entries.length);
           if (!entries.length) return;
 
           entries.forEach(function (entry) {
@@ -9726,8 +9746,9 @@
 
             function playEntry() {
               if (!isTimelinePlaying) return;
-              /* Fetch as blob for CORS-safe playback */
               var srcUrl = entry.src;
+              console.log('[CFS preview] Playing audio entry:', srcUrl.substring(0, 80), 'vol=' + entry.volume);
+              /* For blob:/data: URLs, use directly; for http(s) try fetch for CORS-safe playback */
               (srcUrl.startsWith('blob:') || srcUrl.startsWith('data:')
                 ? Promise.resolve(srcUrl)
                 : fetch(srcUrl, { mode: 'cors' }).then(function (r) {
@@ -9736,7 +9757,10 @@
                   }).then(function (blob) {
                     var blobUrl = URL.createObjectURL(blob);
                     return blobUrl;
-                  }).catch(function () { return srcUrl; }) /* fallback to direct URL */
+                  }).catch(function (fetchErr) {
+                    console.warn('[CFS preview] CORS fetch failed, trying direct URL:', fetchErr);
+                    return srcUrl;
+                  })
               ).then(function (url) {
                 if (!isTimelinePlaying) return;
                 var audio = new Audio(url);
@@ -9747,8 +9771,10 @@
                   audio.currentTime = timelinePlayStartTime - entry.start;
                 }
                 _previewAudioEls.push(audio);
-                audio.play().catch(function (err) {
-                  console.warn('[CFS preview] Audio play failed for', srcUrl, err);
+                audio.play().then(function () {
+                  console.log('[CFS preview] Audio playing successfully:', srcUrl.substring(0, 60));
+                }).catch(function (err) {
+                  console.warn('[CFS preview] Audio play failed for', srcUrl.substring(0, 80), err);
                 });
               });
             }
