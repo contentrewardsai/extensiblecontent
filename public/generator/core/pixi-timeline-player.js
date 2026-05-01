@@ -1,3 +1,4 @@
+/* pixi-timeline-player v2.1 — media-proxy CORS fallback */
 /**
  * PixiJS timeline player.
  * Loads template.json (timeline Edit API), builds a PixiJS stage per clip, applies

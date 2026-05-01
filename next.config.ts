@@ -41,6 +41,20 @@ const nextConfig: NextConfig = {
 				{ key: "Cross-Origin-Resource-Policy", value: "same-origin" },
 			],
 		},
+		{
+			// Generator/editor JS files change frequently during development.
+			// Prevent Vercel CDN from serving stale cached copies.
+			source: "/generator/:path*",
+			headers: [
+				{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+			],
+		},
+		{
+			source: "/shared/:path*",
+			headers: [
+				{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+			],
+		},
 	],
 	rewrites: async () => [
 		{
