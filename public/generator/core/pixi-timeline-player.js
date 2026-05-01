@@ -1326,7 +1326,8 @@
            that canvas as the Pixi texture source instead of the video element. */
         var isWebm = (src || '').toLowerCase().indexOf('.webm') !== -1 ||
                      ((asset._originalFormat || '').toLowerCase() === 'webm');
-        if (isWebm) {
+        /* Route ALL video through canvas intermediary to avoid glCopySubTextureCHROMIUM errors */
+        if (true) {
           var alphaCanvas = document.createElement('canvas');
           alphaCanvas.width = vw;
           alphaCanvas.height = vh;
@@ -1336,7 +1337,7 @@
           try { sprite._cfsAlphaCtx.drawImage(video, 0, 0, vw, vh); } catch(_){}
           /* Replace the sprite's texture source with the canvas */
           try {
-            var canvasTex = PIXI.Texture.from(alphaCanvas, { alphaMode: 'premultiply-alpha-on-upload' });
+            var canvasTex = PIXI.Texture.from(alphaCanvas, { alphaMode: vidAlphaMode });
             sprite.texture = canvasTex;
           } catch(_){}
         }

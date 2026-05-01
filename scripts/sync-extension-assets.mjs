@@ -643,6 +643,34 @@ function patchPixiTimelinePlayer(text) {
 		console.warn("[sync-extension-assets] pixi-timeline-player.js decodeAudio marker not found — skipping");
 	}
 
+	// ── 4. Route ALL video formats through canvas intermediary (not just WebM) ──
+	// Chrome's glCopySubTextureCHROMIUM fails for .mov (QuickTime) and other
+	// container formats when used directly as WebGL texture sources.  By routing
+	// every video through a 2D <canvas>, we avoid the texture-upload error.
+	const webmOnlyMarker =
+		"var isWebm = (src || '').toLowerCase().indexOf('.webm') !== -1 ||\n" +
+		"                     ((asset._originalFormat || '').toLowerCase() === 'webm');\n" +
+		"        if (isWebm) {";
+	const allVideoFix =
+		"var isWebm = (src || '').toLowerCase().indexOf('.webm') !== -1 ||\n" +
+		"                     ((asset._originalFormat || '').toLowerCase() === 'webm');\n" +
+		"        /* Route ALL video through canvas intermediary to avoid glCopySubTextureCHROMIUM errors */\n" +
+		"        if (true) {";
+	if (out.includes(webmOnlyMarker)) {
+		out = out.replace(webmOnlyMarker, allVideoFix);
+	} else {
+		console.warn("[sync-extension-assets] pixi-timeline-player.js WebM-only canvas guard not found — skipping video canvas patch");
+	}
+
+	// ── 5. Use correct alphaMode for canvas texture (vidAlphaMode, not hardcoded) ──
+	const hardcodedAlpha = "var canvasTex = PIXI.Texture.from(alphaCanvas, { alphaMode: 'premultiply-alpha-on-upload' });";
+	const dynamicAlpha  = "var canvasTex = PIXI.Texture.from(alphaCanvas, { alphaMode: vidAlphaMode });";
+	if (out.includes(hardcodedAlpha)) {
+		out = out.replace(hardcodedAlpha, dynamicAlpha);
+	} else {
+		console.warn("[sync-extension-assets] pixi-timeline-player.js hardcoded alphaMode not found — skipping");
+	}
+
 	return out;
 }
 
