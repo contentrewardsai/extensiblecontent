@@ -554,6 +554,90 @@ function patchUnifiedEditor(text) {
 		console.warn("[sync-extension-assets] unified-editor.js TTS schedule end marker not found — skipping non-TTS audio patch");
 	}
 
+	// ── Inject getNextTrackIndex() helper ──
+	// Placed right before assignSeparateTracksForVideo() so it's in scope for all add functions.
+	const helperInsertMarker = "    function assignSeparateTracksForVideo() {";
+	const helperBlock =
+		"    /** Compute the next available track index so each new element gets its own track. */\n" +
+		"    function getNextTrackIndex() {\n" +
+		"      var maxTrack = -1;\n" +
+		"      if (canvas && canvas.getObjects) {\n" +
+		"        canvas.getObjects().forEach(function (obj) {\n" +
+		"          var ti = obj.cfsTrackIndex != null ? obj.cfsTrackIndex : -1;\n" +
+		"          if (ti > maxTrack) maxTrack = ti;\n" +
+		"        });\n" +
+		"      }\n" +
+		"      if (template && template.timeline && Array.isArray(template.timeline.tracks)) {\n" +
+		"        maxTrack = Math.max(maxTrack, template.timeline.tracks.length - 1);\n" +
+		"      }\n" +
+		"      return maxTrack + 1;\n" +
+		"    }\n\n" +
+		"    function assignSeparateTracksForVideo() {";
+	if (out.includes(helperInsertMarker)) {
+		out = out.replace(helperInsertMarker, helperBlock);
+	} else {
+		console.warn("[sync-extension-assets] unified-editor.js assignSeparateTracksForVideo marker not found — skipping getNextTrackIndex injection");
+	}
+
+	// ── Replace cfsTrackIndex = 0 with getNextTrackIndex() in all add functions ──
+	// addText
+	const textTrackMarker = "opts.cfsTrackIndex = 0;";
+	const textTrackFix    = "opts.cfsTrackIndex = getNextTrackIndex();";
+	if (out.includes(textTrackMarker)) {
+		out = out.replace(textTrackMarker, textTrackFix);
+	}
+	// addImage
+	const imgTrackMarker = "imgOpts.cfsTrackIndex = 0;";
+	const imgTrackFix    = "imgOpts.cfsTrackIndex = getNextTrackIndex();";
+	if (out.includes(imgTrackMarker)) {
+		out = out.replace(imgTrackMarker, imgTrackFix);
+	}
+	// addShape
+	const shapeTrackMarker = "timeProps.cfsTrackIndex = 0;";
+	const shapeTrackFix    = "timeProps.cfsTrackIndex = getNextTrackIndex();";
+	if (out.includes(shapeTrackMarker)) {
+		out = out.replace(shapeTrackMarker, shapeTrackFix);
+	}
+	// addVideo — note: the vidLen patch above already changed length, so marker now includes getTimelineEnd()
+	const vidTrackMarker = "group.set('cfsTrackIndex', 0);";
+	const vidTrackFix    = "group.set('cfsTrackIndex', getNextTrackIndex());";
+	if (out.includes(vidTrackMarker)) {
+		out = out.replace(vidTrackMarker, vidTrackFix);
+	}
+	// importSvg
+	const svgTrackMarker = "svgOpts.cfsTrackIndex = 0;";
+	const svgTrackFix    = "svgOpts.cfsTrackIndex = getNextTrackIndex();";
+	if (out.includes(svgTrackMarker)) {
+		out = out.replace(svgTrackMarker, svgTrackFix);
+	}
+	// addClip text fallback
+	const addClipTrackMarker = "cfsTrackIndex: 0,\n        cfsWrapText: true,";
+	const addClipTrackFix    = "cfsTrackIndex: getNextTrackIndex(),\n        cfsWrapText: true,";
+	if (out.includes(addClipTrackMarker)) {
+		out = out.replace(addClipTrackMarker, addClipTrackFix);
+	}
+
+	// ── Fix insertAudioClip: always create a new track (one element per track) ──
+	const audioTrackFindMarker =
+		"var audioTrackIdx = -1;\n" +
+		"        for (var ti = 0; ti < template.timeline.tracks.length; ti++) {\n" +
+		"          var clips = (template.timeline.tracks[ti] && template.timeline.tracks[ti].clips) || [];\n" +
+		"          if (clips.length && clips.every(function (c) { return (c.asset || {}).type === 'audio'; })) { audioTrackIdx = ti; break; }\n" +
+		"        }\n" +
+		"        if (audioTrackIdx < 0) {\n" +
+		"          template.timeline.tracks.push({ clips: [] });\n" +
+		"          audioTrackIdx = template.timeline.tracks.length - 1;\n" +
+		"        }";
+	const audioTrackAlwaysNew =
+		"/* Always create a new track for each audio clip — one element per track */\n" +
+		"        template.timeline.tracks.push({ clips: [] });\n" +
+		"        var audioTrackIdx = template.timeline.tracks.length - 1;";
+	if (out.includes(audioTrackFindMarker)) {
+		out = out.replace(audioTrackFindMarker, audioTrackAlwaysNew);
+	} else {
+		console.warn("[sync-extension-assets] unified-editor.js insertAudioClip track-find marker not found — skipping");
+	}
+
 	return out;
 }
 

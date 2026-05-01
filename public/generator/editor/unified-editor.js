@@ -7697,7 +7697,7 @@
       if (outputTypeSelect.value === 'video' || outputTypeSelect.value === 'audio') {
         opts.cfsStart = 0;
         opts.cfsLength = getTimelineEnd() || 5;
-        opts.cfsTrackIndex = 0;
+        opts.cfsTrackIndex = getNextTrackIndex();
       }
       const t = new fabric.Textbox('New text', opts);
       t.set('cfsRawText', 'New text');
@@ -7723,7 +7723,7 @@
             if (outputTypeSelect.value === 'video' || outputTypeSelect.value === 'audio') {
               imgOpts.cfsStart = 0;
               imgOpts.cfsLength = getTimelineEnd() || 5;
-              imgOpts.cfsTrackIndex = 0;
+              imgOpts.cfsTrackIndex = getNextTrackIndex();
             }
             img.set(imgOpts);
             if (img.width > 400 || img.height > 400) img.scale(400 / Math.max(img.width, img.height));
@@ -7744,7 +7744,7 @@
       var stamp = Date.now();
       var isVideo = outputTypeSelect.value === 'video' || outputTypeSelect.value === 'audio';
       var timeProps = {};
-      if (isVideo) { timeProps.cfsStart = 0; timeProps.cfsLength = getTimelineEnd() || 5; timeProps.cfsTrackIndex = 0; }
+      if (isVideo) { timeProps.cfsStart = 0; timeProps.cfsLength = getTimelineEnd() || 5; timeProps.cfsTrackIndex = getNextTrackIndex(); }
       var obj;
       if (choice === '3') {
         obj = new fabric.Rect(Object.assign({ left: 100, top: 200, width: 200, height: 4, fill: '#000000', name: 'line_' + stamp, cfsShapeLine: true, cfsLineLength: 200, cfsLineThickness: 4 }, timeProps));
@@ -7817,15 +7817,9 @@
       }
       function insertAudioClip(src) {
         var start = 0;
-        var audioTrackIdx = -1;
-        for (var ti = 0; ti < template.timeline.tracks.length; ti++) {
-          var clips = (template.timeline.tracks[ti] && template.timeline.tracks[ti].clips) || [];
-          if (clips.length && clips.every(function (c) { return (c.asset || {}).type === 'audio'; })) { audioTrackIdx = ti; break; }
-        }
-        if (audioTrackIdx < 0) {
-          template.timeline.tracks.push({ clips: [] });
-          audioTrackIdx = template.timeline.tracks.length - 1;
-        }
+        /* Always create a new track for each audio clip — one element per track */
+        template.timeline.tracks.push({ clips: [] });
+        var audioTrackIdx = template.timeline.tracks.length - 1;
         template.timeline.tracks[audioTrackIdx].clips.push({
           asset: { type: 'audio', src: src || '{{ AUDIO_URL }}', volume: 1 },
           start: start,
@@ -7868,7 +7862,7 @@
         group.set('cfsVideoSrc', src);
         group.set('cfsStart', 0);
         group.set('cfsLength', getTimelineEnd() || 5);
-        group.set('cfsTrackIndex', 0);
+        group.set('cfsTrackIndex', getNextTrackIndex());
         canvas.add(group);
         canvas.setActiveObject(group);
         canvas.renderAll();
@@ -7930,7 +7924,7 @@
           if (outputTypeSelect.value === 'video' || outputTypeSelect.value === 'audio') {
             svgOpts.cfsStart = 0;
             svgOpts.cfsLength = getTimelineEnd() || 5;
-            svgOpts.cfsTrackIndex = 0;
+            svgOpts.cfsTrackIndex = getNextTrackIndex();
           }
           imgOrGroup.set(svgOpts);
           canvas.add(imgOrGroup);
@@ -10277,6 +10271,21 @@
       }
     }
 
+    /** Compute the next available track index so each new element gets its own track. */
+    function getNextTrackIndex() {
+      var maxTrack = -1;
+      if (canvas && canvas.getObjects) {
+        canvas.getObjects().forEach(function (obj) {
+          var ti = obj.cfsTrackIndex != null ? obj.cfsTrackIndex : -1;
+          if (ti > maxTrack) maxTrack = ti;
+        });
+      }
+      if (template && template.timeline && Array.isArray(template.timeline.tracks)) {
+        maxTrack = Math.max(maxTrack, template.timeline.tracks.length - 1);
+      }
+      return maxTrack + 1;
+    }
+
     function assignSeparateTracksForVideo() {
       if (!canvas || !canvas.getObjects) return;
       var objs = canvas.getObjects();
@@ -10405,7 +10414,7 @@
         name: 'clip_' + Date.now(),
         cfsStart: start,
         cfsLength: 5,
-        cfsTrackIndex: 0,
+        cfsTrackIndex: getNextTrackIndex(),
         cfsWrapText: true,
         textBaseline: 'alphabetic'
       });
