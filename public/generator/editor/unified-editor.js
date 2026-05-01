@@ -9634,7 +9634,7 @@
         if (coreScene && coreScene.seekToTime && canvas) coreScene.seekToTime(canvas, timelinePlayStartTime);
         canvas.renderAll();
 
-        /* ── Schedule per-chunk audio playback ── */
+        /* ── Schedule per-chunk audio playback (TTS) ── */
         if (canvas && canvas.getObjects) {
           canvas.getObjects().forEach(function (obj) {
             if (obj.cfsAudioType !== 'text-to-speech' || !obj._cfsTtsChunks) return;
@@ -9681,6 +9681,86 @@
             });
           });
         }
+
+        /* ── Schedule audio clip + soundtrack playback ── */
+        (function scheduleNonTtsAudio() {
+          if (!template || !template.timeline) return;
+          var entries = [];
+          var mergeObj = {};
+
+          /* Collect audio clips from template timeline tracks */
+          (template.timeline.tracks || []).forEach(function (track) {
+            (track.clips || []).forEach(function (clip) {
+              var asset = clip.asset || {};
+              var type = (asset.type || '').toLowerCase();
+              if (type !== 'audio') return;
+              var src = asset.src || asset.url || '';
+              if (!src || src.indexOf('{{') !== -1) return;
+              var clipStart = typeof clip.start === 'number' ? clip.start : 0;
+              var clipLength = clip.length === 'end' || clip.length === 'auto'
+                ? Math.max(0, total - clipStart)
+                : (typeof clip.length === 'number' ? clip.length : 5);
+              var vol = typeof asset.volume === 'number' ? asset.volume : 1;
+              if (vol > 1 && vol <= 100) vol = vol / 100;
+              entries.push({ src: src, start: clipStart, length: clipLength, volume: Math.max(0, Math.min(4, vol)) });
+            });
+          });
+
+          /* Collect soundtrack */
+          var soundtrack = template.timeline.soundtrack;
+          if (soundtrack && soundtrack.src) {
+            var stSrc = soundtrack.src;
+            if (stSrc && stSrc.indexOf('{{') === -1) {
+              var stDur = typeof soundtrack.duration === 'number' ? soundtrack.duration : total;
+              var stVol = typeof soundtrack.volume === 'number' ? soundtrack.volume : 1;
+              if (stVol > 1 && stVol <= 100) stVol = stVol / 100;
+              entries.push({ src: stSrc, start: 0, length: stDur, volume: Math.max(0, Math.min(4, stVol)) });
+            }
+          }
+
+          if (!entries.length) return;
+
+          entries.forEach(function (entry) {
+            var entryEnd = entry.start + entry.length;
+            if (timelinePlayStartTime >= entryEnd) return;
+
+            function playEntry() {
+              if (!isTimelinePlaying) return;
+              /* Fetch as blob for CORS-safe playback */
+              var srcUrl = entry.src;
+              (srcUrl.startsWith('blob:') || srcUrl.startsWith('data:')
+                ? Promise.resolve(srcUrl)
+                : fetch(srcUrl, { mode: 'cors' }).then(function (r) {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.blob();
+                  }).then(function (blob) {
+                    var blobUrl = URL.createObjectURL(blob);
+                    return blobUrl;
+                  }).catch(function () { return srcUrl; }) /* fallback to direct URL */
+              ).then(function (url) {
+                if (!isTimelinePlaying) return;
+                var audio = new Audio(url);
+                if (url !== srcUrl && url.startsWith('blob:')) audio._cfsBlobUrl = url;
+                audio.volume = Math.min(1, entry.volume);
+                /* If playhead is partway into the clip, seek */
+                if (timelinePlayStartTime > entry.start) {
+                  audio.currentTime = timelinePlayStartTime - entry.start;
+                }
+                _previewAudioEls.push(audio);
+                audio.play().catch(function (err) {
+                  console.warn('[CFS preview] Audio play failed for', srcUrl, err);
+                });
+              });
+            }
+
+            if (timelinePlayStartTime < entry.start) {
+              var delay = (entry.start - timelinePlayStartTime) * 1000;
+              setTimeout(function () { if (isTimelinePlaying) playEntry(); }, delay);
+            } else {
+              playEntry();
+            }
+          });
+        })();
 
         function tick() {
           if (!isTimelinePlaying) return;
