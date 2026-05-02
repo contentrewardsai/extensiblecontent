@@ -493,6 +493,47 @@ function patchTemplateEngine(text) {
 }
 
 /**
+ * Patch fabric-to-timeline.js — video clip width/height export:
+ *
+ * Use the visual Fabric canvas dimensions (width × scaleX) for the exported
+ * clip's asset.width/height instead of the original source video dimensions
+ * (cfsVideoWidth/cfsVideoHeight).  The Pixi player uses clip.width/height as
+ * the target container for fit/crop, so they must reflect what the user sees.
+ */
+function patchFabricToTimeline(text) {
+	let out = text;
+	const vidDimMarker =
+		"var vw = obj.cfsVideoWidth != null ? Number(obj.cfsVideoWidth) : (obj.width != null && obj.width > 0 ? obj.width : null);\n" +
+		"        var vh = obj.cfsVideoHeight != null ? Number(obj.cfsVideoHeight) : (obj.height != null && obj.height > 0 ? obj.height : null);\n" +
+		"        if (vw != null && vh != null && vw > 0 && vh > 0) {\n" +
+		"          videoClip.asset.width = vw;\n" +
+		"          videoClip.asset.height = vh;\n" +
+		"        }";
+	const vidDimFix =
+		"/* Use the VISUAL size of the Fabric group (width × scaleX) for the clip\n" +
+		"           container, not the original source video dimensions. */\n" +
+		"        var visualW = (obj.width != null ? obj.width : 0) * (obj.scaleX != null ? obj.scaleX : 1);\n" +
+		"        var visualH = (obj.height != null ? obj.height : 0) * (obj.scaleY != null ? obj.scaleY : 1);\n" +
+		"        if (visualW > 0 && visualH > 0) {\n" +
+		"          videoClip.asset.width = Math.round(visualW);\n" +
+		"          videoClip.asset.height = Math.round(visualH);\n" +
+		"        } else {\n" +
+		"          var vw = obj.cfsVideoWidth != null ? Number(obj.cfsVideoWidth) : (obj.width != null && obj.width > 0 ? obj.width : null);\n" +
+		"          var vh = obj.cfsVideoHeight != null ? Number(obj.cfsVideoHeight) : (obj.height != null && obj.height > 0 ? obj.height : null);\n" +
+		"          if (vw != null && vh != null && vw > 0 && vh > 0) {\n" +
+		"            videoClip.asset.width = vw;\n" +
+		"            videoClip.asset.height = vh;\n" +
+		"          }\n" +
+		"        }";
+	if (out.includes(vidDimMarker)) {
+		out = out.replace(vidDimMarker, vidDimFix);
+	} else if (!out.includes("visualW") || !out.includes("visualH")) {
+		console.warn("[sync-extension-assets] fabric-to-timeline.js video dimension marker not found — skipping");
+	}
+	return out;
+}
+
+/**
  * Patch unified-editor.js for the web app:
  *
  * 1. New elements start at t=0 spanning the full existing duration instead of
@@ -720,6 +761,48 @@ function patchUnifiedEditor(text) {
 		out = out.replace(audioTrackFindMarker, audioTrackAlwaysNew);
 	} else {
 		console.warn("[sync-extension-assets] unified-editor.js insertAudioClip track-find marker not found — skipping");
+	}
+
+	// ── Add showIframePrompt() helper for URL/file input in iframes ──
+	// window.prompt is blocked in some cross-origin iframes; this inline modal
+	// serves as a fallback.
+	const iframePromptInsertMarker = "    function getNextTrackIndex() {";
+	if (!out.includes("showIframePrompt") && out.includes(iframePromptInsertMarker)) {
+		const iframePromptFn =
+			"    function showIframePrompt(message, fileAccept, cb) {\n" +
+			"      var overlay = document.createElement('div');\n" +
+			"      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';\n" +
+			"      var box = document.createElement('div');\n" +
+			"      box.style.cssText = 'background:#1e293b;border-radius:12px;padding:24px 28px;min-width:360px;max-width:480px;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,0.4);';\n" +
+			"      var title = document.createElement('div');\n" +
+			"      title.textContent = message || 'Enter URL or choose a file';\n" +
+			"      title.style.cssText = 'font-size:15px;margin-bottom:14px;font-weight:500;';\n" +
+			"      var urlInput = document.createElement('input');\n" +
+			"      urlInput.type = 'text'; urlInput.placeholder = 'https://...';\n" +
+			"      urlInput.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#f1f5f9;font-size:14px;margin-bottom:12px;outline:none;';\n" +
+			"      var btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';\n" +
+			"      var fileBtn = document.createElement('button'); fileBtn.textContent = 'Choose File';\n" +
+			"      fileBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:#334155;color:#e2e8f0;cursor:pointer;font-size:13px;';\n" +
+			"      var okBtn = document.createElement('button'); okBtn.textContent = 'Use URL';\n" +
+			"      okBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-size:13px;font-weight:600;';\n" +
+			"      var cancelBtn = document.createElement('button'); cancelBtn.textContent = 'Cancel';\n" +
+			"      cancelBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-size:13px;';\n" +
+			"      btnRow.appendChild(cancelBtn); btnRow.appendChild(fileBtn); btnRow.appendChild(okBtn);\n" +
+			"      box.appendChild(title); box.appendChild(urlInput); box.appendChild(btnRow);\n" +
+			"      overlay.appendChild(box); document.body.appendChild(overlay); urlInput.focus();\n" +
+			"      function cleanup() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }\n" +
+			"      cancelBtn.onclick = function () { cleanup(); };\n" +
+			"      overlay.onclick = function (e) { if (e.target === overlay) cleanup(); };\n" +
+			"      okBtn.onclick = function () { var val = urlInput.value.trim(); cleanup(); if (val) cb({ url: val }); };\n" +
+			"      urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') okBtn.click(); if (e.key === 'Escape') cleanup(); });\n" +
+			"      fileBtn.onclick = function () {\n" +
+			"        var fi = document.createElement('input'); fi.type = 'file'; fi.accept = fileAccept || '*/*';\n" +
+			"        fi.onchange = function () { var file = fi.files && fi.files[0]; cleanup(); if (file) cb({ file: file }); };\n" +
+			"        fi.click();\n" +
+			"      };\n" +
+			"    }\n\n" +
+			"    function getNextTrackIndex() {";
+		out = out.replace(iframePromptInsertMarker, iframePromptFn);
 	}
 
 	return out;
@@ -957,6 +1040,9 @@ async function run() {
 		}
 		if (rel === "generator/core/pixi-timeline-player.js") {
 			text = patchPixiTimelinePlayer(text);
+		}
+		if (rel === "generator/editor/fabric-to-timeline.js") {
+			text = patchFabricToTimeline(text);
 		}
 		if (rel === "generator/editor/unified-editor.js") {
 			text = patchUnifiedEditor(text);

@@ -7808,15 +7808,20 @@
         var file = fileInput.files && fileInput.files[0];
         if (file) { audioUrl = URL.createObjectURL(file); insertAudioClip(audioUrl); }
       };
-      showIframePrompt('Enter audio URL, or choose a file.', 'audio/*', function (result) {
-        if (result.url) {
-          audioUrl = result.url;
-          insertAudioClip(audioUrl);
-        } else if (result.file) {
-          audioUrl = URL.createObjectURL(result.file);
-          insertAudioClip(audioUrl);
-        }
-      });
+      var promptUrl = null;
+      try { promptUrl = window.prompt('Enter audio URL, or click Cancel to choose a file.'); } catch (_) {}
+      if (promptUrl != null && promptUrl.trim() !== '') {
+        audioUrl = promptUrl.trim();
+        insertAudioClip(audioUrl);
+      } else if (promptUrl === null) {
+        /* prompt returned null — either user cancelled or prompt was blocked.
+           Try the inline modal first; if the user picks a file from there, great.
+           If the prompt simply wasn't blocked, this acts as the file picker fallback. */
+        showIframePrompt('Enter audio URL, or choose a file.', 'audio/*', function (result) {
+          if (result.url) { insertAudioClip(result.url); }
+          else if (result.file) { insertAudioClip(URL.createObjectURL(result.file)); }
+        });
+      }
       function insertAudioClip(src) {
         var start = 0;
         /* Always create a new track for each audio clip — one element per track */
@@ -7835,13 +7840,31 @@
 
     function addVideo() {
       if (!canvas) return;
-      showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {
-        if (result.url) {
-          placeVideoOnCanvas(result.url);
-        } else if (result.file) {
-          placeVideoOnCanvas(URL.createObjectURL(result.file));
+      var videoUrl = '';
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.style.display = 'none';
+      input.onchange = function () {
+        var file = input.files && input.files[0];
+        if (file) {
+          videoUrl = URL.createObjectURL(file);
+          placeVideoOnCanvas(videoUrl);
         }
-      });
+      };
+      var promptUrl = null;
+      try { promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.'); } catch (_) {}
+      if (promptUrl != null && promptUrl.trim() !== '') {
+        videoUrl = promptUrl.trim();
+        placeVideoOnCanvas(videoUrl);
+      } else if (promptUrl === null) {
+        /* prompt returned null — user cancelled or prompt blocked in iframe.
+           Show inline modal as fallback. */
+        showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {
+          if (result.url) { placeVideoOnCanvas(result.url); }
+          else if (result.file) { placeVideoOnCanvas(URL.createObjectURL(result.file)); }
+        });
+      }
       function placeVideoOnCanvas(src) {
         if (!src || !canvas) return;
         var defaultW = 320;
@@ -7874,22 +7897,42 @@
             var h = Math.round(meta.height * scale);
             if (w < 80) w = 80;
             if (h < 60) h = 60;
-            var items = group.getObjects && group.getObjects();
-            if (items && items.length >= 2) {
-              items[0].set({ width: w, height: h, left: -w / 2, top: -h / 2 });
-              items[1].set({ left: 0, top: 0 });
-            }
-            group.set({ width: w, height: h });
-            group.setCoords && group.setCoords();
-            if (group.dirty != null) group.dirty = true;
+            /* Rebuild the group with correct child positioning.
+               Fabric groups use center-based child coords, so updating
+               children in-place causes layout drift on resize.  Instead,
+               remove the old group, create a fresh one at the same position
+               with the correctly-sized children. */
+            var groupLeft = group.left;
+            var groupTop = group.top;
+            var groupName = group.name;
+            var cfsProps = {};
+            ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
+             'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
+             'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
+             'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
+             'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
+              if (group[k] != null) cfsProps[k] = group[k];
+            });
+            canvas.remove(group);
+            var newRect = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
+            var newLabel = new fabric.Text('Video', { fontSize: 18, fill: '#e2e8f0', opacity: 0.05, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+            var newGroup = new fabric.Group([newRect, newLabel], {
+              left: groupLeft, top: groupTop, name: groupName,
+              selectable: true, evented: true
+            });
+            Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
+            if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
+            canvas.add(newGroup);
+            canvas.setActiveObject(newGroup);
+            group = newGroup;  // Update closure reference
+          } else {
+            if (meta.metadata) group.set('cfsVideoMetadata', meta.metadata);
           }
-          if (meta.metadata) group.set('cfsVideoMetadata', meta.metadata);
-          label.set('text', 'Video');
           canvas.renderAll();
           refreshTimeline();
           refreshPropertyPanel();
         }).catch(function () {
-          if (label) label.set('text', 'Video');
+          try { label.set('text', 'Video'); } catch(_){}
           if (canvas) canvas.renderAll();
         });
       }
