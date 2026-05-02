@@ -2035,7 +2035,7 @@
           }
           ensureCanvasObjectsSelectable(fabricCanvas);
           var loadedObjs = fabricCanvas.getObjects();
-          var keys = ['cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsLineHeight', 'cfsWrapText', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsTrackIndex', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'cfsSvgSrc', 'cfsRichText', 'cfsAnimation', 'cfsLengthAuto', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsOriginalClip', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsStroke', 'cfsShadow', 'cfsTextTransform', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsAlignVertical', 'cfsAlignHorizontal', 'cfsLetterSpacing', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius', 'cfsFontSizePct', 'cfsImageToVideo', 'cfsItvPrompt', 'cfsItvAspectRatio', 'cfsHideOnImage', 'cfsIsCaption', 'cfsCaptionWords', 'cfsCaptionActive', 'cfsCaptionFont', 'cfsCaptionAnimation', 'cfsCaptionDisplay', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct'];
+          var keys = ['cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsLineHeight', 'cfsWrapText', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsTrackIndex', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsTrim', 'cfsSpeed', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'cfsSvgSrc', 'cfsRichText', 'cfsAnimation', 'cfsLengthAuto', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsOriginalClip', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsStroke', 'cfsShadow', 'cfsTextTransform', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsAlignVertical', 'cfsAlignHorizontal', 'cfsLetterSpacing', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius', 'cfsFontSizePct', 'cfsImageToVideo', 'cfsItvPrompt', 'cfsItvAspectRatio', 'cfsHideOnImage', 'cfsIsCaption', 'cfsCaptionWords', 'cfsCaptionActive', 'cfsCaptionFont', 'cfsCaptionAnimation', 'cfsCaptionDisplay', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct'];
           var origObjects = origObjectsSnapshot;
           /* Build name→orig lookup for name-based matching (loadFromJSON may skip/reorder objects) */
           var origByName = {};
@@ -2110,6 +2110,10 @@
             });
             applySeekForOutputPreview(fabricCanvas);
             resetEditorUndoBaseline();
+            /* Boot live video previews for all saved video groups.
+               These groups come back from loadFromJSON as plain rects
+               because the intermediary canvas can't be serialized. */
+            rehydrateVideoGroups(fabricCanvas);
             if (typeof onDone === 'function') onDone();
           }, 150);
           if (typeof document !== 'undefined' && document.fonts && typeof document.fonts.ready === 'object') {
@@ -2327,7 +2331,7 @@
             (stateToLoad.objects || []).forEach(function (orig, i) {
               var obj = loadedObjs[i];
               if (!obj || !obj.set) return;
-              ['cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsLineHeight', 'cfsWrapText', 'cfsRichText', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsSvgSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto', 'cfsTrackIndex', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'name', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct', 'cfsRadiusPct', 'cfsFontSizePct', 'cfsAnimation', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsOriginalClip', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsStroke', 'cfsShadow', 'cfsTextTransform', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsAlignVertical', 'cfsAlignHorizontal', 'cfsLetterSpacing', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius'].forEach(function (k) {
+              ['cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsLineHeight', 'cfsWrapText', 'cfsRichText', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsTrim', 'cfsSpeed', 'cfsSvgSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto', 'cfsTrackIndex', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'name', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct', 'cfsRadiusPct', 'cfsFontSizePct', 'cfsAnimation', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsOriginalClip', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsStroke', 'cfsShadow', 'cfsTextTransform', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsAlignVertical', 'cfsAlignHorizontal', 'cfsLetterSpacing', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius'].forEach(function (k) {
                 if (orig[k] != null) obj.set(k, orig[k]);
               });
               /* Apply scaled geometry from stateToLoad; fallback to manual scale if values seem wrong */
@@ -2462,7 +2466,23 @@
             refreshPropertyPanel();
             saveStateDebounced();
           });
-          canvas.on('object:removed', function () { refreshLayersPanel(); if (!isInternalCanvasMutation) pushUndo(); });
+          canvas.on('object:removed', function (e) {
+            refreshLayersPanel();
+            if (!isInternalCanvasMutation) pushUndo();
+            /* Clean up hidden <video> DOM elements for removed video groups */
+            var obj = e && e.target;
+            if (obj && obj._cfsLiveVideoEl) {
+              try {
+                obj._cfsLiveVideoEl.pause();
+                obj._cfsLiveVideoEl.removeAttribute('src');
+                obj._cfsLiveVideoEl.load();
+                if (obj._cfsLiveVideoEl.parentNode) obj._cfsLiveVideoEl.parentNode.removeChild(obj._cfsLiveVideoEl);
+              } catch(_){}
+              obj._cfsLiveVideoEl = null;
+              obj._cfsLiveVideoImg = null;
+              obj._cfsIntermediaryCanvas = null;
+            }
+          });
           var SNAP_THRESHOLD = 6;
           var activeGuides = [];
           function getObjectBounds(obj) {
@@ -7815,11 +7835,16 @@
     function getVideoMetadata(src) {
       return new Promise(function (resolve) {
         var out = { width: 0, height: 0, duration: 0 };
+        /* Skip placeholder merge URLs — they can't be probed */
+        if (!src || (typeof src === 'string' && /^\s*\{\{/.test(src))) { resolve(out); return; }
         var video = document.createElement('video');
         video.preload = 'metadata';
         /* Do NOT set crossOrigin — CDNs that lack CORS headers will
            refuse to load the video entirely, returning 0 dimensions. */
+        var resolved = false;
         var done = function () {
+          if (resolved) return; /* Guard against timeout racing with loadedmetadata */
+          resolved = true;
           video.removeEventListener('loadedmetadata', onLoad);
           video.removeEventListener('error', onErr);
           if (video.src && (video.videoWidth || video.videoHeight || (video.duration && isFinite(video.duration)))) {
@@ -7831,7 +7856,7 @@
           if (out.width || out.height || out.duration) {
             out.metadata = { width: out.width, height: out.height, duration: out.duration };
           }
-          if (video.src && video.src.indexOf('blob:') === 0) URL.revokeObjectURL && URL.revokeObjectURL(video.src);
+          try { video.pause(); video.removeAttribute('src'); video.load(); } catch(_){}
           resolve(out);
         };
         var onLoad = function () { done(); };
@@ -7859,6 +7884,11 @@
      * cb(fabricImage, videoEl, intermediaryCanvas) — called once ready.
      */
     function createLiveVideoImage(src, w, h, cb) {
+      /* Skip placeholder {{ VIDEO }} merge URLs — they can't be loaded */
+      if (!src || (typeof src === 'string' && /^\s*\{\{/.test(src))) {
+        cb(null, null, null);
+        return;
+      }
       var video = document.createElement('video');
       /* Do NOT set crossOrigin — allows loading from any CDN without CORS */
       video.muted = true;
@@ -7872,7 +7902,7 @@
       intermediary.width = w;
       intermediary.height = h;
       var ctx = intermediary.getContext('2d');
-      /* Fill black initially */
+      /* Fill dark initially */
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, w, h);
 
@@ -7894,6 +7924,17 @@
           left: 0, top: 0,
           objectCaching: false
         });
+        /* Override toObject so Fabric doesn't serialize the intermediary
+           canvas as a massive base64 data URL.  The video will be
+           re-created by rehydrateVideoGroups on next load. */
+        img.toObject = (function (origToObject) {
+          return function (propertiesToInclude) {
+            var o = origToObject.call(img, propertiesToInclude);
+            /* Replace the huge data URL with a tiny transparent 1x1 PNG */
+            o.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+            return o;
+          };
+        })(img.toObject.bind(img));
         cb(img, video, intermediary);
       }
       video.addEventListener('loadeddata', function () { finish(true); });
@@ -7903,7 +7944,10 @@
       });
       video.src = src;
       video.load();
-      setTimeout(function () { finish(false); }, 15000);
+      setTimeout(function () {
+        if (!done) console.warn('[CFS] Live video load timed out for', src);
+        finish(false);
+      }, 15000);
     }
 
     /**
@@ -7984,6 +8028,72 @@
         if (Math.abs(obj._cfsLiveVideoEl.currentTime - target) > 0.05) {
           obj._cfsLiveVideoEl.currentTime = target;
         }
+      });
+    }
+
+    /**
+     * Re-create live video preview elements for all video groups that were
+     * deserialized from JSON.  loadFromJSON can't persist the <video>/<canvas>
+     * intermediary, so this function boots them after the canvas is rebuilt.
+     */
+    function rehydrateVideoGroups(fabricCanvas) {
+      if (!fabricCanvas || !fabricCanvas.getObjects) return;
+      var groups = [];
+      fabricCanvas.getObjects().forEach(function (obj) {
+        if (obj.cfsVideoSrc && !obj._cfsLiveVideoEl) groups.push(obj);
+      });
+      if (!groups.length) return;
+      var pending = groups.length;
+      groups.forEach(function (group) {
+        var src = group.cfsVideoSrc;
+        var vw = group.cfsVideoWidth || (group.width || 320);
+        var vh = group.cfsVideoHeight || (group.height || 180);
+        var maxW = 400, maxH = 280;
+        var sc = Math.min(maxW / vw, maxH / vh, 1);
+        var w = Math.round(vw * sc);
+        var h = Math.round(vh * sc);
+        if (w < 80) w = 80;
+        if (h < 60) h = 60;
+        createLiveVideoImage(src, w, h, function (fabricImg, videoEl, intermediaryCanvas) {
+          if (!fabricCanvas || !group.canvas) { pending--; return; }
+          if (fabricImg && videoEl && intermediaryCanvas) {
+            /* Save and restore position/properties */
+            var gLeft = group.left;
+            var gTop = group.top;
+            var gName = group.name;
+            var cfsProps = {};
+            ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
+             'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
+             'cfsTrim', 'cfsSpeed',
+             'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
+             'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
+             'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
+              if (group[k] != null) cfsProps[k] = group[k];
+            });
+            /* Get z-index BEFORE removing to preserve layer order */
+            var idx = fabricCanvas.getObjects().indexOf(group);
+            if (idx < 0) idx = fabricCanvas.getObjects().length;
+            fabricCanvas.remove(group);
+            var label = new fabric.Text('▶ Video', { fontSize: 16, fill: '#fff', opacity: 0.35, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+            var newGroup = new fabric.Group([fabricImg, label], {
+              left: gLeft, top: gTop, name: gName,
+              selectable: true, evented: true,
+              objectCaching: false
+            });
+            Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
+            newGroup._cfsLiveVideoEl = videoEl;
+            newGroup._cfsLiveVideoImg = fabricImg;
+            newGroup._cfsIntermediaryCanvas = intermediaryCanvas;
+            fabricCanvas.insertAt(newGroup, idx, false);
+          }
+          pending--;
+          if (pending <= 0) {
+            fabricCanvas.renderAll();
+            startVideoRenderLoop();
+            refreshTimeline();
+            refreshLayersPanel();
+          }
+        });
       });
     }
 

@@ -229,6 +229,11 @@
           videoClip.asset.src = videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}')
             : (useOrigVideoUrl ? origVideoSrc : (videoSrc || ''));
           if (obj.cfsVideoVolume != null && !isNaN(Number(obj.cfsVideoVolume))) videoClip.asset.volume = Number(obj.cfsVideoVolume);
+          /* Sync trim/speed from Fabric properties (user may have changed them via property panel) */
+          if (obj.cfsTrim != null && Number(obj.cfsTrim) > 0) videoClip.asset.trim = Number(obj.cfsTrim);
+          else if (obj.cfsTrim === 0 || obj.cfsTrim === '') delete videoClip.asset.trim;
+          if (obj.cfsSpeed != null && Number(obj.cfsSpeed) > 0 && Number(obj.cfsSpeed) !== 1) videoClip.asset.speed = Number(obj.cfsSpeed);
+          else if (obj.cfsSpeed === 1 || obj.cfsSpeed === '') delete videoClip.asset.speed;
           if (obj.cfsTransition && typeof obj.cfsTransition === 'object') videoClip.transition = obj.cfsTransition;
           if (obj.cfsEffect != null) videoClip.effect = obj.cfsEffect;
           if (obj.cfsFadeIn != null && !isNaN(Number(obj.cfsFadeIn))) videoClip.fadeIn = Math.max(0, Number(obj.cfsFadeIn));
