@@ -7916,7 +7916,6 @@
           return;
         }
         video.pause();
-        video.currentTime = 0;
         /* Draw first frame */
         try { ctx.drawImage(video, 0, 0, w, h); } catch(_){}
 
@@ -7937,17 +7936,34 @@
         })(img.toObject.bind(img));
         cb(img, video, intermediary);
       }
-      video.addEventListener('loadeddata', function () { finish(true); });
+      /* Use loadedmetadata (fast — just needs container header) then seek
+         to frame 0 so we can draw the first frame.  loadeddata requires a
+         full frame decode which can exceed the timeout for large files. */
+      video.addEventListener('loadedmetadata', function () {
+        console.log('[CFS] Video metadata loaded:', src, video.videoWidth + 'x' + video.videoHeight);
+        video.currentTime = 0.01; /* seek to near-start to trigger frame decode */
+      });
+      video.addEventListener('seeked', function () {
+        console.log('[CFS] Video seeked, readyState:', video.readyState);
+        finish(true);
+      });
+      /* Also accept canplay / loadeddata as fallbacks */
+      video.addEventListener('canplay', function () {
+        if (!done) {
+          console.log('[CFS] Video canplay, finishing');
+          finish(true);
+        }
+      });
       video.addEventListener('error', function () {
-        console.warn('[CFS] Live video load failed for', src);
+        console.warn('[CFS] Live video load failed for', src, video.error);
         finish(false);
       });
       video.src = src;
       video.load();
       setTimeout(function () {
-        if (!done) console.warn('[CFS] Live video load timed out for', src);
+        if (!done) console.warn('[CFS] Live video load timed out (30s) for', src);
         finish(false);
-      }, 15000);
+      }, 30000);
     }
 
     /**
