@@ -7808,13 +7808,15 @@
         var file = fileInput.files && fileInput.files[0];
         if (file) { audioUrl = URL.createObjectURL(file); insertAudioClip(audioUrl); }
       };
-      var promptUrl = window.prompt('Enter audio URL, or click Cancel to choose a file.');
-      if (promptUrl != null && promptUrl.trim() !== '') {
-        audioUrl = promptUrl.trim();
-        insertAudioClip(audioUrl);
-      } else {
-        fileInput.click();
-      }
+      showIframePrompt('Enter audio URL, or choose a file.', 'audio/*', function (result) {
+        if (result.url) {
+          audioUrl = result.url;
+          insertAudioClip(audioUrl);
+        } else if (result.file) {
+          audioUrl = URL.createObjectURL(result.file);
+          insertAudioClip(audioUrl);
+        }
+      });
       function insertAudioClip(src) {
         var start = 0;
         /* Always create a new track for each audio clip — one element per track */
@@ -7833,25 +7835,13 @@
 
     function addVideo() {
       if (!canvas) return;
-      var videoUrl = '';
-      var input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'video/*';
-      input.style.display = 'none';
-      input.onchange = function () {
-        var file = input.files && input.files[0];
-        if (file) {
-          videoUrl = URL.createObjectURL(file);
-          placeVideoOnCanvas(videoUrl);
+      showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {
+        if (result.url) {
+          placeVideoOnCanvas(result.url);
+        } else if (result.file) {
+          placeVideoOnCanvas(URL.createObjectURL(result.file));
         }
-      };
-      var promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.');
-      if (promptUrl != null && promptUrl.trim() !== '') {
-        videoUrl = promptUrl.trim();
-        placeVideoOnCanvas(videoUrl);
-      } else {
-        input.click();
-      }
+      });
       function placeVideoOnCanvas(src) {
         if (!src || !canvas) return;
         var defaultW = 320;
@@ -10272,6 +10262,68 @@
     }
 
     /** Compute the next available track index so each new element gets its own track. */
+    /**
+     * Inline modal prompt that works in cross-origin iframes where
+     * window.prompt() is silently blocked.  Accepts a URL text input
+     * or a file picker, then calls cb({ url, file }).
+     */
+    function showIframePrompt(message, fileAccept, cb) {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#1e293b;border-radius:12px;padding:24px 28px;min-width:360px;max-width:480px;color:#e2e8f0;font-family:Inter,system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+      var title = document.createElement('div');
+      title.textContent = message || 'Enter URL or choose a file';
+      title.style.cssText = 'font-size:15px;margin-bottom:14px;font-weight:500;';
+      var urlInput = document.createElement('input');
+      urlInput.type = 'text';
+      urlInput.placeholder = 'https://...';
+      urlInput.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#f1f5f9;font-size:14px;margin-bottom:12px;outline:none;';
+      var btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+      var fileBtn = document.createElement('button');
+      fileBtn.textContent = 'Choose File';
+      fileBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:#334155;color:#e2e8f0;cursor:pointer;font-size:13px;';
+      var okBtn = document.createElement('button');
+      okBtn.textContent = 'Use URL';
+      okBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:none;background:#3b82f6;color:#fff;cursor:pointer;font-size:13px;font-weight:600;';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-size:13px;';
+      btnRow.appendChild(cancelBtn);
+      btnRow.appendChild(fileBtn);
+      btnRow.appendChild(okBtn);
+      box.appendChild(title);
+      box.appendChild(urlInput);
+      box.appendChild(btnRow);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      urlInput.focus();
+      function cleanup() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
+      cancelBtn.onclick = function () { cleanup(); };
+      overlay.onclick = function (e) { if (e.target === overlay) cleanup(); };
+      okBtn.onclick = function () {
+        var val = urlInput.value.trim();
+        cleanup();
+        if (val) cb({ url: val });
+      };
+      urlInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { okBtn.click(); }
+        if (e.key === 'Escape') { cleanup(); }
+      });
+      fileBtn.onclick = function () {
+        var fi = document.createElement('input');
+        fi.type = 'file';
+        fi.accept = fileAccept || '*/*';
+        fi.onchange = function () {
+          var file = fi.files && fi.files[0];
+          cleanup();
+          if (file) cb({ file: file });
+        };
+        fi.click();
+      };
+    }
+
     function getNextTrackIndex() {
       var maxTrack = -1;
       if (canvas && canvas.getObjects) {
