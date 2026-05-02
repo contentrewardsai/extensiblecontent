@@ -927,7 +927,7 @@
     var isUndoRedo = false;
     var isInternalCanvasMutation = false;
     var saveStateTimer = null;
-    var CFS_RESPONSIVE_KEYS = ['dataURL', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto', 'cfsTrackIndex', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'cfsSvgSrc', 'cfsOriginalClip', 'name', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct', 'cfsRadiusPct', 'cfsFontSizePct', 'cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsWrapText', 'cfsRichText', 'cfsRawText', 'cfsLetterSpacing', 'cfsLineHeight', 'cfsTextTransform', 'cfsTextDecoration', 'cfsGradient', 'cfsStroke', 'cfsShadow', 'cfsAlignHorizontal', 'cfsAlignVertical', 'cfsAnimation', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius', 'cfsImageToVideo', 'cfsItvPrompt', 'cfsItvAspectRatio', 'cfsTextBgFor', 'cfsHideOnImage', 'cfsIsCaption', 'cfsCaptionWords', 'cfsCaptionActive', 'cfsCaptionFont', 'cfsCaptionAnimation', 'cfsCaptionDisplay'];
+    var CFS_RESPONSIVE_KEYS = ['dataURL', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto', 'cfsTrackIndex', 'cfsVideoSrc', 'cfsVideoVolume', 'cfsTrim', 'cfsSpeed', 'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsShapeLine', 'cfsLineLength', 'cfsLineThickness', 'cfsTransition', 'cfsEffect', 'cfsFit', 'cfsScale', 'cfsFilter', 'cfsChromaKey', 'cfsFlip', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoMetadata', 'cfsSvgSrc', 'cfsOriginalClip', 'name', 'cfsResponsive', 'cfsLeftPct', 'cfsTopPct', 'cfsWidthPct', 'cfsHeightPct', 'cfsRadiusPct', 'cfsFontSizePct', 'cfsRightPx', 'cfsBottomPx', 'cfsMaxHeightPx', 'cfsWrapText', 'cfsRichText', 'cfsRawText', 'cfsLetterSpacing', 'cfsLineHeight', 'cfsTextTransform', 'cfsTextDecoration', 'cfsGradient', 'cfsStroke', 'cfsShadow', 'cfsAlignHorizontal', 'cfsAlignVertical', 'cfsAnimation', 'cfsOpacityTween', 'cfsOffsetTween', 'cfsRotateTween', 'cfsClipOpacity', 'cfsTextBackground', 'backgroundColor', 'cfsAudioType', 'cfsTtsVoice', 'cfsTtsLocalVoice', 'cfsTtsText', 'cfsCaptionSrc', 'cfsCaptionPadding', 'cfsCaptionBorderRadius', 'cfsImageToVideo', 'cfsItvPrompt', 'cfsItvAspectRatio', 'cfsTextBgFor', 'cfsHideOnImage', 'cfsIsCaption', 'cfsCaptionWords', 'cfsCaptionActive', 'cfsCaptionFont', 'cfsCaptionAnimation', 'cfsCaptionDisplay'];
 
     /** Get canvas state for preset switch. Prefer toObject (accepts propertiesToInclude); toJSON may not. */
     function getCanvasStateForPresetSwitch(c) {
@@ -6467,21 +6467,32 @@
         form.appendChild(videoPropsLabel);
         var origClip = (obj.cfsOriginalClip && typeof obj.cfsOriginalClip === 'object') ? obj.cfsOriginalClip : {};
         var origAsset = origClip.asset || {};
-        addRow('Trim (s)', origAsset.trim != null ? origAsset.trim : '', function (v) {
+        addRow('Trim (s)', origAsset.trim != null ? origAsset.trim : (obj.cfsTrim || ''), function (v) {
           if (!obj.cfsOriginalClip) obj.set('cfsOriginalClip', {});
           var oc = obj.cfsOriginalClip;
           if (!oc.asset) oc.asset = {};
           var n = Number(v);
-          oc.asset.trim = (v === '' || isNaN(n)) ? undefined : Math.max(0, n);
+          var trimVal = (v === '' || isNaN(n)) ? 0 : Math.max(0, n);
+          oc.asset.trim = trimVal || undefined;
           obj.set('cfsOriginalClip', oc);
+          obj.set('cfsTrim', trimVal);
+          /* Immediately sync the Fabric preview to show the trimmed frame */
+          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') {
+            syncVideosToTime(currentPlayheadSec);
+          }
         });
-        addRow('Speed', origAsset.speed != null ? origAsset.speed : '', function (v) {
+        addRow('Speed', origAsset.speed != null ? origAsset.speed : (obj.cfsSpeed || ''), function (v) {
           if (!obj.cfsOriginalClip) obj.set('cfsOriginalClip', {});
           var oc = obj.cfsOriginalClip;
           if (!oc.asset) oc.asset = {};
           var n = Number(v);
-          oc.asset.speed = (v === '' || isNaN(n)) ? undefined : Math.max(0.1, Math.min(10, n));
+          var speedVal = (v === '' || isNaN(n)) ? 1 : Math.max(0.1, Math.min(10, n));
+          oc.asset.speed = speedVal !== 1 ? speedVal : undefined;
           obj.set('cfsOriginalClip', oc);
+          obj.set('cfsSpeed', speedVal);
+          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') {
+            syncVideosToTime(currentPlayheadSec);
+          }
         });
         var cropLabel = document.createElement('div');
         cropLabel.className = 'gen-prop-section-label';
@@ -7796,67 +7807,96 @@
     }
 
     /**
-     * Create a Fabric.Image backed by a live <video> element.
-     * The video's currentTime is synced to the timeline position by the
-     * global video render loop (_cfsVideoRenderLoop).
-     * cb(fabricImage, videoEl)  — called once the video is ready.
+     * Create a Fabric.Image backed by a <canvas> intermediary that is
+     * continuously updated from a hidden <video> element.
+     *
+     * Why a canvas intermediary?
+     *  • Setting crossOrigin on the video can block loading if the CDN
+     *    doesn't send CORS headers.  Without crossOrigin, drawing the video
+     *    taints the canvas — but Fabric never calls toDataURL on it because
+     *    we set objectCaching:false on both the Image and the Group.
+     *  • Fabric Groups cache children rendering.  By redrawing the
+     *    intermediary canvas ourselves each frame and dirtying the group,
+     *    we guarantee every rAF shows the latest video frame.
+     *
+     * cb(fabricImage, videoEl, intermediaryCanvas) — called once ready.
      */
     function createLiveVideoImage(src, w, h, cb) {
       var video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
+      /* Do NOT set crossOrigin — allows loading from any CDN without CORS */
       video.muted = true;
       video.preload = 'auto';
       video.playsInline = true;
       video.loop = false;
-      video.style.display = 'none';
+      video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
       document.body.appendChild(video);
+
+      var intermediary = document.createElement('canvas');
+      intermediary.width = w;
+      intermediary.height = h;
+      var ctx = intermediary.getContext('2d');
+      /* Fill black initially */
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, w, h);
+
       var done = false;
       function finish(ok) {
         if (done) return;
         done = true;
         if (!ok) {
           try { video.pause(); document.body.removeChild(video); } catch(_){}
-          cb(null, null);
+          cb(null, null, null);
           return;
         }
         video.pause();
         video.currentTime = 0;
-        var img = new fabric.Image(video, {
+        /* Draw first frame */
+        try { ctx.drawImage(video, 0, 0, w, h); } catch(_){}
+
+        var img = new fabric.Image(intermediary, {
           left: 0, top: 0,
-          width: video.videoWidth || w,
-          height: video.videoHeight || h,
           objectCaching: false
         });
-        img.scaleX = w / (video.videoWidth || w);
-        img.scaleY = h / (video.videoHeight || h);
-        cb(img, video);
+        cb(img, video, intermediary);
       }
       video.addEventListener('loadeddata', function () { finish(true); });
-      video.addEventListener('error', function () { finish(false); });
+      video.addEventListener('error', function () {
+        console.warn('[CFS] Live video load failed for', src);
+        finish(false);
+      });
       video.src = src;
       video.load();
-      setTimeout(function () { finish(false); }, 12000);
+      setTimeout(function () { finish(false); }, 15000);
     }
 
     /**
-     * Global render loop that keeps Fabric canvas in sync with live video
-     * elements.  Only runs when there are active video groups on the canvas.
+     * Global render loop that redraws each live video's intermediary canvas
+     * from the <video> element, then marks the Fabric group dirty so the
+     * canvas re-renders with the latest frame.
      */
     var _cfsVideoRafId = null;
     function startVideoRenderLoop() {
-      if (_cfsVideoRafId) return; // already running
+      if (_cfsVideoRafId) return;
       function tick() {
         if (!canvas || !canvas.getObjects) { _cfsVideoRafId = null; return; }
         var hasVideo = false;
         canvas.getObjects().forEach(function (obj) {
-          if (obj._cfsLiveVideoEl) {
-            hasVideo = true;
-            /* Update canvas intermediary if needed */
-            if (obj._cfsLiveVideoImg && obj._cfsLiveVideoImg.getElement) {
-              /* Fabric.Image uses the element directly — just dirty it */
-              if (obj._cfsLiveVideoImg.dirty !== undefined) obj._cfsLiveVideoImg.dirty = true;
-            }
+          if (!obj._cfsLiveVideoEl || !obj._cfsIntermediaryCanvas) return;
+          hasVideo = true;
+          var video = obj._cfsLiveVideoEl;
+          var ic = obj._cfsIntermediaryCanvas;
+          /* Redraw the intermediary canvas from the video element */
+          try {
+            var ictx = ic.getContext('2d');
+            ictx.drawImage(video, 0, 0, ic.width, ic.height);
+          } catch(_){}
+          /* Mark the Fabric.Image and Group as dirty so Fabric re-renders */
+          if (obj._cfsLiveVideoImg) {
+            obj._cfsLiveVideoImg.dirty = true;
+            if (obj._cfsLiveVideoImg.setCoords) obj._cfsLiveVideoImg.setCoords();
           }
+          obj.dirty = true;
+          obj.set('objectCaching', false);
         });
         if (hasVideo) {
           canvas.requestRenderAll();
@@ -7870,7 +7910,12 @@
 
     /**
      * Sync all live video elements to a specific timeline time.
-     * Called when timeline scrubs or plays.
+     * Accounts for:
+     *  - cfsStart  : when this clip starts on the timeline
+     *  - cfsLength : how long the clip is active
+     *  - cfsTrim   : skip the first N seconds of the source video
+     *  - cfsSpeed  : playback speed multiplier (default 1)
+     * Also dims the video group when the playhead is outside its active range.
      */
     function syncVideosToTime(timeSec) {
       if (!canvas || !canvas.getObjects) return;
@@ -7878,12 +7923,27 @@
         if (!obj._cfsLiveVideoEl) return;
         var videoStart = typeof obj.cfsStart === 'number' ? obj.cfsStart : 0;
         var videoLen = typeof obj.cfsLength === 'number' ? obj.cfsLength : Infinity;
+        var origClip = obj.cfsOriginalClip && typeof obj.cfsOriginalClip === 'object' ? obj.cfsOriginalClip : {};
+        var origAsset = origClip.asset || {};
+        var trim = typeof obj.cfsTrim === 'number' ? obj.cfsTrim
+                 : (origAsset.trim != null ? Math.max(0, Number(origAsset.trim)) : 0);
+        var speed = typeof obj.cfsSpeed === 'number' && obj.cfsSpeed > 0 ? obj.cfsSpeed
+                  : (origAsset.speed != null && Number(origAsset.speed) > 0 ? Number(origAsset.speed) : 1);
         var rel = timeSec - videoStart;
-        if (rel < 0 || rel > videoLen) {
-          obj._cfsLiveVideoEl.pause();
+        var active = (rel >= 0 && rel <= videoLen);
+        /* Dim the group when the playhead is outside the clip range */
+        if (!active) {
+          if (obj.opacity !== 0.15) { obj.set('opacity', 0.15); obj.dirty = true; }
           return;
+        } else {
+          if (obj.opacity !== 1) { obj.set('opacity', 1); obj.dirty = true; }
         }
-        var target = Math.max(0, rel);
+        /* Map timeline-relative time to source video time:
+           sourceTime = trim + (rel * speed) */
+        var target = Math.max(0, trim + rel * speed);
+        var dur = obj._cfsLiveVideoEl.duration;
+        if (dur && isFinite(dur)) target = Math.min(target, dur);
+        if (obj._cfsLiveVideoEl.playbackRate !== speed) obj._cfsLiveVideoEl.playbackRate = speed;
         if (Math.abs(obj._cfsLiveVideoEl.currentTime - target) > 0.05) {
           obj._cfsLiveVideoEl.currentTime = target;
         }
@@ -8016,6 +8076,7 @@
             var cfsProps = {};
             ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
              'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
+             'cfsTrim', 'cfsSpeed',
              'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
              'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
              'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
@@ -8023,11 +8084,11 @@
             });
             /* Create a live video Fabric.Image so the user can see actual
                video frames in the canvas, synced to the timeline position. */
-            createLiveVideoImage(src, w, h, function (fabricImg, videoEl) {
+            createLiveVideoImage(src, w, h, function (fabricImg, videoEl, intermediaryCanvas) {
               if (!canvas) return;
               canvas.remove(group);
               var bgElement;
-              if (fabricImg && videoEl) {
+              if (fabricImg && videoEl && intermediaryCanvas) {
                 bgElement = fabricImg;
               } else {
                 bgElement = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
@@ -8035,13 +8096,15 @@
               var newLabel = new fabric.Text('▶ Video', { fontSize: 16, fill: '#fff', opacity: 0.35, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
               var newGroup = new fabric.Group([bgElement, newLabel], {
                 left: groupLeft, top: groupTop, name: groupName,
-                selectable: true, evented: true
+                selectable: true, evented: true,
+                objectCaching: false
               });
               Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
               if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
-              if (videoEl) {
+              if (videoEl && intermediaryCanvas) {
                 newGroup._cfsLiveVideoEl = videoEl;
                 newGroup._cfsLiveVideoImg = fabricImg;
+                newGroup._cfsIntermediaryCanvas = intermediaryCanvas;
               }
               canvas.add(newGroup);
               canvas.setActiveObject(newGroup);

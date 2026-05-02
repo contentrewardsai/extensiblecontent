@@ -249,6 +249,8 @@
         }
         const videoAsset = { type: 'video', src: videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}') : videoSrc };
         if (obj.cfsVideoVolume != null && !isNaN(Number(obj.cfsVideoVolume))) videoAsset.volume = Number(obj.cfsVideoVolume);
+        if (obj.cfsTrim != null && Number(obj.cfsTrim) > 0) videoAsset.trim = Number(obj.cfsTrim);
+        if (obj.cfsSpeed != null && Number(obj.cfsSpeed) > 0 && Number(obj.cfsSpeed) !== 1) videoAsset.speed = Number(obj.cfsSpeed);
         var videoClip = {
           asset: videoAsset,
           start: clipStart,
