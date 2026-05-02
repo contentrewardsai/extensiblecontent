@@ -353,6 +353,31 @@ function patchFfmpegLocalDiagnostics(text) {
 	} else {
 		console.warn("[sync-extension-assets] ffmpeg-local.js exports marker not found — skipping ensureLoaded export");
 	}
+	// Optimise FFmpeg encoding: force 30fps CFR output, use ultrafast preset,
+	// and add +faststart for progressive MP4 download.
+	const ffmpegArgsMarker =
+		"'-c:v', 'libx264',\n" +
+		"                '-preset', 'medium',";
+	const ffmpegArgsFix =
+		"'-r', '30',\n" +
+		"                '-vsync', 'cfr',\n" +
+		"                '-c:v', 'libx264',\n" +
+		"                '-preset', 'ultrafast',";
+	if (out.includes(ffmpegArgsMarker)) {
+		out = out.replace(ffmpegArgsMarker, ffmpegArgsFix);
+	} else if (!out.includes("'-vsync', 'cfr',")) {
+		console.warn("[sync-extension-assets] ffmpeg-local.js encoding args marker not found — skipping");
+	}
+
+	// Add -movflags +faststart before outputName
+	const movflagsMarker = "'-b:a', '128k',\n                outputName,";
+	const movflagsFix = "'-b:a', '128k',\n                '-movflags', '+faststart',\n                outputName,";
+	if (out.includes(movflagsMarker)) {
+		out = out.replace(movflagsMarker, movflagsFix);
+	} else if (!out.includes("'+faststart'")) {
+		console.warn("[sync-extension-assets] ffmpeg-local.js movflags marker not found — skipping");
+	}
+
 	return out;
 }
 
@@ -403,6 +428,16 @@ function patchTemplateEngine(text) {
 		out = out.replace(destructureMarker, destructureFix);
 	} else {
 		console.warn("[sync-extension-assets] template-engine.js destructure marker not found — skipping");
+	}
+
+	// Cap capture-stream FPS at 30 to reduce WebM file size and prevent
+	// FFmpeg from processing thousands of duplicate frames from VFR WebM.
+	const fpsCap60 = "Math.min(60,";
+	const fpsCap30 = "Math.min(30,";
+	if (out.includes(fpsCap60)) {
+		out = out.replace(fpsCap60, fpsCap30);
+	} else if (!out.includes(fpsCap30)) {
+		console.warn("[sync-extension-assets] template-engine.js fps cap marker not found — skipping");
 	}
 
 	return out;

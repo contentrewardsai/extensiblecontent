@@ -8,6 +8,9 @@ import { performStorageUpload } from "@/lib/storage-upload";
 import { getServiceSupabase } from "@/lib/supabase-service";
 import { getMemberProjectIdsForUser, shotstackListOrFilter } from "@/lib/whop-shotstack-template-routes";
 
+/** Allow up to 100 MB uploads (browser-rendered videos can be large). */
+export const maxDuration = 120; // seconds (Vercel serverless timeout)
+
 /** Map a MIME type to a file extension. Handles audio, video, and image. */
 function mimeToExt(mime: string): string {
 	const m = mime.toLowerCase();

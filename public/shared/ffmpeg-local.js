@@ -192,12 +192,15 @@
               report('Converting to MP4...');
               return ff.exec([
                 '-i', inputName,
+                '-r', '30',
+                '-vsync', 'cfr',
                 '-c:v', 'libx264',
-                '-preset', 'medium',
+                '-preset', 'ultrafast',
                 '-crf', '23',
                 '-pix_fmt', 'yuv420p',
                 '-c:a', 'aac',
                 '-b:a', '128k',
+                '-movflags', '+faststart',
                 outputName,
               ]);
             })

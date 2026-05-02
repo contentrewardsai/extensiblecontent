@@ -324,8 +324,8 @@ export function BrowserRenderButton({
 				const merged = engine.applyMergeToTemplate(e, merge) as Record<string, unknown>;
 				webm = await runWithTimeout(
 					engine.renderTimelineToVideoBlob(merged),
-					600_000,
-					"Video render (Kokoro / Whisper + timeline) timed out after 10 minutes",
+					900_000,
+					"Video render (Kokoro / Whisper + timeline) timed out after 15 minutes",
 				);
 				if (!webm) throw new Error("No video from renderer");
 			} finally {
@@ -393,8 +393,8 @@ export function BrowserRenderButton({
 					console.log("[BrowserRender] FFmpeg convertToMp4 starting");
 					mp4result = (await runWithTimeout(
 						ff.convertToMp4(webm, (s) => setMsg(s)),
-						600_000,
-						"FFmpeg conversion timed out after 10 minutes — uploading WebM instead.",
+						1_200_000,
+						"FFmpeg conversion timed out after 20 minutes — uploading WebM instead.",
 					)) as { ok?: boolean; blob?: Blob; error?: string };
 					console.log("[BrowserRender] FFmpeg convertToMp4 done", { ok: mp4result?.ok });
 				} catch (err) {

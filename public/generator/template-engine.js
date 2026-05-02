@@ -1068,7 +1068,7 @@
       rangeLength = Math.min(rangeLength, totalDuration - rangeStart);
       const durationSec = Math.max(1, rangeLength);
       const out = (mergedTemplate && mergedTemplate.output) || {};
-      const fps = Math.max(1, Math.min(60, (out.fps != null ? Number(out.fps) : 25)) || 25);
+      const fps = Math.max(1, Math.min(30, (out.fps != null ? Number(out.fps) : 25)) || 25);
       const canvasEl = player.getCanvas();
       if (!canvasEl || typeof canvasEl.captureStream !== 'function') {
         player.destroy();
