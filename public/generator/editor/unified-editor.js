@@ -2950,6 +2950,42 @@
       container.className = 'gen-layers-panel';
       var active = canvas.getActiveObject && canvas.getActiveObject();
       var objects = canvas.getObjects();
+
+      /* ── Sync guard: ensure template.timeline.tracks is in sync with
+         every canvas object that has a cfsTrackIndex.  This prevents the
+         layers panel from missing dynamically added videos/audio. ── */
+      if (template) {
+        if (!template.timeline) template.timeline = {};
+        if (!Array.isArray(template.timeline.tracks)) template.timeline.tracks = [];
+        var tracks = template.timeline.tracks;
+        objects.forEach(function (obj) {
+          var ti = obj.cfsTrackIndex;
+          if (ti == null || ti < 0) return;
+          /* Pad tracks array up to this index */
+          while (tracks.length <= ti) tracks.push({ clips: [] });
+          var track = tracks[ti];
+          if (!track) { track = { clips: [] }; tracks[ti] = track; }
+          if (!Array.isArray(track.clips)) track.clips = [];
+          /* Check if this canvas object already has a clip entry in this track */
+          var alreadyPresent = false;
+          track.clips.forEach(function (c) {
+            if (!c || !c.asset) return;
+            if (obj.cfsVideoSrc && c.asset.type === 'video' && (c.asset.src === obj.cfsVideoSrc || c.asset.src === (obj.cfsOriginalClip && obj.cfsOriginalClip.asset && obj.cfsOriginalClip.asset.src))) {
+              alreadyPresent = true;
+            } else if (obj.cfsOriginalClip && c === obj.cfsOriginalClip) {
+              alreadyPresent = true;
+            }
+          });
+          if (!alreadyPresent && obj.cfsVideoSrc) {
+            track.clips.push({
+              asset: { type: 'video', src: obj.cfsVideoSrc },
+              start: obj.cfsStart != null ? obj.cfsStart : 0,
+              length: obj.cfsLength != null ? obj.cfsLength : 5
+            });
+          }
+        });
+      }
+
       /* Build track groups from template.timeline.tracks */
       if (template && template.timeline && Array.isArray(template.timeline.tracks)) {
         var tracks = template.timeline.tracks;
