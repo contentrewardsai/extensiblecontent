@@ -440,6 +440,55 @@ function patchTemplateEngine(text) {
 		console.warn("[sync-extension-assets] template-engine.js fps cap marker not found — skipping");
 	}
 
+	// Replace real-time driveFrame loop with frame-stepped rendering that waits
+	// for <video> elements to finish seeking before capturing each frame.
+	const driveFrameMarker =
+		"const startTime = Date.now();\n" +
+		"        let lastReportedSec = -1;\n" +
+		"        function driveFrame() {\n" +
+		"          const elapsed = (audioPlayback && audioPlayback.getCurrentTimeSec)\n" +
+		"            ? audioPlayback.getCurrentTimeSec()\n" +
+		"            : ((Date.now() - startTime) / 1000);\n" +
+		"          if (onProgress) {\n" +
+		"            const sec = Math.floor(elapsed);\n" +
+		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }\n" +
+		"          }\n" +
+		"          if (elapsed >= durationSec || (audioPlayback && audioPlayback.isEnded && audioPlayback.isEnded())) {\n" +
+		"            try { recorder.stop(); } catch (_) {}\n" +
+		"            return;\n" +
+		"          }\n" +
+		"          player.seek(rangeStart + elapsed);\n" +
+		"          if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);\n" +
+		"          else setTimeout(driveFrame, Math.max(16, 1000 / fps));\n" +
+		"        }";
+	const driveFrameFix =
+		"let frameCount = 0;\n" +
+		"        const frameDuration = 1 / fps;\n" +
+		"        let lastReportedSec = -1;\n" +
+		"        function driveFrame() {\n" +
+		"          const frameTime = frameCount * frameDuration;\n" +
+		"          if (onProgress) {\n" +
+		"            const sec = Math.floor(frameTime);\n" +
+		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(frameTime, durationSec); }\n" +
+		"          }\n" +
+		"          if (frameTime >= durationSec) {\n" +
+		"            try { recorder.stop(); } catch (_) {}\n" +
+		"            return;\n" +
+		"          }\n" +
+		"          player.seek(rangeStart + frameTime);\n" +
+		"          var seekPromise = (player.waitForVideoSeeks) ? player.waitForVideoSeeks() : Promise.resolve();\n" +
+		"          seekPromise.then(function () {\n" +
+		"            frameCount++;\n" +
+		"            if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);\n" +
+		"            else setTimeout(driveFrame, Math.max(16, 1000 / fps));\n" +
+		"          });\n" +
+		"        }";
+	if (out.includes(driveFrameMarker)) {
+		out = out.replace(driveFrameMarker, driveFrameFix);
+	} else if (!out.includes("frameCount * frameDuration")) {
+		console.warn("[sync-extension-assets] template-engine.js driveFrame marker not found — skipping");
+	}
+
 	return out;
 }
 
@@ -788,6 +837,49 @@ function patchPixiTimelinePlayer(text) {
 		out = out.replace(hardcodedAlpha, dynamicAlpha);
 	} else {
 		console.warn("[sync-extension-assets] pixi-timeline-player.js hardcoded alphaMode not found — skipping");
+	}
+
+	// ── 6. Add waitForVideoSeeks() method for frame-stepped rendering ──
+	// The frame-stepped render loop in template-engine.js calls this after
+	// seek() to wait for all <video> elements to finish decoding their target
+	// frame before capturing the canvas.
+	const getDurationMarker = "PixiShotstackPlayer.prototype.getDuration = function () {\n    return this._duration;\n  };";
+	const waitForSeeksInjection =
+		"PixiShotstackPlayer.prototype.getDuration = function () {\n    return this._duration;\n  };\n\n" +
+		"  PixiShotstackPlayer.prototype.waitForVideoSeeks = function () {\n" +
+		"    var self = this;\n" +
+		"    var promises = [];\n" +
+		"    this._clipDisplays.forEach(function (disp) {\n" +
+		"      if (!disp._videoEl || !disp.visible) return;\n" +
+		"      var video = disp._videoEl;\n" +
+		"      if (video.seeking) {\n" +
+		"        promises.push(new Promise(function (resolve) {\n" +
+		"          var timer = setTimeout(resolve, 200);\n" +
+		"          video.addEventListener('seeked', function () {\n" +
+		"            clearTimeout(timer);\n" +
+		"            if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx) {\n" +
+		"              try {\n" +
+		"                disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"                disp._cfsAlphaCtx.drawImage(video, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"              } catch(_){}\n" +
+		"            }\n" +
+		"            if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {\n" +
+		"              disp.texture.source.update();\n" +
+		"            }\n" +
+		"            resolve();\n" +
+		"          }, { once: true });\n" +
+		"        }));\n" +
+		"      }\n" +
+		"    });\n" +
+		"    if (promises.length === 0) return Promise.resolve();\n" +
+		"    return Promise.all(promises).then(function () {\n" +
+		"      if (self._app && self._app.renderer) self._app.renderer.render(self._stage);\n" +
+		"    });\n" +
+		"  };";
+	if (out.includes(getDurationMarker) && !out.includes("waitForVideoSeeks")) {
+		out = out.replace(getDurationMarker, waitForSeeksInjection);
+	} else if (!out.includes("waitForVideoSeeks")) {
+		console.warn("[sync-extension-assets] pixi-timeline-player.js getDuration marker not found — skipping waitForVideoSeeks patch");
 	}
 
 	return out;

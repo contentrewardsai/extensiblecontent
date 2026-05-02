@@ -2506,6 +2506,46 @@
     return this._duration;
   };
 
+  /**
+   * Returns a Promise that resolves once every visible <video> element has
+   * finished seeking to its current target frame. Call after seek() to ensure
+   * that video.currentTime has actually been decoded before capturing the
+   * canvas (video seeking is async — drawImage before seeked fires will draw
+   * a stale frame, causing timing desync in the rendered output).
+   */
+  PixiShotstackPlayer.prototype.waitForVideoSeeks = function () {
+    var self = this;
+    var promises = [];
+    this._clipDisplays.forEach(function (disp) {
+      if (!disp._videoEl || !disp.visible) return;
+      var video = disp._videoEl;
+      if (video.seeking) {
+        promises.push(new Promise(function (resolve) {
+          var timer = setTimeout(resolve, 200); // safety timeout — don't hang forever
+          video.addEventListener('seeked', function () {
+            clearTimeout(timer);
+            /* Re-draw the canvas intermediary now that the video has decoded the new frame */
+            if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx) {
+              try {
+                disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);
+                disp._cfsAlphaCtx.drawImage(video, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);
+              } catch(_){}
+            }
+            if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {
+              disp.texture.source.update();
+            }
+            resolve();
+          }, { once: true });
+        }));
+      }
+    });
+    if (promises.length === 0) return Promise.resolve();
+    return Promise.all(promises).then(function () {
+      /* Re-render the stage so the captured frame reflects freshly-decoded video */
+      if (self._app && self._app.renderer) self._app.renderer.render(self._stage);
+    });
+  };
+
   PixiShotstackPlayer.prototype.captureFrame = function (options) {
     options = options || {};
     var format = options.format || 'png';

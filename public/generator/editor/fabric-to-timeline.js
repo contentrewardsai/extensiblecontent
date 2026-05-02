@@ -271,11 +271,22 @@
         else if (obj.opacity != null && obj.opacity !== 1) videoClip.opacity = obj.opacity;
         if (obj.cfsLengthWasEnd) videoClip._preserveEnd = true;
         if (obj.cfsLengthAuto) videoClip._preserveAuto = true;
-        var vw = obj.cfsVideoWidth != null ? Number(obj.cfsVideoWidth) : (obj.width != null && obj.width > 0 ? obj.width : null);
-        var vh = obj.cfsVideoHeight != null ? Number(obj.cfsVideoHeight) : (obj.height != null && obj.height > 0 ? obj.height : null);
-        if (vw != null && vh != null && vw > 0 && vh > 0) {
-          videoClip.asset.width = vw;
-          videoClip.asset.height = vh;
+        /* Use the VISUAL size of the Fabric group (width × scaleX) for the clip
+           container, not the original source video dimensions.  The Pixi player
+           uses clip.width/height as the target box for fit/crop, and if we pass
+           the original 1080×1920 here the video appears too big/zoomed. */
+        var visualW = (obj.width != null ? obj.width : 0) * (obj.scaleX != null ? obj.scaleX : 1);
+        var visualH = (obj.height != null ? obj.height : 0) * (obj.scaleY != null ? obj.scaleY : 1);
+        if (visualW > 0 && visualH > 0) {
+          videoClip.asset.width = Math.round(visualW);
+          videoClip.asset.height = Math.round(visualH);
+        } else {
+          var vw = obj.cfsVideoWidth != null ? Number(obj.cfsVideoWidth) : (obj.width != null && obj.width > 0 ? obj.width : null);
+          var vh = obj.cfsVideoHeight != null ? Number(obj.cfsVideoHeight) : (obj.height != null && obj.height > 0 ? obj.height : null);
+          if (vw != null && vh != null && vw > 0 && vh > 0) {
+            videoClip.asset.width = vw;
+            videoClip.asset.height = vh;
+          }
         }
         if (!videoIsPlaceholder && obj.left != null && (obj.left !== 0 || obj.top !== 0)) {
           videoClip.asset.left = obj.left;

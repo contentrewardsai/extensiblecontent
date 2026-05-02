@@ -1128,23 +1128,29 @@
         if (audioPlayback && audioPlayback.start) {
           audioPlayback.start().catch(function (err) { console.warn('[CFS] Audio playback start failed', err); });
         }
-        const startTime = Date.now();
+        let frameCount = 0;
+        const frameDuration = 1 / fps;
         let lastReportedSec = -1;
         function driveFrame() {
-          const elapsed = (audioPlayback && audioPlayback.getCurrentTimeSec)
-            ? audioPlayback.getCurrentTimeSec()
-            : ((Date.now() - startTime) / 1000);
+          const frameTime = frameCount * frameDuration;
           if (onProgress) {
-            const sec = Math.floor(elapsed);
-            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }
+            const sec = Math.floor(frameTime);
+            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(frameTime, durationSec); }
           }
-          if (elapsed >= durationSec || (audioPlayback && audioPlayback.isEnded && audioPlayback.isEnded())) {
+          if (frameTime >= durationSec) {
             try { recorder.stop(); } catch (_) {}
             return;
           }
-          player.seek(rangeStart + elapsed);
-          if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);
-          else setTimeout(driveFrame, Math.max(16, 1000 / fps));
+          player.seek(rangeStart + frameTime);
+          /* Wait for all <video> elements to finish decoding their target frame
+             before scheduling the next frame capture. Without this, drawImage
+             captures a stale frame and the video plays out of sync. */
+          var seekPromise = (player.waitForVideoSeeks) ? player.waitForVideoSeeks() : Promise.resolve();
+          seekPromise.then(function () {
+            frameCount++;
+            if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);
+            else setTimeout(driveFrame, Math.max(16, 1000 / fps));
+          });
         }
         if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);
         else setTimeout(driveFrame, 0);
