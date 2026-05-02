@@ -7840,30 +7840,32 @@
 
     function addVideo() {
       if (!canvas) return;
-      var videoUrl = '';
-      var input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'video/*';
-      input.style.display = 'none';
-      input.onchange = function () {
-        var file = input.files && input.files[0];
-        if (file) {
-          videoUrl = URL.createObjectURL(file);
-          placeVideoOnCanvas(videoUrl);
-        }
-      };
       var promptUrl = null;
-      try { promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.'); } catch (_) {}
+      var promptBlocked = false;
+      var t0 = Date.now();
+      try { promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.'); } catch (_) { promptBlocked = true; }
+      /* If prompt returned null in under 10ms, it was likely blocked by the browser
+         (cross-origin iframe policy).  Real user interaction takes longer. */
+      if (!promptBlocked && promptUrl === null && (Date.now() - t0) < 10) promptBlocked = true;
       if (promptUrl != null && promptUrl.trim() !== '') {
-        videoUrl = promptUrl.trim();
-        placeVideoOnCanvas(videoUrl);
-      } else if (promptUrl === null) {
-        /* prompt returned null — user cancelled or prompt blocked in iframe.
-           Show inline modal as fallback. */
+        placeVideoOnCanvas(promptUrl.trim());
+      } else if (promptBlocked) {
+        /* Prompt was blocked — show inline modal as fallback */
         showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {
           if (result.url) { placeVideoOnCanvas(result.url); }
           else if (result.file) { placeVideoOnCanvas(URL.createObjectURL(result.file)); }
         });
+      } else {
+        /* User cancelled prompt — show file picker */
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'video/*';
+        input.style.display = 'none';
+        input.onchange = function () {
+          var file = input.files && input.files[0];
+          if (file) placeVideoOnCanvas(URL.createObjectURL(file));
+        };
+        input.click();
       }
       function placeVideoOnCanvas(src) {
         if (!src || !canvas) return;

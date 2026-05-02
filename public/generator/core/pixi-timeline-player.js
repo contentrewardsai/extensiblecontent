@@ -2471,9 +2471,18 @@
         var trimOffset = videoAsset.trim != null ? Math.max(0, Number(videoAsset.trim)) : (clip.trim != null ? Math.max(0, Number(clip.trim)) : 0);
         var speed = videoAsset.speed != null ? Math.max(0.1, Number(videoAsset.speed)) : 1;
         var dur = disp._videoDuration != null ? disp._videoDuration : meta.length;
-        disp._videoEl.currentTime = Math.max(0, Math.min(trimOffset + rel * speed, dur));
+        var targetTime = Math.max(0, Math.min(trimOffset + rel * speed, dur));
         if (disp._videoEl.playbackRate !== speed) disp._videoEl.playbackRate = speed;
-        /* WebM VP9 alpha: redraw video frame to canvas intermediary to preserve alpha */
+        if (disp._cfsNativePlayback) {
+          /* Video is playing natively — only correct if drift is large */
+          var drift = Math.abs(disp._videoEl.currentTime - targetTime);
+          if (drift > 0.15) {
+            disp._videoEl.currentTime = targetTime;
+          }
+        } else {
+          disp._videoEl.currentTime = targetTime;
+        }
+        /* Redraw video frame to canvas intermediary */
         if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx) {
           try {
             disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);
@@ -2500,6 +2509,30 @@
     }, this);
 
     if (this._app && this._app.renderer) this._app.renderer.render(this._stage);
+  };
+
+  /**
+   * Start native playback on all <video> elements so the browser decodes
+   * frames sequentially (smooth) instead of seeking each frame (jerky).
+   * Called once at the start of rendering.  Sets _cfsNativePlayback flag
+   * so seek() knows to only correct drift, not set currentTime every frame.
+   */
+  PixiShotstackPlayer.prototype.startVideoPlayback = function (timelineStart) {
+    this._clipDisplays.forEach(function (disp, i) {
+      if (!disp._videoEl) return;
+      var meta = this._clipMeta[i] || {};
+      var clip = meta.clip || {};
+      var videoAsset = clip.asset || {};
+      var start = meta.start || 0;
+      var trimOffset = videoAsset.trim != null ? Math.max(0, Number(videoAsset.trim)) : (clip.trim != null ? Math.max(0, Number(clip.trim)) : 0);
+      var speed = videoAsset.speed != null ? Math.max(0.1, Number(videoAsset.speed)) : 1;
+      var rel = Math.max(0, (timelineStart || 0) - start);
+      disp._videoEl.currentTime = trimOffset + rel * speed;
+      disp._videoEl.playbackRate = speed;
+      disp._videoEl.muted = true;
+      disp._cfsNativePlayback = true;
+      try { disp._videoEl.play().catch(function(){}); } catch(_){}
+    }.bind(this));
   };
 
   PixiShotstackPlayer.prototype.getDuration = function () {
