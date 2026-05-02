@@ -7781,7 +7781,8 @@
         var out = { width: 0, height: 0, duration: 0 };
         var video = document.createElement('video');
         video.preload = 'metadata';
-        video.crossOrigin = 'anonymous';
+        /* Do NOT set crossOrigin — CDNs that lack CORS headers will
+           refuse to load the video entirely, returning 0 dimensions. */
         var done = function () {
           video.removeEventListener('loadedmetadata', onLoad);
           video.removeEventListener('error', onErr);
@@ -8063,67 +8064,116 @@
           if (meta.width > 0 && meta.height > 0) {
             group.set('cfsVideoWidth', meta.width);
             group.set('cfsVideoHeight', meta.height);
-            var maxW = 400;
-            var maxH = 280;
-            var scale = Math.min(maxW / meta.width, maxH / meta.height, 1);
-            var w = Math.round(meta.width * scale);
-            var h = Math.round(meta.height * scale);
-            if (w < 80) w = 80;
-            if (h < 60) h = 60;
-            var groupLeft = group.left;
-            var groupTop = group.top;
-            var groupName = group.name;
-            var cfsProps = {};
-            ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
-             'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
-             'cfsTrim', 'cfsSpeed',
-             'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
-             'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
-             'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
-              if (group[k] != null) cfsProps[k] = group[k];
-            });
-            /* Create a live video Fabric.Image so the user can see actual
-               video frames in the canvas, synced to the timeline position. */
-            createLiveVideoImage(src, w, h, function (fabricImg, videoEl, intermediaryCanvas) {
-              if (!canvas) return;
-              canvas.remove(group);
-              var bgElement;
-              if (fabricImg && videoEl && intermediaryCanvas) {
-                bgElement = fabricImg;
-              } else {
-                bgElement = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
+          }
+          if (meta.metadata) group.set('cfsVideoMetadata', meta.metadata);
+          /* Use metadata dimensions if available; otherwise use sensible
+             defaults so the live video path still works even when CORS
+             prevents the metadata probe from getting dimensions. */
+          var mw = meta.width > 0 ? meta.width : 640;
+          var mh = meta.height > 0 ? meta.height : 360;
+          var maxW = 400;
+          var maxH = 280;
+          var scale = Math.min(maxW / mw, maxH / mh, 1);
+          var w = Math.round(mw * scale);
+          var h = Math.round(mh * scale);
+          if (w < 80) w = 80;
+          if (h < 60) h = 60;
+          var groupLeft = group.left;
+          var groupTop = group.top;
+          var groupName = group.name;
+          var cfsProps = {};
+          ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
+           'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
+           'cfsTrim', 'cfsSpeed',
+           'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
+           'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
+           'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
+            if (group[k] != null) cfsProps[k] = group[k];
+          });
+          /* Always create a live video Fabric.Image so the user can see
+             actual video frames in the canvas, synced to the timeline. */
+          createLiveVideoImage(src, w, h, function (fabricImg, videoEl, intermediaryCanvas) {
+            if (!canvas) return;
+            canvas.remove(group);
+            var bgElement;
+            if (fabricImg && videoEl && intermediaryCanvas) {
+              bgElement = fabricImg;
+              /* If metadata dimensions were 0, read them from the loaded video */
+              if (!(meta.width > 0) && videoEl.videoWidth > 0) {
+                group.set('cfsVideoWidth', videoEl.videoWidth);
+                group.set('cfsVideoHeight', videoEl.videoHeight);
+                cfsProps.cfsVideoWidth = videoEl.videoWidth;
+                cfsProps.cfsVideoHeight = videoEl.videoHeight;
               }
-              var newLabel = new fabric.Text('▶ Video', { fontSize: 16, fill: '#fff', opacity: 0.35, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
-              var newGroup = new fabric.Group([bgElement, newLabel], {
-                left: groupLeft, top: groupTop, name: groupName,
-                selectable: true, evented: true,
-                objectCaching: false
-              });
-              Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
-              if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
-              if (videoEl && intermediaryCanvas) {
-                newGroup._cfsLiveVideoEl = videoEl;
-                newGroup._cfsLiveVideoImg = fabricImg;
-                newGroup._cfsIntermediaryCanvas = intermediaryCanvas;
+              if (!(meta.duration > 0) && videoEl.duration && isFinite(videoEl.duration)) {
+                cfsProps.cfsLength = Math.round(videoEl.duration * 10) / 10;
               }
-              canvas.add(newGroup);
-              canvas.setActiveObject(newGroup);
-              group = newGroup;
-              canvas.renderAll();
-              refreshTimeline();
-              refreshLayersPanel();
-              refreshPropertyPanel();
-              if (videoEl) startVideoRenderLoop();
+            } else {
+              bgElement = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
+            }
+            var newLabel = new fabric.Text('▶ Video', { fontSize: 16, fill: '#fff', opacity: 0.35, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+            var newGroup = new fabric.Group([bgElement, newLabel], {
+              left: groupLeft, top: groupTop, name: groupName,
+              selectable: true, evented: true,
+              objectCaching: false
             });
-          } else {
-            if (meta.metadata) group.set('cfsVideoMetadata', meta.metadata);
+            Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
+            if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
+            if (videoEl && intermediaryCanvas) {
+              newGroup._cfsLiveVideoEl = videoEl;
+              newGroup._cfsLiveVideoImg = fabricImg;
+              newGroup._cfsIntermediaryCanvas = intermediaryCanvas;
+            }
+            canvas.add(newGroup);
+            canvas.setActiveObject(newGroup);
+            group = newGroup;
             canvas.renderAll();
             refreshTimeline();
+            refreshLayersPanel();
             refreshPropertyPanel();
-          }
+            if (videoEl) startVideoRenderLoop();
+          });
         }).catch(function () {
-          try { label.set('text', 'Video'); } catch(_){}
-          if (canvas) canvas.renderAll();
+          /* Even on metadata failure, still try to load the live video */
+          if (!group || !canvas) return;
+          var w = 320, h = 180;
+          var groupLeft = group.left, groupTop = group.top, groupName = group.name;
+          var cfsProps = {};
+          ['cfsVideoSrc', 'cfsStart', 'cfsLength', 'cfsLengthWasEnd', 'cfsLengthAuto',
+           'cfsTrackIndex', 'cfsVideoWidth', 'cfsVideoHeight', 'cfsVideoVolume',
+           'cfsTrim', 'cfsSpeed',
+           'cfsFadeIn', 'cfsFadeOut', 'cfsMergeKey', 'cfsOriginalClip',
+           'cfsVideoMetadata', 'cfsFit', 'cfsScale', 'cfsTransition', 'cfsEffect',
+           'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
+            if (group[k] != null) cfsProps[k] = group[k];
+          });
+          createLiveVideoImage(src, w, h, function (fabricImg, videoEl, intermediaryCanvas) {
+            if (!canvas) return;
+            canvas.remove(group);
+            var bgElement = (fabricImg && videoEl && intermediaryCanvas) ? fabricImg
+              : new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
+            var newGroup = new fabric.Group([bgElement], {
+              left: groupLeft, top: groupTop, name: groupName,
+              selectable: true, evented: true, objectCaching: false
+            });
+            Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
+            if (videoEl && intermediaryCanvas) {
+              newGroup._cfsLiveVideoEl = videoEl;
+              newGroup._cfsLiveVideoImg = fabricImg;
+              newGroup._cfsIntermediaryCanvas = intermediaryCanvas;
+              if (videoEl.videoWidth > 0) newGroup.set('cfsVideoWidth', videoEl.videoWidth);
+              if (videoEl.videoHeight > 0) newGroup.set('cfsVideoHeight', videoEl.videoHeight);
+              if (videoEl.duration && isFinite(videoEl.duration)) newGroup.set('cfsLength', Math.round(videoEl.duration * 10) / 10);
+            }
+            canvas.add(newGroup);
+            canvas.setActiveObject(newGroup);
+            group = newGroup;
+            canvas.renderAll();
+            refreshTimeline();
+            refreshLayersPanel();
+            refreshPropertyPanel();
+            if (videoEl) startVideoRenderLoop();
+          });
         });
       }
     }
