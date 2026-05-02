@@ -7795,6 +7795,101 @@
       });
     }
 
+    /**
+     * Create a Fabric.Image backed by a live <video> element.
+     * The video's currentTime is synced to the timeline position by the
+     * global video render loop (_cfsVideoRenderLoop).
+     * cb(fabricImage, videoEl)  — called once the video is ready.
+     */
+    function createLiveVideoImage(src, w, h, cb) {
+      var video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.muted = true;
+      video.preload = 'auto';
+      video.playsInline = true;
+      video.loop = false;
+      video.style.display = 'none';
+      document.body.appendChild(video);
+      var done = false;
+      function finish(ok) {
+        if (done) return;
+        done = true;
+        if (!ok) {
+          try { video.pause(); document.body.removeChild(video); } catch(_){}
+          cb(null, null);
+          return;
+        }
+        video.pause();
+        video.currentTime = 0;
+        var img = new fabric.Image(video, {
+          left: 0, top: 0,
+          width: video.videoWidth || w,
+          height: video.videoHeight || h,
+          objectCaching: false
+        });
+        img.scaleX = w / (video.videoWidth || w);
+        img.scaleY = h / (video.videoHeight || h);
+        cb(img, video);
+      }
+      video.addEventListener('loadeddata', function () { finish(true); });
+      video.addEventListener('error', function () { finish(false); });
+      video.src = src;
+      video.load();
+      setTimeout(function () { finish(false); }, 12000);
+    }
+
+    /**
+     * Global render loop that keeps Fabric canvas in sync with live video
+     * elements.  Only runs when there are active video groups on the canvas.
+     */
+    var _cfsVideoRafId = null;
+    function startVideoRenderLoop() {
+      if (_cfsVideoRafId) return; // already running
+      function tick() {
+        if (!canvas || !canvas.getObjects) { _cfsVideoRafId = null; return; }
+        var hasVideo = false;
+        canvas.getObjects().forEach(function (obj) {
+          if (obj._cfsLiveVideoEl) {
+            hasVideo = true;
+            /* Update canvas intermediary if needed */
+            if (obj._cfsLiveVideoImg && obj._cfsLiveVideoImg.getElement) {
+              /* Fabric.Image uses the element directly — just dirty it */
+              if (obj._cfsLiveVideoImg.dirty !== undefined) obj._cfsLiveVideoImg.dirty = true;
+            }
+          }
+        });
+        if (hasVideo) {
+          canvas.requestRenderAll();
+          _cfsVideoRafId = requestAnimationFrame(tick);
+        } else {
+          _cfsVideoRafId = null;
+        }
+      }
+      _cfsVideoRafId = requestAnimationFrame(tick);
+    }
+
+    /**
+     * Sync all live video elements to a specific timeline time.
+     * Called when timeline scrubs or plays.
+     */
+    function syncVideosToTime(timeSec) {
+      if (!canvas || !canvas.getObjects) return;
+      canvas.getObjects().forEach(function (obj) {
+        if (!obj._cfsLiveVideoEl) return;
+        var videoStart = typeof obj.cfsStart === 'number' ? obj.cfsStart : 0;
+        var videoLen = typeof obj.cfsLength === 'number' ? obj.cfsLength : Infinity;
+        var rel = timeSec - videoStart;
+        if (rel < 0 || rel > videoLen) {
+          obj._cfsLiveVideoEl.pause();
+          return;
+        }
+        var target = Math.max(0, rel);
+        if (Math.abs(obj._cfsLiveVideoEl.currentTime - target) > 0.05) {
+          obj._cfsLiveVideoEl.currentTime = target;
+        }
+      });
+    }
+
     function addAudioClip() {
       if (!template) return;
       if (!template.timeline) template.timeline = {};
@@ -7876,8 +7971,24 @@
         var group = new fabric.Group([rect, label], { left: 80, top: 80, name: 'video_' + Date.now(), selectable: true, evented: true });
         group.set('cfsVideoSrc', src);
         group.set('cfsStart', 0);
-        group.set('cfsLength', getTimelineEnd() || 5);
-        group.set('cfsTrackIndex', getNextTrackIndex());
+        var clipLen = getTimelineEnd() || 5;
+        group.set('cfsLength', clipLen);
+        var trackIdx = getNextTrackIndex();
+        group.set('cfsTrackIndex', trackIdx);
+        /* Ensure template.timeline.tracks has an entry for this track so the
+           layers panel (which reads from template tracks, not canvas) shows it */
+        if (template) {
+          if (!template.timeline) template.timeline = {};
+          if (!Array.isArray(template.timeline.tracks)) template.timeline.tracks = [];
+          while (template.timeline.tracks.length <= trackIdx) {
+            template.timeline.tracks.push({ clips: [] });
+          }
+          template.timeline.tracks[trackIdx].clips.push({
+            asset: { type: 'video', src: src },
+            start: 0,
+            length: clipLen
+          });
+        }
         canvas.add(group);
         canvas.setActiveObject(group);
         canvas.renderAll();
@@ -7899,11 +8010,6 @@
             var h = Math.round(meta.height * scale);
             if (w < 80) w = 80;
             if (h < 60) h = 60;
-            /* Rebuild the group with correct child positioning.
-               Fabric groups use center-based child coords, so updating
-               children in-place causes layout drift on resize.  Instead,
-               remove the old group, create a fresh one at the same position
-               with the correctly-sized children. */
             var groupLeft = group.left;
             var groupTop = group.top;
             var groupName = group.name;
@@ -7915,24 +8021,43 @@
              'cfsChromaKey', 'cfsFlip', 'cfsFilter'].forEach(function (k) {
               if (group[k] != null) cfsProps[k] = group[k];
             });
-            canvas.remove(group);
-            var newRect = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
-            var newLabel = new fabric.Text('Video', { fontSize: 18, fill: '#e2e8f0', opacity: 0.05, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
-            var newGroup = new fabric.Group([newRect, newLabel], {
-              left: groupLeft, top: groupTop, name: groupName,
-              selectable: true, evented: true
+            /* Create a live video Fabric.Image so the user can see actual
+               video frames in the canvas, synced to the timeline position. */
+            createLiveVideoImage(src, w, h, function (fabricImg, videoEl) {
+              if (!canvas) return;
+              canvas.remove(group);
+              var bgElement;
+              if (fabricImg && videoEl) {
+                bgElement = fabricImg;
+              } else {
+                bgElement = new fabric.Rect({ width: w, height: h, fill: '#2d3748', left: 0, top: 0 });
+              }
+              var newLabel = new fabric.Text('▶ Video', { fontSize: 16, fill: '#fff', opacity: 0.35, originX: 'center', originY: 'center', left: w / 2, top: h / 2 });
+              var newGroup = new fabric.Group([bgElement, newLabel], {
+                left: groupLeft, top: groupTop, name: groupName,
+                selectable: true, evented: true
+              });
+              Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
+              if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
+              if (videoEl) {
+                newGroup._cfsLiveVideoEl = videoEl;
+                newGroup._cfsLiveVideoImg = fabricImg;
+              }
+              canvas.add(newGroup);
+              canvas.setActiveObject(newGroup);
+              group = newGroup;
+              canvas.renderAll();
+              refreshTimeline();
+              refreshLayersPanel();
+              refreshPropertyPanel();
+              if (videoEl) startVideoRenderLoop();
             });
-            Object.keys(cfsProps).forEach(function (k) { newGroup.set(k, cfsProps[k]); });
-            if (meta.metadata) newGroup.set('cfsVideoMetadata', meta.metadata);
-            canvas.add(newGroup);
-            canvas.setActiveObject(newGroup);
-            group = newGroup;  // Update closure reference
           } else {
             if (meta.metadata) group.set('cfsVideoMetadata', meta.metadata);
+            canvas.renderAll();
+            refreshTimeline();
+            refreshPropertyPanel();
           }
-          canvas.renderAll();
-          refreshTimeline();
-          refreshPropertyPanel();
         }).catch(function () {
           try { label.set('text', 'Video'); } catch(_){}
           if (canvas) canvas.renderAll();
@@ -9098,6 +9223,7 @@
     function setPlayheadTime(t) {
       currentPlayheadSec = t;
       if (playheadEl) playheadEl.style.left = (t * timelineScale + getTrackLabelWidth()) + 'px';
+      syncVideosToTime(t);
       editEvents.emit('playback:time', { time: t });
     }
     function updatePlayheadExtent() {
