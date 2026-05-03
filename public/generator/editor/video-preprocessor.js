@@ -218,9 +218,18 @@
               if (duration > 0) args.push('-t', String(duration));
               var vfilters = [];
               if (targetW > 0 && targetH > 0) {
+                /* Explicit dimensions: scale + pad to exact size (legacy) */
                 vfilters.push(
                   'scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=decrease',
                   'pad=' + targetW + ':' + targetH + ':(ow-iw)/2:(oh-ih)/2:color=black'
+                );
+              } else {
+                /* Auto mode (width:0/height:0): preserve aspect ratio,
+                   but cap the long edge at 1080px to keep Pixi render
+                   performance high during browser video capture.
+                   scale=-2:N ensures width stays even (h264 requirement). */
+                vfilters.push(
+                  'scale=\'if(gte(iw,ih),min(1080,iw),-2)\':\'if(gte(iw,ih),-2,min(1080,ih))\''
                 );
               }
               if (speed > 0 && speed !== 1) vfilters.push('setpts=PTS/' + speed);
