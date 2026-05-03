@@ -440,23 +440,183 @@ function patchTemplateEngine(text) {
 		console.warn("[sync-extension-assets] template-engine.js fps cap marker not found — skipping");
 	}
 
-	// Start native video playback before the render loop so videos play smoothly.
-	// The upstream code seeks every frame which causes jerkiness.
-	const audioPlaybackStartMarker =
-		"if (audioPlayback && audioPlayback.start) {\n" +
+	// ── Frame-by-frame rendering with offline audio mux ──
+	// Replace real-time MediaRecorder capture with:
+	// 1. captureStream(0) + explicit requestFrame() per rendered frame
+	// 2. _waitForVideoSeeks() to ensure video is decoded before capture
+	// 3. Offline AudioBuffer → WAV blob attached to output for FFmpeg mux
+	const renderLoopMarker =
+		"var stream = canvasEl.captureStream(fps);\n" +
+		"      return Promise.resolve(player.createMixedAudioPlayback ? player.createMixedAudioPlayback({ durationSec: durationSec, rangeStart: rangeStart }) : null).catch(function () { return null; }).then(function (audioPlayback) {\n" +
+		"        try {\n" +
+		"          if (audioPlayback && audioPlayback.stream && typeof audioPlayback.stream.getAudioTracks === 'function') {\n" +
+		"            var audioTracks = audioPlayback.stream.getAudioTracks() || [];\n" +
+		"            if (audioTracks[0]) stream.addTrack(audioTracks[0]);\n" +
+		"          }\n" +
+		"        } catch (_) {}";
+	const renderLoopFix =
+		"/* captureStream(0) = manual frame mode: frames are captured only when\n" +
+		"         requestFrame() is called, so every Pixi-rendered frame is captured. */\n" +
+		"      var stream = canvasEl.captureStream(0);\n" +
+		"      var videoTrack = stream.getVideoTracks()[0] || null;\n" +
+		"      /* Render audio offline (faster than real-time) via OfflineAudioContext.\n" +
+		"         We encode the resulting AudioBuffer to a WAV blob and attach it to\n" +
+		"         the output WebM for FFmpeg muxing in convertToMp4. */\n" +
+		"      var audioWavPromise = (player.renderMixedAudioBuffer\n" +
+		"        ? player.renderMixedAudioBuffer(durationSec, rangeStart)\n" +
+		"        : Promise.resolve(null)\n" +
+		"      ).then(function (audioBuffer) {\n" +
+		"        if (!audioBuffer) return null;\n" +
+		"        /* Encode AudioBuffer → 16-bit PCM WAV */\n" +
+		"        var numCh = audioBuffer.numberOfChannels;\n" +
+		"        var sr = audioBuffer.sampleRate;\n" +
+		"        var length = audioBuffer.length;\n" +
+		"        var bitsPerSample = 16;\n" +
+		"        var bytesPerSample = bitsPerSample / 8;\n" +
+		"        var dataSize = length * numCh * bytesPerSample;\n" +
+		"        var headerSize = 44;\n" +
+		"        var wavBuf = new ArrayBuffer(headerSize + dataSize);\n" +
+		"        var view = new DataView(wavBuf);\n" +
+		"        function writeStr(offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); }\n" +
+		"        writeStr(0, 'RIFF');\n" +
+		"        view.setUint32(4, 36 + dataSize, true);\n" +
+		"        writeStr(8, 'WAVE');\n" +
+		"        writeStr(12, 'fmt ');\n" +
+		"        view.setUint32(16, 16, true);\n" +
+		"        view.setUint16(20, 1, true);\n" +
+		"        view.setUint16(22, numCh, true);\n" +
+		"        view.setUint32(24, sr, true);\n" +
+		"        view.setUint32(28, sr * numCh * bytesPerSample, true);\n" +
+		"        view.setUint16(32, numCh * bytesPerSample, true);\n" +
+		"        view.setUint16(34, bitsPerSample, true);\n" +
+		"        writeStr(36, 'data');\n" +
+		"        view.setUint32(40, dataSize, true);\n" +
+		"        var channels = [];\n" +
+		"        for (var c = 0; c < numCh; c++) channels.push(audioBuffer.getChannelData(c));\n" +
+		"        var offset = headerSize;\n" +
+		"        for (var i = 0; i < length; i++) {\n" +
+		"          for (var c = 0; c < numCh; c++) {\n" +
+		"            var s = Math.max(-1, Math.min(1, channels[c][i]));\n" +
+		"            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);\n" +
+		"            offset += 2;\n" +
+		"          }\n" +
+		"        }\n" +
+		"        return new Blob([wavBuf], { type: 'audio/wav' });\n" +
+		"      }).catch(function () { return null; });\n" +
+		"      return audioWavPromise.then(function (audioWavBlob) {\n" +
+		"      return Promise.resolve(null).then(function (audioPlayback) {";
+	if (out.includes(renderLoopMarker)) {
+		out = out.replace(renderLoopMarker, renderLoopFix);
+	} else {
+		console.warn("[sync-extension-assets] template-engine.js renderLoop marker not found — skipping");
+	}
+
+	// Replace the driveFrame real-time loop with frame-by-frame stepping
+	const driveFrameMarker =
+		"player.seek(rangeStart);\n" +
+		"        try {\n" +
+		"          recorder.start(100);\n" +
+		"        } catch (startErr) {\n" +
+		"          if (audioPlayback && audioPlayback.stop) audioPlayback.stop();\n" +
+		"          player.destroy();\n" +
+		"          revokeTts();\n" +
+		"          reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));\n" +
+		"          return;\n" +
+		"        }\n" +
+		"        if (audioPlayback && audioPlayback.start) {\n" +
 		"          audioPlayback.start().catch(function (err) { console.warn('[CFS] Audio playback start failed', err); });\n" +
 		"        }\n" +
-		"        const startTime = Date.now();";
-	const audioPlaybackStartFix =
-		"if (audioPlayback && audioPlayback.start) {\n" +
-		"          audioPlayback.start().catch(function (err) { console.warn('[CFS] Audio playback start failed', err); });\n" +
+		"        const startTime = Date.now();\n" +
+		"        let lastReportedSec = -1;\n" +
+		"        function driveFrame() {\n" +
+		"          const elapsed = (audioPlayback && audioPlayback.getCurrentTimeSec)\n" +
+		"            ? audioPlayback.getCurrentTimeSec()\n" +
+		"            : ((Date.now() - startTime) / 1000);\n" +
+		"          if (onProgress) {\n" +
+		"            const sec = Math.floor(elapsed);\n" +
+		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }\n" +
+		"          }\n" +
+		"          if (elapsed >= durationSec || (audioPlayback && audioPlayback.isEnded && audioPlayback.isEnded())) {\n" +
+		"            try { recorder.stop(); } catch (_) {}\n" +
+		"            return;\n" +
+		"          }\n" +
+		"          player.seek(rangeStart + elapsed);\n" +
+		"          if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);\n" +
+		"          else setTimeout(driveFrame, Math.max(16, 1000 / fps));\n" +
 		"        }\n" +
-		"        if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);\n" +
-		"        const startTime = Date.now();";
-	if (out.includes(audioPlaybackStartMarker)) {
-		out = out.replace(audioPlaybackStartMarker, audioPlaybackStartFix);
-	} else if (!out.includes("startVideoPlayback")) {
-		console.warn("[sync-extension-assets] template-engine.js startVideoPlayback marker not found — skipping");
+		"        if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);\n" +
+		"        else setTimeout(driveFrame, 0);\n" +
+		"      });\n" +
+		"      });";
+	const driveFrameFix =
+		"player.seek(rangeStart);\n" +
+		"        try {\n" +
+		"          recorder.start(100);\n" +
+		"        } catch (startErr) {\n" +
+		"          player.destroy();\n" +
+		"          revokeTts();\n" +
+		"          reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));\n" +
+		"          return;\n" +
+		"        }\n" +
+		"        /* ── Frame-by-frame rendering for smooth output ──\n" +
+		"           Seek → wait for video decode → redraw canvas → Pixi render\n" +
+		"           → requestFrame() → next. Trades speed for frame accuracy. */\n" +
+		"        var totalFrames = Math.ceil(durationSec * fps);\n" +
+		"        var frameIndex = 0;\n" +
+		"        var lastReportedSec = -1;\n" +
+		"        function stepFrame() {\n" +
+		"          if (frameIndex >= totalFrames) {\n" +
+		"            try { recorder.stop(); } catch (_) {}\n" +
+		"            return;\n" +
+		"          }\n" +
+		"          var t = rangeStart + (frameIndex / fps);\n" +
+		"          player.seek(t);\n" +
+		"          if (onProgress) {\n" +
+		"            var sec = Math.floor(frameIndex / fps);\n" +
+		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(frameIndex / fps, durationSec); }\n" +
+		"          }\n" +
+		"          var seekWait = (player._waitForVideoSeeks)\n" +
+		"            ? player._waitForVideoSeeks()\n" +
+		"            : Promise.resolve();\n" +
+		"          seekWait.then(function () {\n" +
+		"            if (player._clipDisplays) {\n" +
+		"              player._clipDisplays.forEach(function (disp) {\n" +
+		"                if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx && disp._videoEl && disp.visible) {\n" +
+		"                  try {\n" +
+		"                    disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"                    disp._cfsAlphaCtx.drawImage(disp._videoEl, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"                  } catch (_) {}\n" +
+		"                }\n" +
+		"                if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {\n" +
+		"                  disp.texture.source.update();\n" +
+		"                }\n" +
+		"              });\n" +
+		"            }\n" +
+		"            if (player._app && player._app.renderer) {\n" +
+		"              try { player._app.renderer.render(player._stage); } catch (_) {}\n" +
+		"            }\n" +
+		"            if (videoTrack && typeof videoTrack.requestFrame === 'function') {\n" +
+		"              videoTrack.requestFrame();\n" +
+		"            }\n" +
+		"            requestAnimationFrame(function () {\n" +
+		"              frameIndex++;\n" +
+		"              setTimeout(stepFrame, 0);\n" +
+		"            });\n" +
+		"          });\n" +
+		"        }\n" +
+		"        stepFrame();\n" +
+		"      });\n" +
+		"      });\n" +
+		"    }).then(function (blob) {\n" +
+		"      /* Attach the offline-rendered audio WAV to the video blob so\n" +
+		"         convertToMp4 can mux them together. */\n" +
+		"      if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;\n" +
+		"      return blob;\n" +
+		"    });";
+	if (out.includes(driveFrameMarker)) {
+		out = out.replace(driveFrameMarker, driveFrameFix);
+	} else {
+		console.warn("[sync-extension-assets] template-engine.js driveFrame marker not found — skipping");
 	}
 
 	return out;

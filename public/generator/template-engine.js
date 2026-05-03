@@ -1076,14 +1076,56 @@
       }
       const mime = (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) ? 'video/webm;codecs=vp9' : 'video/webm';
       const mimeFinal = (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mime)) ? mime : 'video/webm';
-      var stream = canvasEl.captureStream(fps);
-      return Promise.resolve(player.createMixedAudioPlayback ? player.createMixedAudioPlayback({ durationSec: durationSec, rangeStart: rangeStart }) : null).catch(function () { return null; }).then(function (audioPlayback) {
-        try {
-          if (audioPlayback && audioPlayback.stream && typeof audioPlayback.stream.getAudioTracks === 'function') {
-            var audioTracks = audioPlayback.stream.getAudioTracks() || [];
-            if (audioTracks[0]) stream.addTrack(audioTracks[0]);
+      /* captureStream(0) = manual frame mode: frames are captured only when
+         requestFrame() is called, so every Pixi-rendered frame is captured. */
+      var stream = canvasEl.captureStream(0);
+      var videoTrack = stream.getVideoTracks()[0] || null;
+      /* Render audio offline (faster than real-time) via OfflineAudioContext.
+         We encode the resulting AudioBuffer to a WAV blob and attach it to
+         the output WebM for FFmpeg muxing in convertToMp4. */
+      var audioWavPromise = (player.renderMixedAudioBuffer
+        ? player.renderMixedAudioBuffer(durationSec, rangeStart)
+        : Promise.resolve(null)
+      ).then(function (audioBuffer) {
+        if (!audioBuffer) return null;
+        /* Encode AudioBuffer → 16-bit PCM WAV */
+        var numCh = audioBuffer.numberOfChannels;
+        var sr = audioBuffer.sampleRate;
+        var length = audioBuffer.length;
+        var bitsPerSample = 16;
+        var bytesPerSample = bitsPerSample / 8;
+        var dataSize = length * numCh * bytesPerSample;
+        var headerSize = 44;
+        var wavBuf = new ArrayBuffer(headerSize + dataSize);
+        var view = new DataView(wavBuf);
+        function writeStr(offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); }
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numCh, true);
+        view.setUint32(24, sr, true);
+        view.setUint32(28, sr * numCh * bytesPerSample, true);
+        view.setUint16(32, numCh * bytesPerSample, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
+        var channels = [];
+        for (var c = 0; c < numCh; c++) channels.push(audioBuffer.getChannelData(c));
+        var offset = headerSize;
+        for (var i = 0; i < length; i++) {
+          for (var c = 0; c < numCh; c++) {
+            var s = Math.max(-1, Math.min(1, channels[c][i]));
+            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            offset += 2;
           }
-        } catch (_) {}
+        }
+        return new Blob([wavBuf], { type: 'audio/wav' });
+      }).catch(function () { return null; });
+      return audioWavPromise.then(function (audioWavBlob) {
+      return Promise.resolve(null).then(function (audioPlayback) {
         let recorder;
         try {
           recorder = new MediaRecorder(stream, { mimeType: mimeFinal, videoBitsPerSecond: 2500000 });
@@ -1119,38 +1161,66 @@
         try {
           recorder.start(100);
         } catch (startErr) {
-          if (audioPlayback && audioPlayback.stop) audioPlayback.stop();
           player.destroy();
           revokeTts();
           reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));
           return;
         }
-        if (audioPlayback && audioPlayback.start) {
-          audioPlayback.start().catch(function (err) { console.warn('[CFS] Audio playback start failed', err); });
-        }
-        if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);
-        const startTime = Date.now();
-        let lastReportedSec = -1;
-        function driveFrame() {
-          const elapsed = (audioPlayback && audioPlayback.getCurrentTimeSec)
-            ? audioPlayback.getCurrentTimeSec()
-            : ((Date.now() - startTime) / 1000);
-          if (onProgress) {
-            const sec = Math.floor(elapsed);
-            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }
-          }
-          if (elapsed >= durationSec || (audioPlayback && audioPlayback.isEnded && audioPlayback.isEnded())) {
+        /* ── Frame-by-frame rendering for smooth output ──
+           Seek → wait for video decode → redraw canvas → Pixi render
+           → requestFrame() → next. Trades speed for frame accuracy. */
+        var totalFrames = Math.ceil(durationSec * fps);
+        var frameIndex = 0;
+        var lastReportedSec = -1;
+        function stepFrame() {
+          if (frameIndex >= totalFrames) {
             try { recorder.stop(); } catch (_) {}
             return;
           }
-          player.seek(rangeStart + elapsed);
-          if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);
-          else setTimeout(driveFrame, Math.max(16, 1000 / fps));
+          var t = rangeStart + (frameIndex / fps);
+          player.seek(t);
+          if (onProgress) {
+            var sec = Math.floor(frameIndex / fps);
+            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(frameIndex / fps, durationSec); }
+          }
+          var seekWait = (player._waitForVideoSeeks)
+            ? player._waitForVideoSeeks()
+            : Promise.resolve();
+          seekWait.then(function () {
+            if (player._clipDisplays) {
+              player._clipDisplays.forEach(function (disp) {
+                if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx && disp._videoEl && disp.visible) {
+                  try {
+                    disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);
+                    disp._cfsAlphaCtx.drawImage(disp._videoEl, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);
+                  } catch (_) {}
+                }
+                if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {
+                  disp.texture.source.update();
+                }
+              });
+            }
+            if (player._app && player._app.renderer) {
+              try { player._app.renderer.render(player._stage); } catch (_) {}
+            }
+            if (videoTrack && typeof videoTrack.requestFrame === 'function') {
+              videoTrack.requestFrame();
+            }
+            requestAnimationFrame(function () {
+              frameIndex++;
+              setTimeout(stepFrame, 0);
+            });
+          });
         }
-        if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(driveFrame);
-        else setTimeout(driveFrame, 0);
+        stepFrame();
       });
       });
+    }).then(function (blob) {
+      /* Attach the offline-rendered audio WAV to the video blob so
+         convertToMp4 can mux them together. */
+      if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;
+      return blob;
+    });
     }).then(function (blob) { return blob; });
     }).finally(function () {
       ttsRevoke.forEach(function (url) {
