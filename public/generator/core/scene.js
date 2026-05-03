@@ -901,8 +901,6 @@
             videoGroup.cfsChromaKey = { color: asset.chromaKey.color, threshold: asset.chromaKey.threshold, halo: asset.chromaKey.halo };
           }
           if (videoMergeName) videoGroup.cfsMergeKey = videoMergeName;
-          if (asset.trim != null && Number(asset.trim) > 0) videoGroup.cfsTrim = Number(asset.trim);
-          if (asset.speed != null && Number(asset.speed) > 0 && Number(asset.speed) !== 1) videoGroup.cfsSpeed = Number(asset.speed);
           videoGroup.cfsOriginalClip = originalClip;
           addTweenToObject(videoGroup, clip);
           objects.push(videoGroup);

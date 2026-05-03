@@ -145,6 +145,14 @@ export function ShotstackEditorHost({
 		const addEl = addContentRef.current;
 		if (addEl) addEl.innerHTML = "";
 
+		/* Expose video upload config as globals for video-preprocessor.js */
+		const w = window as unknown as {
+			__CFS_videoUploadUrl?: string;
+			__CFS_videoUploadFields?: Record<string, string>;
+		};
+		w.__CFS_videoUploadUrl = context.videoUploadUrl || "";
+		w.__CFS_videoUploadFields = context.browserRenderFields || {};
+
 		const inst = window.__CFS_unifiedEditor.create(el, {
 			template: initialEdit,
 			extension: {},
@@ -152,7 +160,7 @@ export function ShotstackEditorHost({
 		});
 		editorRef.current = inst;
 		setStatus("ready");
-	}, [initialEdit]);
+	}, [initialEdit, context]);
 
 	useEffect(() => {
 		let cancelled = false;

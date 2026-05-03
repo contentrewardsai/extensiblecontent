@@ -500,6 +500,34 @@ function patchFabricToTimeline(text) {
 	} else if (!out.includes("visualW") || !out.includes("visualH")) {
 		console.warn("[sync-extension-assets] fabric-to-timeline.js video dimension marker not found — skipping");
 	}
+
+	// ── Video Preprocessor: Use cfsProcessedUrl for browser renders ──
+	// Add a hasProcessedClip flag near the top of the video clip building code.
+	const videoSrcAssign = "var videoSrc = obj.cfsVideoSrc;";
+	if (out.includes(videoSrcAssign) && !out.includes("hasProcessedClip")) {
+		out = out.replace(videoSrcAssign,
+			"var videoSrc = obj.cfsVideoSrc;\n" +
+			"        var hasProcessedClip = typeof obj.cfsProcessedUrl === 'string' && obj.cfsProcessedUrl.length > 0;"
+		);
+	}
+
+	// In the new clip path, use processed URL when available (trim/speed already baked in)
+	const newClipSrcMarker =
+		"videoClip.asset.src = videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}')\n" +
+		"            : (useOrigVideoUrl ? origVideoSrc : (videoSrc || ''));";
+	if (out.includes(newClipSrcMarker) && !out.includes("hasProcessedClip && !videoIsPlaceholder")) {
+		out = out.replace(newClipSrcMarker,
+			"if (hasProcessedClip && !videoIsPlaceholder) {\n" +
+			"            videoClip.asset.src = obj.cfsProcessedUrl;\n" +
+			"            delete videoClip.asset.trim;\n" +
+			"            delete videoClip.asset.speed;\n" +
+			"          } else {\n" +
+			"            videoClip.asset.src = videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}')\n" +
+			"              : (useOrigVideoUrl ? origVideoSrc : (videoSrc || ''));\n" +
+			"          }"
+		);
+	}
+
 	return out;
 }
 
@@ -773,6 +801,203 @@ function patchUnifiedEditor(text) {
 			"    }\n\n" +
 			"    function getNextTrackIndex() {";
 		out = out.replace(iframePromptInsertMarker, iframePromptFn);
+	}
+
+	// ── Video Preprocessor: Add cfsProcessedUrl to serialization key lists ──
+	const cfsVideoSrcKeys = "'cfsVideoSrc', '";
+	const cfsVideoSrcKeysFixed = "'cfsVideoSrc', 'cfsProcessedUrl', '";
+	if (out.includes(cfsVideoSrcKeys) && !out.includes("'cfsProcessedUrl'")) {
+		out = out.split(cfsVideoSrcKeys).join(cfsVideoSrcKeysFixed);
+	}
+
+	// ── Video Preprocessor: Add scheduleVideoReprocess helper ──
+	const rehydrateVidMarker = "    function rehydrateVideoGroups(fabricCanvas) {";
+	if (out.includes(rehydrateVidMarker) && !out.includes("scheduleVideoReprocess")) {
+		const reprocessHelper =
+			"    var _videoReprocessTimers = {};\n" +
+			"    function scheduleVideoReprocess(obj) {\n" +
+			"      if (!obj || !obj.cfsVideoSrc) return;\n" +
+			"      if (typeof CfsVideoPreprocessor === 'undefined' || !CfsVideoPreprocessor.processAndPersist) return;\n" +
+			"      var objName = obj.name || obj.id || '';\n" +
+			"      if (_videoReprocessTimers[objName]) clearTimeout(_videoReprocessTimers[objName]);\n" +
+			"      _videoReprocessTimers[objName] = setTimeout(function () {\n" +
+			"        delete _videoReprocessTimers[objName];\n" +
+			"        var src = obj.cfsVideoSrc;\n" +
+			"        var oW = dim && dim.w ? dim.w : 1920;\n" +
+			"        var oH = dim && dim.h ? dim.h : 1080;\n" +
+			"        var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
+			"        var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
+			"        CfsVideoPreprocessor.processAndPersist(src, { trimStart: obj.cfsTrim || 0, speed: obj.cfsSpeed || 1, width: oW, height: oH, fps: 30 }, uUrl, uFields, function () {}).then(function (r) {\n" +
+			"          if (r.url) { var old = obj.cfsProcessedUrl; if (old && old.indexOf('blob:') === 0) { try { URL.revokeObjectURL(old); } catch (_) {} } obj.set('cfsProcessedUrl', r.url); }\n" +
+			"          if (typeof saveStateDebounced === 'function') saveStateDebounced();\n" +
+			"        }).catch(function () {});\n" +
+			"      }, 500);\n" +
+			"    }\n\n" +
+			"    function rehydrateVideoGroups(fabricCanvas) {";
+		out = out.replace(rehydrateVidMarker, reprocessHelper);
+	}
+
+	// ── Video Preprocessor: Wire scheduleVideoReprocess into trim change ──
+	const trimSyncEnd =
+		"obj.set('cfsTrim', trimVal);\n" +
+		"          /* Immediately sync the Fabric preview to show the trimmed frame */\n" +
+		"          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') {\n" +
+		"            syncVideosToTime(currentPlayheadSec);\n" +
+		"          }\n" +
+		"        });";
+	if (out.includes(trimSyncEnd) && !out.includes("scheduleVideoReprocess(obj)")) {
+		out = out.replace(trimSyncEnd,
+			"obj.set('cfsTrim', trimVal);\n" +
+			"          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') { syncVideosToTime(currentPlayheadSec); }\n" +
+			"          scheduleVideoReprocess(obj);\n" +
+			"        });"
+		);
+	}
+	const speedSyncEnd =
+		"obj.set('cfsSpeed', speedVal);\n" +
+		"          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') {\n" +
+		"            syncVideosToTime(currentPlayheadSec);\n" +
+		"          }\n" +
+		"        });";
+	if (out.includes(speedSyncEnd)) {
+		out = out.replace(speedSyncEnd,
+			"obj.set('cfsSpeed', speedVal);\n" +
+			"          if (typeof syncVideosToTime === 'function' && typeof currentPlayheadSec !== 'undefined') { syncVideosToTime(currentPlayheadSec); }\n" +
+			"          scheduleVideoReprocess(obj);\n" +
+			"        });"
+		);
+	}
+
+	// ── Video Preprocessor: Inject into placeVideoOnCanvas ──
+	const videoMetaMarker =
+		"getVideoMetadata(src).then(function (meta) {\n" +
+		"          if (!group.canvas || !canvas) return;";
+	if (out.includes(videoMetaMarker) && !out.includes("CfsVideoPreprocessor")) {
+		out = out.replace(videoMetaMarker,
+			"/* ── Video Preprocessor: process on add ── */\n" +
+			"        if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.processAndPersist) {\n" +
+			"          (function (g, lbl) {\n" +
+			"            var oW = dim && dim.w ? dim.w : 1920;\n" +
+			"            var oH = dim && dim.h ? dim.h : 1080;\n" +
+			"            var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
+			"            var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
+			"            CfsVideoPreprocessor.processAndPersist(src, { width: oW, height: oH, fps: 30 }, uUrl, uFields, function (msg) {\n" +
+			"              try { if (lbl) { lbl.set('text', msg); if (canvas) canvas.renderAll(); } } catch (_) {}\n" +
+			"            }).then(function (result) {\n" +
+			"              if (!g.canvas) return;\n" +
+			"              var previewUrl = result.url || result.blobUrl || src;\n" +
+			"              if (result.url) g.set('cfsProcessedUrl', result.url);\n" +
+			"              /* Start live video preview from the processed MP4 */\n" +
+			"              CfsVideoPreprocessor.createLivePreview(g, previewUrl, canvas).then(function () {\n" +
+			"                if (typeof saveStateDebounced === 'function') saveStateDebounced();\n" +
+			"              });\n" +
+			"            }).catch(function () {\n" +
+			"              /* Preprocessing failed — try live preview from raw source */\n" +
+			"              CfsVideoPreprocessor.createLivePreview(g, src, canvas).catch(function () {});\n" +
+			"              try { if (lbl) lbl.set('text', '▶ Video'); if (canvas) canvas.renderAll(); } catch (_) {}\n" +
+			"            });\n" +
+			"          })(group, label);\n" +
+			"        } else {\n" +
+			"          /* No preprocessor — try direct live preview */\n" +
+			"          if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.createLivePreview) {\n" +
+			"            CfsVideoPreprocessor.createLivePreview(group, src, canvas).catch(function () {});\n" +
+			"          }\n" +
+			"        }\n" +
+			"        getVideoMetadata(src).then(function (meta) {\n" +
+			"          if (!group.canvas || !canvas) return;"
+		);
+	}
+
+	// ── Video Preprocessor: Add cleanup on object:removed ──
+	const objRemovedMarker =
+		"canvas.on('object:removed', function () { refreshLayersPanel(); if (!isInternalCanvasMutation) pushUndo(); });";
+	if (out.includes(objRemovedMarker) && !out.includes("destroyPreview")) {
+		out = out.replace(objRemovedMarker,
+			"canvas.on('object:removed', function (e) {\n" +
+			"            refreshLayersPanel();\n" +
+			"            if (!isInternalCanvasMutation) pushUndo();\n" +
+			"            /* Clean up live video preview */\n" +
+			"            var obj = e && e.target;\n" +
+			"            if (obj && obj._cfsLiveVideoEl && typeof CfsVideoPreprocessor !== 'undefined') {\n" +
+			"              CfsVideoPreprocessor.destroyPreview(obj);\n" +
+			"            }\n" +
+			"          });"
+		);
+	}
+
+	// ── Iframe-safe prompt for addVideo ──
+	const videoPromptMarker =
+		"var promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.');\n" +
+		"      if (promptUrl != null && promptUrl.trim() !== '') {\n" +
+		"        videoUrl = promptUrl.trim();\n" +
+		"        placeVideoOnCanvas(videoUrl);\n" +
+		"      } else {\n" +
+		"        input.click();\n" +
+		"      }";
+	if (out.includes(videoPromptMarker)) {
+		out = out.replace(videoPromptMarker,
+			"if (typeof showIframePrompt === 'function') {\n" +
+			"        showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {\n" +
+			"          if (result.url) { videoUrl = result.url; placeVideoOnCanvas(videoUrl); }\n" +
+			"          else if (result.file) { videoUrl = URL.createObjectURL(result.file); placeVideoOnCanvas(videoUrl); }\n" +
+			"        });\n" +
+			"      } else {\n" +
+			"        var promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.');\n" +
+			"        if (promptUrl != null && promptUrl.trim() !== '') {\n" +
+			"          videoUrl = promptUrl.trim(); placeVideoOnCanvas(videoUrl);\n" +
+			"        } else { input.click(); }\n" +
+			"      }"
+		);
+	}
+
+	// ── Iframe-safe prompt for addAudioClip ──
+	const audioPromptMarker =
+		"var promptUrl = window.prompt('Enter audio URL, or click Cancel to choose a file.');\n" +
+		"      if (promptUrl != null && promptUrl.trim() !== '') {\n" +
+		"        audioUrl = promptUrl.trim();\n" +
+		"        insertAudioClip(audioUrl);\n" +
+		"      } else {\n" +
+		"        fileInput.click();\n" +
+		"      }";
+	if (out.includes(audioPromptMarker)) {
+		out = out.replace(audioPromptMarker,
+			"if (typeof showIframePrompt === 'function') {\n" +
+			"        showIframePrompt('Enter audio URL, or choose a file.', 'audio/*', function (result) {\n" +
+			"          if (result.url) { audioUrl = result.url; insertAudioClip(audioUrl); }\n" +
+			"          else if (result.file) { audioUrl = URL.createObjectURL(result.file); insertAudioClip(audioUrl); }\n" +
+			"        });\n" +
+			"      } else {\n" +
+			"        var promptUrl = window.prompt('Enter audio URL, or click Cancel to choose a file.');\n" +
+			"        if (promptUrl != null && promptUrl.trim() !== '') {\n" +
+			"          audioUrl = promptUrl.trim(); insertAudioClip(audioUrl);\n" +
+			"        } else { fileInput.click(); }\n" +
+			"      }"
+		);
+	}
+
+	// ── Live preview on Replace Video button ──
+	const replaceVideoRenderMarker =
+		"canvas.renderAll();\n" +
+		"                refreshTimeline();\n" +
+		"                refreshPropertyPanel();\n" +
+		"              });\n" +
+		"            }\n" +
+		"          };\n" +
+		"          fileInput.click();";
+	if (out.includes(replaceVideoRenderMarker) && !out.includes("/* Re-trigger live preview after replacing video */")) {
+		out = out.replace(replaceVideoRenderMarker,
+			"canvas.renderAll();\n" +
+			"                refreshTimeline();\n" +
+			"                refreshPropertyPanel();\n" +
+			"                /* Re-trigger live preview after replacing video */\n" +
+			"                if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.createLivePreview) {\n" +
+			"                  CfsVideoPreprocessor.createLivePreview(obj, src, canvas).catch(function () {});\n" +
+			"                }\n" +
+			"              });\n" +
+			"            }\n" +
+			"          };\n" +
+			"          fileInput.click();"
+		);
 	}
 
 	return out;

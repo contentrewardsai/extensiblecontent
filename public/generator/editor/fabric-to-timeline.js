@@ -215,6 +215,7 @@
         const clipStart = (start === 'auto' || start === 'end') ? start : (typeof start === 'number' ? start : 0);
         const clipLength = (length === 'auto' || length === 'end') ? length : (typeof length === 'number' ? length : 5);
         var videoSrc = obj.cfsVideoSrc;
+        var hasProcessedClip = typeof obj.cfsProcessedUrl === 'string' && obj.cfsProcessedUrl.length > 0;
         var videoMergeKey = obj.cfsMergeKey || (isPlaceholderContent(videoSrc, alias) ? alias : null) || extractMergeKeyFromOriginal(obj);
         var videoIsPlaceholder = !!videoMergeKey;
         var videoAlias = videoMergeKey || alias;
@@ -226,14 +227,15 @@
           var origVideoSrc = obj.cfsOriginalClip.asset.src || '';
           var useOrigVideoUrl = typeof videoSrc === 'string' && videoSrc.indexOf('blob:') === 0
             && typeof origVideoSrc === 'string' && origVideoSrc.indexOf('{{') === -1;
-          videoClip.asset.src = videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}')
-            : (useOrigVideoUrl ? origVideoSrc : (videoSrc || ''));
+          if (hasProcessedClip && !videoIsPlaceholder) {
+            videoClip.asset.src = obj.cfsProcessedUrl;
+            delete videoClip.asset.trim;
+            delete videoClip.asset.speed;
+          } else {
+            videoClip.asset.src = videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}')
+              : (useOrigVideoUrl ? origVideoSrc : (videoSrc || ''));
+          }
           if (obj.cfsVideoVolume != null && !isNaN(Number(obj.cfsVideoVolume))) videoClip.asset.volume = Number(obj.cfsVideoVolume);
-          /* Sync trim/speed from Fabric properties (user may have changed them via property panel) */
-          if (obj.cfsTrim != null && Number(obj.cfsTrim) > 0) videoClip.asset.trim = Number(obj.cfsTrim);
-          else if (obj.cfsTrim === 0 || obj.cfsTrim === '') delete videoClip.asset.trim;
-          if (obj.cfsSpeed != null && Number(obj.cfsSpeed) > 0 && Number(obj.cfsSpeed) !== 1) videoClip.asset.speed = Number(obj.cfsSpeed);
-          else if (obj.cfsSpeed === 1 || obj.cfsSpeed === '') delete videoClip.asset.speed;
           if (obj.cfsTransition && typeof obj.cfsTransition === 'object') videoClip.transition = obj.cfsTransition;
           if (obj.cfsEffect != null) videoClip.effect = obj.cfsEffect;
           if (obj.cfsFadeIn != null && !isNaN(Number(obj.cfsFadeIn))) videoClip.fadeIn = Math.max(0, Number(obj.cfsFadeIn));
@@ -254,8 +256,6 @@
         }
         const videoAsset = { type: 'video', src: videoIsPlaceholder ? ('{{ ' + videoAlias + ' }}') : videoSrc };
         if (obj.cfsVideoVolume != null && !isNaN(Number(obj.cfsVideoVolume))) videoAsset.volume = Number(obj.cfsVideoVolume);
-        if (obj.cfsTrim != null && Number(obj.cfsTrim) > 0) videoAsset.trim = Number(obj.cfsTrim);
-        if (obj.cfsSpeed != null && Number(obj.cfsSpeed) > 0 && Number(obj.cfsSpeed) !== 1) videoAsset.speed = Number(obj.cfsSpeed);
         var videoClip = {
           asset: videoAsset,
           start: clipStart,
@@ -279,9 +279,7 @@
         if (obj.cfsLengthWasEnd) videoClip._preserveEnd = true;
         if (obj.cfsLengthAuto) videoClip._preserveAuto = true;
         /* Use the VISUAL size of the Fabric group (width × scaleX) for the clip
-           container, not the original source video dimensions.  The Pixi player
-           uses clip.width/height as the target box for fit/crop, and if we pass
-           the original 1080×1920 here the video appears too big/zoomed. */
+           container, not the original source video dimensions. */
         var visualW = (obj.width != null ? obj.width : 0) * (obj.scaleX != null ? obj.scaleX : 1);
         var visualH = (obj.height != null ? obj.height : 0) * (obj.scaleY != null ? obj.scaleY : 1);
         if (visualW > 0 && visualH > 0) {

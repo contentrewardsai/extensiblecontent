@@ -78,5 +78,6 @@ function buildWhopEditorContext(experienceId: string): ShotstackEditorContext {
 		backUrl: `/experiences/${experienceId}/shotstack`,
 		thumbnailUploadUrl: `/api/whop/shotstack-templates/:id/thumbnail?${query}`,
 		imageUploadUrl: `/api/whop/shotstack-templates/upload-image?${query}`,
+		videoUploadUrl: `/api/whop/shotstack-templates/upload-video?${query}`,
 	};
 }

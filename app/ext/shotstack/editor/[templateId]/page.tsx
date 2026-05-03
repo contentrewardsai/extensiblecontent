@@ -158,6 +158,7 @@ function buildGhlEditorContext({
 		backUrl: `/ext/shotstack${backQs.toString() ? `?${backQs.toString()}` : ""}`,
 		thumbnailUploadUrl: "/api/ghl/shotstack-templates/:id/thumbnail",
 		imageUploadUrl: "/api/ghl/shotstack-templates/upload-image",
+		videoUploadUrl: "/api/ghl/shotstack-templates/upload-video",
 	};
 }
 

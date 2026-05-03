@@ -54,6 +54,8 @@ export const SHOTSTACK_EDITOR_SCRIPT_HREFS: string[] = [
 	"/generator/editor/timeline-panel.js",
 	"/lib/ffmpeg/ffmpeg.js",
 	"/shared/ffmpeg-local.js",
+	"/lib/mp4box.all.min.js",
+	"/generator/editor/video-preprocessor.js",
 	"/generator/editor/json-patch.js",
 	"/shared/shotstack-merge-placeholder-fill.js",
 	"/generator/editor/unified-editor.js",

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Video Preprocessor Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; background: #1a1a2e; color: #e0e0e0; }
+    h1 { color: #00d4aa; }
+    .test { margin: 16px 0; padding: 12px; border-radius: 8px; background: #16213e; }
+    .pass { border-left: 4px solid #00d4aa; }
+    .fail { border-left: 4px solid #ff6b6b; }
+    .info { border-left: 4px solid #ffd93d; }
+    code { background: #0a0a1a; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    #results { margin-top: 20px; }
+    button { background: #00d4aa; color: #1a1a2e; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
+    button:hover { background: #00b894; }
+    #progress { margin-top: 12px; font-style: italic; color: #ffd93d; }
+  </style>
+</head>
+<body>
+  <h1>🎬 Video Preprocessor — Test Suite</h1>
+  <div id="results"></div>
+  <div id="progress"></div>
+
+  <!-- Load the dependencies in order -->
+  <script src="/lib/ffmpeg/ffmpeg.js"></script>
+  <script src="/shared/ffmpeg-local.js"></script>
+  <script src="/lib/mp4box.all.min.js"></script>
+  <script src="/generator/editor/video-preprocessor.js"></script>
+  <script>
+    var results = document.getElementById('results');
+    var progress = document.getElementById('progress');
+    var passed = 0, failed = 0;
+
+    function log(msg, type) {
+      var div = document.createElement('div');
+      div.className = 'test ' + (type || 'info');
+      div.innerHTML = msg;
+      results.appendChild(div);
+      if (type === 'pass') passed++;
+      if (type === 'fail') failed++;
+    }
+
+    function updateProgress(msg) {
+      progress.textContent = msg;
+    }
+
+    /* ── Test 1: Module loaded ── */
+    if (typeof CfsVideoPreprocessor !== 'undefined') {
+      log('✅ <code>CfsVideoPreprocessor</code> loaded successfully', 'pass');
+    } else {
+      log('❌ <code>CfsVideoPreprocessor</code> not found on window', 'fail');
+    }
+
+    /* ── Test 2: API surface check ── */
+    var expectedMethods = ['probe', 'process', 'upload', 'processAndPersist', 'selectTier', 'capabilities', 'revoke', 'createLivePreview', 'syncToTime', 'syncAllToTime', 'playAll', 'pauseAll', 'destroyPreview'];
+    var missingMethods = [];
+    expectedMethods.forEach(function (m) {
+      if (typeof CfsVideoPreprocessor[m] !== 'function') missingMethods.push(m);
+    });
+    if (missingMethods.length === 0) {
+      log('✅ All API methods present: <code>' + expectedMethods.join(', ') + '</code>', 'pass');
+    } else {
+      log('❌ Missing methods: <code>' + missingMethods.join(', ') + '</code>', 'fail');
+    }
+
+    /* ── Test 3: Capabilities report ── */
+    var caps = CfsVideoPreprocessor.capabilities();
+    log('ℹ️ Capabilities: FFmpeg=' + caps.ffmpeg + ', WebCodecs=' + caps.webcodecs + ', MP4Box=' + caps.mp4box + ', Preferred=' + caps.preferredTier, 'info');
+
+    /* ── Test 4: FFmpegLocal loaded ── */
+    if (typeof FFmpegLocal !== 'undefined') {
+      log('✅ <code>FFmpegLocal</code> loaded', 'pass');
+      var ffMethods = ['ensureLoaded', 'convertToMp4', 'probeDurationSeconds'];
+      var ffMissing = [];
+      ffMethods.forEach(function (m) {
+        if (typeof FFmpegLocal[m] !== 'function') ffMissing.push(m);
+      });
+      if (ffMissing.length === 0) {
+        log('✅ FFmpegLocal base methods present: <code>' + ffMethods.join(', ') + '</code>', 'pass');
+      } else {
+        log('❌ FFmpegLocal missing: <code>' + ffMissing.join(', ') + '</code>', 'fail');
+      }
+    } else {
+      log('❌ <code>FFmpegLocal</code> not found', 'fail');
+    }
+
+    /* ── Test 5: MP4Box loaded ── */
+    if (typeof MP4Box !== 'undefined' && typeof MP4Box.createFile === 'function') {
+      log('✅ <code>MP4Box</code> loaded with createFile()', 'pass');
+    } else {
+      log('❌ <code>MP4Box</code> not loaded or missing createFile()', 'fail');
+    }
+
+    /* ── Test 6: Tier selection logic ── */
+    var tiers = [];
+    // Small file → should pick FFmpeg (if available) or webcodecs
+    var t1 = CfsVideoPreprocessor.selectTier({ width: 1920, height: 1080, duration: 30, fileSize: 50e6 }, {});
+    tiers.push('50MB 1080p → ' + t1);
+    // Large file → should pick webcodecs
+    var t2 = CfsVideoPreprocessor.selectTier({ width: 1920, height: 1080, duration: 120, fileSize: 200e6 }, {});
+    tiers.push('200MB 1080p → ' + t2);
+    // 4K file → should pick webcodecs
+    var t3 = CfsVideoPreprocessor.selectTier({ width: 3840, height: 2160, duration: 30, fileSize: 80e6 }, {});
+    tiers.push('80MB 4K → ' + t3);
+    // Long video, small clip → should pick webcodecs (stream copy)
+    var t4 = CfsVideoPreprocessor.selectTier({ width: 1920, height: 1080, duration: 600, fileSize: 100e6 }, { duration: 60 });
+    tiers.push('600s→60s clip → ' + t4);
+    log('ℹ️ Tier selection: ' + tiers.join(' | '), 'info');
+    // Verify expected behavior
+    if (caps.ffmpeg && t1 === 'ffmpeg') {
+      log('✅ Small file correctly routed to FFmpeg', 'pass');
+    } else if (!caps.ffmpeg && (t1 === 'webcodecs' || t1 === 'direct')) {
+      log('✅ Small file correctly routed to ' + t1 + ' (FFmpeg unavailable)', 'pass');
+    } else {
+      log('⚠️ Unexpected tier for small file: ' + t1, 'info');
+    }
+    if (caps.webcodecs && t2 === 'webcodecs') {
+      log('✅ Large file correctly routed to WebCodecs', 'pass');
+    }
+    if (caps.webcodecs && t3 === 'webcodecs') {
+      log('✅ 4K file correctly routed to WebCodecs', 'pass');
+    }
+
+    /* ── Test 7: Quick probe with placeholder (should return zeros) ── */
+    CfsVideoPreprocessor.probe('{{ VIDEO_SRC }}', function () {}).then(function (meta) {
+      if (meta.width === 0 && meta.height === 0 && meta.duration === 0) {
+        log('✅ Placeholder URL correctly returns zero metadata', 'pass');
+      } else {
+        log('❌ Placeholder URL returned unexpected metadata: ' + JSON.stringify(meta), 'fail');
+      }
+      showSummary();
+    });
+
+    /* ── Test 8: Quick probe with empty string ── */
+    CfsVideoPreprocessor.probe('', function () {}).then(function (meta) {
+      if (meta.width === 0 && meta.height === 0) {
+        log('✅ Empty string correctly returns zero metadata', 'pass');
+      } else {
+        log('❌ Empty string returned unexpected metadata', 'fail');
+      }
+    });
+
+    /* ── Test 9: Revoke safety (should not throw) ── */
+    try {
+      CfsVideoPreprocessor.revoke(null);
+      CfsVideoPreprocessor.revoke('');
+      CfsVideoPreprocessor.revoke('https://example.com/video.mp4');
+      CfsVideoPreprocessor.revoke('blob:http://localhost/test');
+      log('✅ revoke() handles all edge cases without throwing', 'pass');
+    } catch (e) {
+      log('❌ revoke() threw: ' + e.message, 'fail');
+    }
+
+    /* ── Test 10: destroyPreview safety ── */
+    try {
+      CfsVideoPreprocessor.destroyPreview(null);
+      CfsVideoPreprocessor.destroyPreview({});
+      CfsVideoPreprocessor.destroyPreview({ _cfsLiveVideoEl: null });
+      log('✅ destroyPreview() handles null/empty safely', 'pass');
+    } catch (e) {
+      log('❌ destroyPreview() threw: ' + e.message, 'fail');
+    }
+
+    /* ── Test 11: createLivePreview returns null for placeholder ── */
+    CfsVideoPreprocessor.createLivePreview(null, '{{ VIDEO }}', null).then(function (result) {
+      if (result === null) {
+        log('✅ createLivePreview correctly rejects placeholder URL', 'pass');
+      } else {
+        log('❌ createLivePreview should return null for placeholder', 'fail');
+      }
+    });
+
+    function showSummary() {
+      setTimeout(function () {
+        var total = passed + failed;
+        var color = failed === 0 ? '#00d4aa' : '#ff6b6b';
+        log('<strong style="color:' + color + '">Summary: ' + passed + '/' + total + ' tests passed</strong>', failed === 0 ? 'pass' : 'fail');
+        progress.textContent = 'Tests complete.';
+      }, 500);
+    }
+  </script>
+</body>
+</html>

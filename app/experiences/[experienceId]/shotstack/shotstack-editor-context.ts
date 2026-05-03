@@ -55,4 +55,14 @@ export interface ShotstackEditorContext {
 	 * re-verify the caller.
 	 */
 	imageUploadUrl?: string;
+	/**
+	 * Optional: full URL of the video-upload endpoint used by the visual
+	 * editor to persist preprocessed video clips. When set, the editor
+	 * uploads processed clips (trimmed, scaled, format-normalized) so they
+	 * survive browser restarts. Falls back to HighLevel → Supabase.
+	 *
+	 * The same `browserRenderFields` are appended so the server can
+	 * re-verify the caller.
+	 */
+	videoUploadUrl?: string;
 }

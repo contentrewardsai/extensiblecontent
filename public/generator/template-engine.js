@@ -1128,20 +1128,18 @@
         if (audioPlayback && audioPlayback.start) {
           audioPlayback.start().catch(function (err) { console.warn('[CFS] Audio playback start failed', err); });
         }
-        /* Start all embedded <video> elements playing so the browser decodes
-           frames sequentially (smooth).  Seeking every frame is very slow and
-           produces jerky output because the decoder must find the nearest
-           keyframe for each seek. */
         if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);
         const startTime = Date.now();
         let lastReportedSec = -1;
         function driveFrame() {
-          const elapsed = (Date.now() - startTime) / 1000;
+          const elapsed = (audioPlayback && audioPlayback.getCurrentTimeSec)
+            ? audioPlayback.getCurrentTimeSec()
+            : ((Date.now() - startTime) / 1000);
           if (onProgress) {
             const sec = Math.floor(elapsed);
             if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }
           }
-          if (elapsed >= durationSec) {
+          if (elapsed >= durationSec || (audioPlayback && audioPlayback.isEnded && audioPlayback.isEnded())) {
             try { recorder.stop(); } catch (_) {}
             return;
           }
