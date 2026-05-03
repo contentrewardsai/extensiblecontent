@@ -823,8 +823,9 @@ function patchUnifiedEditor(text) {
 			"      _videoReprocessTimers[objName] = setTimeout(function () {\n" +
 			"        delete _videoReprocessTimers[objName];\n" +
 			"        var src = obj.cfsVideoSrc;\n" +
-			"        var oW = dim && dim.w ? dim.w : 1920;\n" +
-			"        var oH = dim && dim.h ? dim.h : 1080;\n" +
+			"        var _dim = typeof getCanvasDimensions === 'function' ? getCanvasDimensions() : {};\n" +
+			"        var oW = _dim && _dim.w ? _dim.w : 1920;\n" +
+			"        var oH = _dim && _dim.h ? _dim.h : 1080;\n" +
 			"        var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
 			"        var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
 			"        CfsVideoPreprocessor.processAndPersist(src, { trimStart: obj.cfsTrim || 0, speed: obj.cfsSpeed || 1, width: oW, height: oH, fps: 30 }, uUrl, uFields, function () {}).then(function (r) {\n" +
@@ -877,8 +878,9 @@ function patchUnifiedEditor(text) {
 			"/* ── Video Preprocessor: process on add ── */\n" +
 			"        if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.processAndPersist) {\n" +
 			"          (function (g, lbl) {\n" +
-			"            var oW = dim && dim.w ? dim.w : 1920;\n" +
-			"            var oH = dim && dim.h ? dim.h : 1080;\n" +
+			"            var _d = typeof getCanvasDimensions === 'function' ? getCanvasDimensions() : {};\n" +
+			"            var oW = _d && _d.w ? _d.w : 1920;\n" +
+			"            var oH = _d && _d.h ? _d.h : 1080;\n" +
 			"            var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
 			"            var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
 			"            CfsVideoPreprocessor.processAndPersist(src, { width: oW, height: oH, fps: 30 }, uUrl, uFields, function (msg) {\n" +
@@ -1126,7 +1128,7 @@ function patchPixiTimelinePlayer(text) {
 		"  PixiShotstackPlayer.prototype.startVideoPlayback = function (timelineStart) {\n" +
 		"    this._clipDisplays.forEach(function (disp, i) {\n" +
 		"      if (!disp._videoEl) return;\n" +
-		"      var meta = this._clipMeta[i] || {};\n" +
+		"      var meta = disp.cfsClipMeta || {};\n" +
 		"      var clip = meta.clip || {};\n" +
 		"      var videoAsset = clip.asset || {};\n" +
 		"      var start = meta.start || 0;\n" +

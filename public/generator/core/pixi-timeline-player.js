@@ -2515,7 +2515,7 @@
   PixiShotstackPlayer.prototype.startVideoPlayback = function (timelineStart) {
     this._clipDisplays.forEach(function (disp, i) {
       if (!disp._videoEl) return;
-      var meta = this._clipMeta[i] || {};
+      var meta = disp.cfsClipMeta || {};
       var clip = meta.clip || {};
       var videoAsset = clip.asset || {};
       var start = meta.start || 0;
