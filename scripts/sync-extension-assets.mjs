@@ -823,12 +823,10 @@ function patchUnifiedEditor(text) {
 			"      _videoReprocessTimers[objName] = setTimeout(function () {\n" +
 			"        delete _videoReprocessTimers[objName];\n" +
 			"        var src = obj.cfsVideoSrc;\n" +
-			"        var _dim = typeof getCanvasDimensions === 'function' ? getCanvasDimensions() : {};\n" +
-			"        var oW = _dim && _dim.w ? _dim.w : 1920;\n" +
-			"        var oH = _dim && _dim.h ? _dim.h : 1080;\n" +
 			"        var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
 			"        var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
-			"        CfsVideoPreprocessor.processAndPersist(src, { trimStart: obj.cfsTrim || 0, speed: obj.cfsSpeed || 1, width: oW, height: oH, fps: 30 }, uUrl, uFields, function () {}).then(function (r) {\n" +
+			"        var _pCfg = (typeof window !== 'undefined' && window.__CFS_presignedConfig) || null;\n" +
+			"        CfsVideoPreprocessor.processAndPersist(src, { trimStart: obj.cfsTrim || 0, speed: obj.cfsSpeed || 1, width: 0, height: 0, fps: 30 }, uUrl, uFields, function () {}, _pCfg).then(function (r) {\n" +
 			"          if (r.url) { var old = obj.cfsProcessedUrl; if (old && old.indexOf('blob:') === 0) { try { URL.revokeObjectURL(old); } catch (_) {} } obj.set('cfsProcessedUrl', r.url); }\n" +
 			"          if (typeof saveStateDebounced === 'function') saveStateDebounced();\n" +
 			"        }).catch(function () {});\n" +
@@ -878,14 +876,12 @@ function patchUnifiedEditor(text) {
 			"/* ── Video Preprocessor: process on add ── */\n" +
 			"        if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.processAndPersist) {\n" +
 			"          (function (g, lbl) {\n" +
-			"            var _d = typeof getCanvasDimensions === 'function' ? getCanvasDimensions() : {};\n" +
-			"            var oW = _d && _d.w ? _d.w : 1920;\n" +
-			"            var oH = _d && _d.h ? _d.h : 1080;\n" +
 			"            var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';\n" +
 			"            var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};\n" +
-			"            CfsVideoPreprocessor.processAndPersist(src, { width: oW, height: oH, fps: 30 }, uUrl, uFields, function (msg) {\n" +
+			"            var _pCfg = (typeof window !== 'undefined' && window.__CFS_presignedConfig) || null;\n" +
+			"            CfsVideoPreprocessor.processAndPersist(src, { width: 0, height: 0, fps: 30 }, uUrl, uFields, function (msg) {\n" +
 			"              try { if (lbl) { lbl.set('text', msg); if (canvas) canvas.renderAll(); } } catch (_) {}\n" +
-			"            }).then(function (result) {\n" +
+			"            }, _pCfg).then(function (result) {\n" +
 			"              if (!g.canvas) return;\n" +
 			"              var previewUrl = result.url || result.blobUrl || src;\n" +
 			"              if (result.url) g.set('cfsProcessedUrl', result.url);\n" +

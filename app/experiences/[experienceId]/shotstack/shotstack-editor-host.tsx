@@ -149,9 +149,13 @@ export function ShotstackEditorHost({
 		const w = window as unknown as {
 			__CFS_videoUploadUrl?: string;
 			__CFS_videoUploadFields?: Record<string, string>;
+			__CFS_presignedConfig?: { presignedUploadUrl: string; confirmUploadUrl: string; template_id: string } | null;
 		};
 		w.__CFS_videoUploadUrl = context.videoUploadUrl || "";
 		w.__CFS_videoUploadFields = context.browserRenderFields || {};
+		w.__CFS_presignedConfig = context.presignedUploadUrl && context.confirmUploadUrl
+			? { presignedUploadUrl: context.presignedUploadUrl, confirmUploadUrl: context.confirmUploadUrl, template_id: templateId }
+			: null;
 
 		const inst = window.__CFS_unifiedEditor.create(el, {
 			template: initialEdit,

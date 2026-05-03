@@ -34,6 +34,7 @@ function mimeToExt(mime: string): string {
  * defaults to that location's Media Library.
  */
 export async function POST(request: NextRequest) {
+	console.warn("[DEPRECATED] POST /api/ghl/shotstack/browser-render — use /api/ghl/shotstack/presigned-upload + /api/ghl/shotstack/confirm-upload instead (bypasses Vercel 4.5MB body limit)");
 	const supabase = getServiceSupabase();
 	let form: FormData;
 	try {

@@ -7892,14 +7892,12 @@
         /* ── Video Preprocessor: process on add ── */
         if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.processAndPersist) {
           (function (g, lbl) {
-            var _d = typeof getCanvasDimensions === 'function' ? getCanvasDimensions() : {};
-            var oW = _d && _d.w ? _d.w : 1920;
-            var oH = _d && _d.h ? _d.h : 1080;
             var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';
             var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};
-            CfsVideoPreprocessor.processAndPersist(src, { width: oW, height: oH, fps: 30 }, uUrl, uFields, function (msg) {
+            var _pCfg = (typeof window !== 'undefined' && window.__CFS_presignedConfig) || null;
+            CfsVideoPreprocessor.processAndPersist(src, { width: 0, height: 0, fps: 30 }, uUrl, uFields, function (msg) {
               try { if (lbl) { lbl.set('text', msg); if (canvas) canvas.renderAll(); } } catch (_) {}
-            }).then(function (result) {
+            }, _pCfg).then(function (result) {
               if (!g.canvas) return;
               var previewUrl = result.url || result.blobUrl || src;
               if (result.url) g.set('cfsProcessedUrl', result.url);

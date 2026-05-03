@@ -33,6 +33,7 @@ function mimeToExt(mime: string): string {
  * our Supabase post-media buckets per the storage-destination resolver.
  */
 export async function POST(request: NextRequest) {
+	console.warn("[DEPRECATED] POST /api/whop/shotstack/browser-render — use /api/whop/shotstack/presigned-upload + /api/whop/shotstack/confirm-upload instead (bypasses Vercel 4.5MB body limit)");
 	const supabase = getServiceSupabase();
 	let form: FormData;
 	try {

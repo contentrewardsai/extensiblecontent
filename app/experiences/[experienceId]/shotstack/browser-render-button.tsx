@@ -109,6 +109,110 @@ function runWithTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<
 	});
 }
 
+/**
+ * Upload a blob directly to Supabase via presigned URL, then confirm.
+ * Falls back to the legacy FormData upload when presigned URLs aren't configured.
+ */
+async function presignedUploadBlob(
+	blob: Blob,
+	contentType: string,
+	filename: string,
+	context: ShotstackEditorContext,
+	templateId: string,
+	onProgress: (msg: string) => void,
+): Promise<{ ok: boolean; file_url?: string; storage_type?: string; fallback_message?: string | null; error?: string }> {
+	// Fall back to legacy upload if presigned endpoints aren't configured
+	if (!context.presignedUploadUrl || !context.confirmUploadUrl) {
+		onProgress(`Uploading ${filename}…`);
+		const fd = new FormData();
+		for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
+		fd.append("template_id", templateId);
+		fd.append("file", blob, filename);
+		fd.append("content_type", contentType);
+		const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
+		const j = (await up.json().catch(() => ({}))) as { error?: string; ok?: boolean; file_url?: string; storage_type?: string; fallback_message?: string | null };
+		if (!up.ok) return { ok: false, error: j.error || `Upload failed (${up.status})` };
+		return { ok: true, file_url: j.file_url, storage_type: j.storage_type, fallback_message: j.fallback_message };
+	}
+
+	// Step 1: Get presigned upload URL
+	onProgress("Preparing upload…");
+	const presignBody: Record<string, unknown> = {
+		filename,
+		content_type: contentType,
+		size_bytes: blob.size,
+		template_id: templateId,
+		...context.browserRenderFields,
+	};
+	const presignRes = await fetch(context.presignedUploadUrl, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		body: JSON.stringify(presignBody),
+	});
+	const presignJson = (await presignRes.json().catch(() => ({}))) as {
+		ok?: boolean;
+		upload_url?: string;
+		file_url?: string;
+		file_path?: string;
+		render_id?: string;
+		project_id?: string;
+		owner_id?: string;
+		error?: string;
+	};
+	if (!presignRes.ok || !presignJson.upload_url) {
+		return { ok: false, error: presignJson.error || `Presign failed (${presignRes.status})` };
+	}
+
+	// Step 2: PUT blob directly to Supabase Storage
+	onProgress(`Uploading ${filename} (${(blob.size / 1e6).toFixed(1)} MB)…`);
+	const putRes = await fetch(presignJson.upload_url, {
+		method: "PUT",
+		headers: { "Content-Type": contentType },
+		body: blob,
+	});
+	if (!putRes.ok) {
+		const putText = await putRes.text().catch(() => "");
+		return { ok: false, error: `Direct upload failed (${putRes.status}): ${putText}` };
+	}
+
+	// Step 3: Confirm upload (register in DB + optional GHL import)
+	onProgress("Finalizing…");
+	const confirmBody: Record<string, unknown> = {
+		file_url: presignJson.file_url,
+		file_path: presignJson.file_path,
+		render_id: presignJson.render_id,
+		template_id: templateId,
+		content_type: contentType,
+		size_bytes: blob.size,
+		source: "browser",
+		...context.browserRenderFields,
+	};
+	const confirmRes = await fetch(context.confirmUploadUrl, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		body: JSON.stringify(confirmBody),
+	});
+	const confirmJson = (await confirmRes.json().catch(() => ({}))) as {
+		ok?: boolean;
+		file_url?: string;
+		storage_type?: string;
+		fallback_message?: string | null;
+		error?: string;
+	};
+	if (!confirmRes.ok) {
+		return { ok: false, error: confirmJson.error || `Confirm failed (${confirmRes.status})` };
+	}
+	return {
+		ok: true,
+		file_url: confirmJson.file_url,
+		storage_type: confirmJson.storage_type,
+		fallback_message: confirmJson.fallback_message,
+	};
+}
+
+
 export function BrowserRenderButton({
 	templateId,
 	templateName: _templateName,
@@ -183,17 +287,10 @@ export function BrowserRenderButton({
 				const dataUrl = cv.toDataURL({ format: "png", quality: 1, multiplier: 1 });
 				const res = await fetch(dataUrl);
 				const blob = await res.blob();
-				setMsg("Uploading image…");
-				const fd = new FormData();
-				for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
-				fd.append("template_id", templateId);
-				fd.append("file", blob, "render.png");
-				fd.append("content_type", "image/png");
-				const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
-				const j = (await up.json().catch(() => ({}))) as { error?: string; storage_type?: string; fallback_message?: string | null };
-				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
-				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
-				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
+				const result = await presignedUploadBlob(blob, "image/png", "render.png", context, templateId, setMsg);
+				if (!result.ok) throw new Error(result.error || "Upload failed");
+				const dest = result.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
+				setMsg(`${dest}${result.fallback_message ? ` ${result.fallback_message}` : ""}`);
 				return;
 			}
 
@@ -238,17 +335,11 @@ export function BrowserRenderButton({
 						if (result.ok && result.blob) { audioBlob = result.blob; ext = "mp3"; }
 					} catch { /* use WAV */ }
 				}
-				setMsg(`Uploading ${ext.toUpperCase()}…`);
-				const fd = new FormData();
-				for (const [k, v] of Object.entries(context.browserRenderFields)) fd.append(k, v);
-				fd.append("template_id", templateId);
-				fd.append("file", audioBlob, `render.${ext}`);
-				fd.append("content_type", audioBlob.type || (ext === "mp3" ? "audio/mpeg" : "audio/wav"));
-				const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
-				const j = (await up.json().catch(() => ({}))) as { error?: string; storage_type?: string; fallback_message?: string | null };
-				if (!up.ok) throw new Error(j.error || `Upload failed (${up.status})`);
-				const dest = j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
-				setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
+				const audioContentType = audioBlob.type || (ext === "mp3" ? "audio/mpeg" : "audio/wav");
+				const audioResult = await presignedUploadBlob(audioBlob, audioContentType, `render.${ext}`, context, templateId, setMsg);
+				if (!audioResult.ok) throw new Error(audioResult.error || "Upload failed");
+				const dest = audioResult.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
+				setMsg(`${dest}${audioResult.fallback_message ? ` ${audioResult.fallback_message}` : ""}`);
 				return;
 			}
 
@@ -413,29 +504,15 @@ export function BrowserRenderButton({
 				// console for debugging.
 				setMsg("Uploading WebM…");
 			}
-			const fd = new FormData();
-			for (const [k, v] of Object.entries(context.browserRenderFields)) {
-				fd.append(k, v);
-			}
-			fd.append("template_id", templateId);
-			fd.append("file", blob, `render.${ext}`);
-			fd.append("content_type", contentType);
-			const up = await fetch(context.browserRenderUrl, { method: "POST", body: fd, credentials: "include" });
-			const j = (await up.json().catch(() => ({}))) as {
-				error?: string;
-				file_url?: string;
-				ok?: boolean;
-				storage_type?: "supabase" | "ghl";
-				fallback_message?: string | null;
-			};
-			if (!up.ok) {
-				throw new Error(j.error || `Upload failed (${up.status})`);
+			const uploadResult = await presignedUploadBlob(blob, contentType, `render.${ext}`, context, templateId, setMsg);
+			if (!uploadResult.ok) {
+				throw new Error(uploadResult.error || "Upload failed");
 			}
 			// Surface the destination so the user knows whether their render landed
 			// in the HighLevel Media Library or in our Supabase buckets — and show
 			// the fallback reason when we couldn't honour their preference.
 			const dest =
-				j.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
+				uploadResult.storage_type === "ghl" ? "Uploaded to HighLevel Media Library." : "Uploaded to Content Rewards AI storage.";
 			// Worker / format notes are intentionally NOT surfaced to the user
 			// when everything still produced a working video — they're console
 			// diagnostics, not actionable problems for the end-user. The
@@ -448,7 +525,7 @@ export function BrowserRenderButton({
 			if (!isMp4) {
 				console.warn("[BrowserRender] uploaded as WebM (FFmpeg load failed in this browser context)");
 			}
-			setMsg(`${dest}${j.fallback_message ? ` ${j.fallback_message}` : ""}`);
+			setMsg(`${dest}${uploadResult.fallback_message ? ` ${uploadResult.fallback_message}` : ""}`);
 		} catch (e) {
 			setMsg(e instanceof Error ? e.message : "Render failed");
 		} finally {

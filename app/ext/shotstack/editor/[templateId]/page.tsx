@@ -159,6 +159,8 @@ function buildGhlEditorContext({
 		thumbnailUploadUrl: "/api/ghl/shotstack-templates/:id/thumbnail",
 		imageUploadUrl: "/api/ghl/shotstack-templates/upload-image",
 		videoUploadUrl: "/api/ghl/shotstack-templates/upload-video",
+		presignedUploadUrl: "/api/ghl/shotstack/presigned-upload",
+		confirmUploadUrl: "/api/ghl/shotstack/confirm-upload",
 	};
 }
 

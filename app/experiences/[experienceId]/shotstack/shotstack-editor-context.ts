@@ -65,4 +65,18 @@ export interface ShotstackEditorContext {
 	 * re-verify the caller.
 	 */
 	videoUploadUrl?: string;
+	/**
+	 * Optional: presigned upload endpoint. Returns a Supabase signed URL so the
+	 * browser can PUT the file directly — bypasses Vercel's 4.5 MB body limit.
+	 *
+	 * The same `browserRenderFields` are appended so the server can
+	 * re-verify the caller.
+	 */
+	presignedUploadUrl?: string;
+	/**
+	 * Optional: confirm upload endpoint. Called after the browser has PUT the
+	 * file directly to Supabase. Registers the render in the DB and optionally
+	 * imports into the GHL Media Library by URL.
+	 */
+	confirmUploadUrl?: string;
 }

@@ -278,17 +278,102 @@
 
   /**
    * Upload a processed blob to persistent storage.
+   * Prefers presigned URL flow (direct-to-Supabase) when available,
+   * falling back to legacy FormData upload through the serverless function.
+   *
    * @param {Blob} blob - Processed MP4 blob
-   * @param {string} uploadUrl - Server endpoint URL
+   * @param {string} uploadUrl - Legacy server endpoint URL (or null)
    * @param {object} fields - Extra form fields (e.g. { experienceId })
    * @param {function} onProgress
-   * @returns {Promise<{ url: string }>}
+   * @param {object} [presignedConfig] - { presignedUploadUrl, confirmUploadUrl, template_id }
+   * @returns {Promise<{ url: string, persisted: boolean }>}
    */
-  function upload(blob, uploadUrl, fields, onProgress) {
-    if (!uploadUrl) {
+  function upload(blob, uploadUrl, fields, onProgress, presignedConfig) {
+    if (!uploadUrl && (!presignedConfig || !presignedConfig.presignedUploadUrl)) {
       console.warn('[CFS Preprocessor] No upload URL configured — blob not persisted');
       return Promise.resolve({ url: URL.createObjectURL(blob), persisted: false });
     }
+
+    /* ── Presigned URL flow: browser → Supabase directly ── */
+    if (presignedConfig && presignedConfig.presignedUploadUrl && presignedConfig.confirmUploadUrl) {
+      onProgress('Preparing upload…');
+      var filename = 'processed-clip-' + Date.now() + '.mp4';
+      var presignBody = {
+        filename: filename,
+        content_type: 'video/mp4',
+        size_bytes: blob.size,
+        template_id: presignedConfig.template_id || ''
+      };
+      if (fields) {
+        Object.keys(fields).forEach(function (k) {
+          presignBody[k] = fields[k];
+        });
+      }
+
+      return fetch(presignedConfig.presignedUploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(presignBody)
+      }).then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (t) {
+            throw new Error('Presign failed (' + res.status + '): ' + t);
+          });
+        }
+        return res.json();
+      }).then(function (presign) {
+        if (!presign.upload_url) throw new Error('Presign response missing upload_url');
+
+        onProgress('Uploading (' + (blob.size / 1e6).toFixed(1) + ' MB)…');
+        return fetch(presign.upload_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'video/mp4' },
+          body: blob
+        }).then(function (putRes) {
+          if (!putRes.ok) {
+            return putRes.text().then(function (t) {
+              throw new Error('Direct upload failed (' + putRes.status + '): ' + t);
+            });
+          }
+          onProgress('Finalizing…');
+          var confirmBody = {
+            file_url: presign.file_url,
+            file_path: presign.file_path,
+            render_id: presign.render_id,
+            template_id: presignedConfig.template_id || '',
+            content_type: 'video/mp4',
+            size_bytes: blob.size,
+            source: 'editor'
+          };
+          if (fields) {
+            Object.keys(fields).forEach(function (k) {
+              confirmBody[k] = fields[k];
+            });
+          }
+          return fetch(presignedConfig.confirmUploadUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(confirmBody)
+          });
+        }).then(function (confirmRes) {
+          if (!confirmRes.ok) {
+            return confirmRes.text().then(function (t) {
+              throw new Error('Confirm failed (' + confirmRes.status + '): ' + t);
+            });
+          }
+          return confirmRes.json();
+        }).then(function (confirmJson) {
+          var url = confirmJson.file_url || presign.file_url || '';
+          if (!url) throw new Error('Confirm response missing URL');
+          onProgress('Upload complete ✓');
+          return { url: url, persisted: true };
+        });
+      });
+    }
+
+    /* ── Legacy FormData upload (fallback for older deployments) ── */
     onProgress('Uploading processed clip…');
     var fd = new FormData();
     if (fields) {
@@ -428,8 +513,14 @@
 
   /**
    * Full pipeline: probe → process → upload → return persistent URL.
+   * @param {string} src
+   * @param {object} opts
+   * @param {string} uploadUrl - Legacy upload URL (can be null if presignedConfig provided)
+   * @param {object} fields
+   * @param {function} onProgress
+   * @param {object} [presignedConfig] - { presignedUploadUrl, confirmUploadUrl, template_id }
    */
-  function processAndPersist(src, opts, uploadUrl, fields, onProgress) {
+  function processAndPersist(src, opts, uploadUrl, fields, onProgress, presignedConfig) {
     var report = typeof onProgress === 'function' ? onProgress : function () {};
     return process(src, opts, report).then(function (result) {
       if (!result.blob) {
@@ -444,7 +535,7 @@
         };
       }
       /* Upload to persistent storage */
-      return upload(result.blob, uploadUrl, fields, report)
+      return upload(result.blob, uploadUrl, fields, report, presignedConfig)
         .then(function (uploadResult) {
           /* Revoke the temporary blob URL now that we have a persistent one */
           try { URL.revokeObjectURL(result.blobUrl); } catch (_) {}
