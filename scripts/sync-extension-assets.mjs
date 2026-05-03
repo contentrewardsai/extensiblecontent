@@ -558,89 +558,67 @@ function patchTemplateEngine(text) {
 		"          reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));\n" +
 		"          return;\n" +
 		"        }\n" +
-		"        /* ── Frame-by-frame rendering with Web Worker ticker ──\n" +
-		"           Worker timers are NEVER throttled in background tabs, so\n" +
-		"           rendering continues at full speed even if the user switches\n" +
-		"           to another tab. The worker posts 'tick' messages; the main\n" +
-		"           thread advances one frame per tick after video decode. */\n" +
-		"        var totalFrames = Math.ceil(durationSec * fps);\n" +
-		"        var frameIndex = 0;\n" +
+		"        /* ── Hybrid real-time render with Worker ticker ──\n" +
+		"           Videos play natively at real speed (fast, no per-frame\n" +
+		"           seeking). A Web Worker ticker drives the render loop so\n" +
+		"           it keeps running in background tabs. On each tick we\n" +
+		"           redraw video canvas intermediaries and explicitly push\n" +
+		"           the frame to MediaRecorder via requestFrame(). */\n" +
+		"        if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);\n" +
+		"        var renderStartTime = Date.now();\n" +
 		"        var lastReportedSec = -1;\n" +
-		"        var frameReady = true;\n" +
-		"        var lastFrameTime = Date.now();\n" +
+		"        var renderDone = false;\n" +
 		"        var tickerWorker = null;\n" +
 		"        try {\n" +
-		"          var workerCode = 'var iv=setInterval(function(){postMessage(\"tick\")},4);self.onmessage=function(e){if(e.data===\"stop\"){clearInterval(iv);self.close()}}';\n" +
+		"          var workerCode = 'var iv=setInterval(function(){postMessage(\"tick\")},16);self.onmessage=function(e){if(e.data===\"stop\"){clearInterval(iv);self.close()}}';\n" +
 		"          var workerBlob = new Blob([workerCode], { type: 'application/javascript' });\n" +
 		"          tickerWorker = new Worker(URL.createObjectURL(workerBlob));\n" +
 		"        } catch (_) { tickerWorker = null; }\n" +
-		"        function advanceFrame() {\n" +
-		"          frameReady = false;\n" +
-		"          lastFrameTime = Date.now();\n" +
-		"          if (frameIndex >= totalFrames) {\n" +
+		"        function renderTick() {\n" +
+		"          if (renderDone) return;\n" +
+		"          var elapsed = (Date.now() - renderStartTime) / 1000;\n" +
+		"          if (onProgress) {\n" +
+		"            var sec = Math.floor(elapsed);\n" +
+		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }\n" +
+		"          }\n" +
+		"          if (elapsed >= durationSec) {\n" +
+		"            renderDone = true;\n" +
 		"            if (tickerWorker) { try { tickerWorker.postMessage('stop'); } catch (_) {} }\n" +
 		"            try { recorder.stop(); } catch (_) {}\n" +
 		"            return;\n" +
 		"          }\n" +
-		"          var t = rangeStart + (frameIndex / fps);\n" +
-		"          player.seek(t);\n" +
-		"          if (onProgress) {\n" +
-		"            var sec = Math.floor(frameIndex / fps);\n" +
-		"            if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(frameIndex / fps, durationSec); }\n" +
+		"          player.seek(rangeStart + elapsed);\n" +
+		"          /* Redraw canvas intermediaries from current video frames */\n" +
+		"          if (player._clipDisplays) {\n" +
+		"            player._clipDisplays.forEach(function (disp) {\n" +
+		"              if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx && disp._videoEl && disp.visible) {\n" +
+		"                try {\n" +
+		"                  disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"                  disp._cfsAlphaCtx.drawImage(disp._videoEl, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
+		"                } catch (_) {}\n" +
+		"              }\n" +
+		"              if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {\n" +
+		"                disp.texture.source.update();\n" +
+		"              }\n" +
+		"            });\n" +
 		"          }\n" +
-		"          var seekWait = (player._waitForVideoSeeks)\n" +
-		"            ? player._waitForVideoSeeks()\n" +
-		"            : Promise.resolve();\n" +
-		"          seekWait.then(function () {\n" +
-		"            if (player._clipDisplays) {\n" +
-		"              player._clipDisplays.forEach(function (disp) {\n" +
-		"                if (disp._cfsAlphaCanvas && disp._cfsAlphaCtx && disp._videoEl && disp.visible) {\n" +
-		"                  try {\n" +
-		"                    disp._cfsAlphaCtx.clearRect(0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
-		"                    disp._cfsAlphaCtx.drawImage(disp._videoEl, 0, 0, disp._cfsAlphaCanvas.width, disp._cfsAlphaCanvas.height);\n" +
-		"                  } catch (_) {}\n" +
-		"                }\n" +
-		"                if (disp.texture && disp.texture.source && typeof disp.texture.source.update === 'function') {\n" +
-		"                  disp.texture.source.update();\n" +
-		"                }\n" +
-		"              });\n" +
-		"            }\n" +
-		"            if (player._app && player._app.renderer) {\n" +
-		"              try { player._app.renderer.render(player._stage); } catch (_) {}\n" +
-		"            }\n" +
-		"            if (videoTrack && typeof videoTrack.requestFrame === 'function') {\n" +
-		"              videoTrack.requestFrame();\n" +
-		"            }\n" +
-		"            frameIndex++;\n" +
-		"            frameReady = true;\n" +
-		"          }).catch(function () {\n" +
-		"            frameIndex++;\n" +
-		"            frameReady = true;\n" +
-		"          });\n" +
-		"        }\n" +
-		"        function onTick() {\n" +
-		"          /* Skip if previous frame is still processing */\n" +
-		"          if (!frameReady) {\n" +
-		"            /* Watchdog: if a frame takes > 5s, force-skip */\n" +
-		"            if (Date.now() - lastFrameTime > 5000) {\n" +
-		"              console.warn('[CFS] Frame ' + frameIndex + ' stuck > 5s, skipping');\n" +
-		"              frameIndex++;\n" +
-		"              frameReady = true;\n" +
-		"            }\n" +
-		"            return;\n" +
+		"          /* Force Pixi render and push frame to MediaRecorder */\n" +
+		"          if (player._app && player._app.renderer) {\n" +
+		"            try { player._app.renderer.render(player._stage); } catch (_) {}\n" +
 		"          }\n" +
-		"          advanceFrame();\n" +
+		"          if (videoTrack && typeof videoTrack.requestFrame === 'function') {\n" +
+		"            videoTrack.requestFrame();\n" +
+		"          }\n" +
 		"        }\n" +
 		"        if (tickerWorker) {\n" +
-		"          tickerWorker.onmessage = function () { onTick(); };\n" +
+		"          tickerWorker.onmessage = function () { renderTick(); };\n" +
 		"        } else {\n" +
-		"          /* Fallback if Worker creation fails (e.g. strict CSP) */\n" +
 		"          var fallbackIv = setInterval(function () {\n" +
-		"            if (frameIndex >= totalFrames) { clearInterval(fallbackIv); return; }\n" +
-		"            onTick();\n" +
-		"          }, 4);\n" +
+		"            if (renderDone) { clearInterval(fallbackIv); return; }\n" +
+		"            renderTick();\n" +
+		"          }, 16);\n" +
 		"        }\n" +
-		"        advanceFrame();\n" +
+		"        renderTick();\n" +
 		"      });\n" +
 		"      });\n" +
 		"    }).then(function (blob) {\n" +
