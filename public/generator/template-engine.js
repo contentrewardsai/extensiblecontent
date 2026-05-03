@@ -1166,14 +1166,27 @@
           reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));
           return;
         }
-        /* ── Frame-by-frame rendering for smooth output ──
-           Seek → wait for video decode → redraw canvas → Pixi render
-           → requestFrame() → next. Trades speed for frame accuracy. */
+        /* ── Frame-by-frame rendering with Web Worker ticker ──
+           Worker timers are NEVER throttled in background tabs, so
+           rendering continues at full speed even if the user switches
+           to another tab. The worker posts 'tick' messages; the main
+           thread advances one frame per tick after video decode. */
         var totalFrames = Math.ceil(durationSec * fps);
         var frameIndex = 0;
         var lastReportedSec = -1;
-        function stepFrame() {
+        var frameReady = true;
+        var lastFrameTime = Date.now();
+        var tickerWorker = null;
+        try {
+          var workerCode = 'var iv=setInterval(function(){postMessage("tick")},4);self.onmessage=function(e){if(e.data==="stop"){clearInterval(iv);self.close()}}';
+          var workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+          tickerWorker = new Worker(URL.createObjectURL(workerBlob));
+        } catch (_) { tickerWorker = null; }
+        function advanceFrame() {
+          frameReady = false;
+          lastFrameTime = Date.now();
           if (frameIndex >= totalFrames) {
+            if (tickerWorker) { try { tickerWorker.postMessage('stop'); } catch (_) {} }
             try { recorder.stop(); } catch (_) {}
             return;
           }
@@ -1206,13 +1219,36 @@
             if (videoTrack && typeof videoTrack.requestFrame === 'function') {
               videoTrack.requestFrame();
             }
-            requestAnimationFrame(function () {
-              frameIndex++;
-              setTimeout(stepFrame, 0);
-            });
+            frameIndex++;
+            frameReady = true;
+          }).catch(function () {
+            frameIndex++;
+            frameReady = true;
           });
         }
-        stepFrame();
+        function onTick() {
+          /* Skip if previous frame is still processing */
+          if (!frameReady) {
+            /* Watchdog: if a frame takes > 5s, force-skip */
+            if (Date.now() - lastFrameTime > 5000) {
+              console.warn('[CFS] Frame ' + frameIndex + ' stuck > 5s, skipping');
+              frameIndex++;
+              frameReady = true;
+            }
+            return;
+          }
+          advanceFrame();
+        }
+        if (tickerWorker) {
+          tickerWorker.onmessage = function () { onTick(); };
+        } else {
+          /* Fallback if Worker creation fails (e.g. strict CSP) */
+          var fallbackIv = setInterval(function () {
+            if (frameIndex >= totalFrames) { clearInterval(fallbackIv); return; }
+            onTick();
+          }, 4);
+        }
+        advanceFrame();
       });
       });
     }).then(function (blob) {

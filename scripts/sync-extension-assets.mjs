@@ -558,14 +558,27 @@ function patchTemplateEngine(text) {
 		"          reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));\n" +
 		"          return;\n" +
 		"        }\n" +
-		"        /* ── Frame-by-frame rendering for smooth output ──\n" +
-		"           Seek → wait for video decode → redraw canvas → Pixi render\n" +
-		"           → requestFrame() → next. Trades speed for frame accuracy. */\n" +
+		"        /* ── Frame-by-frame rendering with Web Worker ticker ──\n" +
+		"           Worker timers are NEVER throttled in background tabs, so\n" +
+		"           rendering continues at full speed even if the user switches\n" +
+		"           to another tab. The worker posts 'tick' messages; the main\n" +
+		"           thread advances one frame per tick after video decode. */\n" +
 		"        var totalFrames = Math.ceil(durationSec * fps);\n" +
 		"        var frameIndex = 0;\n" +
 		"        var lastReportedSec = -1;\n" +
-		"        function stepFrame() {\n" +
+		"        var frameReady = true;\n" +
+		"        var lastFrameTime = Date.now();\n" +
+		"        var tickerWorker = null;\n" +
+		"        try {\n" +
+		"          var workerCode = 'var iv=setInterval(function(){postMessage(\"tick\")},4);self.onmessage=function(e){if(e.data===\"stop\"){clearInterval(iv);self.close()}}';\n" +
+		"          var workerBlob = new Blob([workerCode], { type: 'application/javascript' });\n" +
+		"          tickerWorker = new Worker(URL.createObjectURL(workerBlob));\n" +
+		"        } catch (_) { tickerWorker = null; }\n" +
+		"        function advanceFrame() {\n" +
+		"          frameReady = false;\n" +
+		"          lastFrameTime = Date.now();\n" +
 		"          if (frameIndex >= totalFrames) {\n" +
+		"            if (tickerWorker) { try { tickerWorker.postMessage('stop'); } catch (_) {} }\n" +
 		"            try { recorder.stop(); } catch (_) {}\n" +
 		"            return;\n" +
 		"          }\n" +
@@ -598,13 +611,36 @@ function patchTemplateEngine(text) {
 		"            if (videoTrack && typeof videoTrack.requestFrame === 'function') {\n" +
 		"              videoTrack.requestFrame();\n" +
 		"            }\n" +
-		"            requestAnimationFrame(function () {\n" +
-		"              frameIndex++;\n" +
-		"              setTimeout(stepFrame, 0);\n" +
-		"            });\n" +
+		"            frameIndex++;\n" +
+		"            frameReady = true;\n" +
+		"          }).catch(function () {\n" +
+		"            frameIndex++;\n" +
+		"            frameReady = true;\n" +
 		"          });\n" +
 		"        }\n" +
-		"        stepFrame();\n" +
+		"        function onTick() {\n" +
+		"          /* Skip if previous frame is still processing */\n" +
+		"          if (!frameReady) {\n" +
+		"            /* Watchdog: if a frame takes > 5s, force-skip */\n" +
+		"            if (Date.now() - lastFrameTime > 5000) {\n" +
+		"              console.warn('[CFS] Frame ' + frameIndex + ' stuck > 5s, skipping');\n" +
+		"              frameIndex++;\n" +
+		"              frameReady = true;\n" +
+		"            }\n" +
+		"            return;\n" +
+		"          }\n" +
+		"          advanceFrame();\n" +
+		"        }\n" +
+		"        if (tickerWorker) {\n" +
+		"          tickerWorker.onmessage = function () { onTick(); };\n" +
+		"        } else {\n" +
+		"          /* Fallback if Worker creation fails (e.g. strict CSP) */\n" +
+		"          var fallbackIv = setInterval(function () {\n" +
+		"            if (frameIndex >= totalFrames) { clearInterval(fallbackIv); return; }\n" +
+		"            onTick();\n" +
+		"          }, 4);\n" +
+		"        }\n" +
+		"        advanceFrame();\n" +
 		"      });\n" +
 		"      });\n" +
 		"    }).then(function (blob) {\n" +
@@ -1321,6 +1357,15 @@ function patchPixiTimelinePlayer(text) {
 		out = out.replace(seekCurrentTimeMarker, seekCurrentTimeFix);
 	} else if (!out.includes("_cfsNativePlayback")) {
 		console.warn("[sync-extension-assets] pixi-timeline-player.js seek currentTime marker not found — skipping native playback patch");
+	}
+
+	// ── 8. Increase _waitForVideoSeeks timeout for frame-by-frame rendering ──
+	// 200ms is too tight for slow network seeks; 500ms gives the browser more
+	// time to decode the frame while the watchdog catches truly stuck frames.
+	const seekTimeout200 = "var timer = setTimeout(resolve, 200);";
+	const seekTimeout500 = "var timer = setTimeout(resolve, 500);";
+	if (out.includes(seekTimeout200)) {
+		out = out.replace(seekTimeout200, seekTimeout500);
 	}
 
 	return out;

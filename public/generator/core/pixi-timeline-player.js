@@ -2566,7 +2566,7 @@
       var video = disp._videoEl;
       if (video.seeking) {
         promises.push(new Promise(function (resolve) {
-          var timer = setTimeout(resolve, 200);
+          var timer = setTimeout(resolve, 500);
           video.addEventListener('seeked', function () {
             clearTimeout(timer);
             resolve();
