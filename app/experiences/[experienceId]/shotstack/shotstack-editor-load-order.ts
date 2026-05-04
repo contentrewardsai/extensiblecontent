@@ -6,8 +6,13 @@
  * Scripts in each inner array load in parallel; groups run in order so dependencies
  * (e.g. fabric → patch, ffmpeg → ffmpeg-local, pixi → pixi-unsafe-eval) are preserved.
  */
-export const SHOTSTACK_EDITOR_SCRIPT_GROUPS: string[][] = [
-	["/lib/html2canvas.min.js", "/shared/manifest-loader.js"],
+
+/**
+ * CORE groups: minimum scripts needed to show the editor UI (Fabric canvas,
+ * toolbar, timeline panel, undo/redo). Loaded before the editor is mounted.
+ */
+export const EDITOR_CORE_GROUPS: string[][] = [
+	["/shared/manifest-loader.js"],
 	["/lib/fabric.min.js"],
 	["/lib/fabric-textbaseline-patch.js"],
 	["/generator/inputs/registry.js"],
@@ -32,18 +37,13 @@ export const SHOTSTACK_EDITOR_SCRIPT_GROUPS: string[][] = [
 		"/generator/outputs/audio.js",
 		"/generator/outputs/book.js",
 	],
-	["/shared/step-comment.js", "/shared/book-builder.js", "/shared/walkthrough-export.js"],
-	["/generator/core/estimate-words.js", "/generator/core/srt.js", "/generator/core/wrap-text.js"],
-	["/cfs-web/cfs-web-ai.js"],
-	["/generator/tts/default-tts.js", "/generator/tts/tts-audio-cache.js", "/generator/stt/default-stt.js"],
-	["/generator/template-engine.js"],
-	["/generator/templates/presets/loader.js"],
-	["/generator/core/font-loader.js", "/generator/core/position-from-clip.js", "/generator/core/scene.js"],
-	["/lib/pixi.min.js"],
-	["/lib/pixi-unsafe-eval.min.js"],
-	["/generator/core/pixi-timeline-player.js"],
+	["/generator/core/estimate-words.js", "/generator/core/wrap-text.js"],
 	[
-		"/shared/upload-post.js",
+		"/generator/core/font-loader.js",
+		"/generator/core/position-from-clip.js",
+		"/generator/core/scene.js",
+	],
+	[
 		"/generator/editor/extensions/api.js",
 		"/generator/editor/extensions/loader.js",
 		"/generator/step-generator-ui-loader.js",
@@ -52,15 +52,51 @@ export const SHOTSTACK_EDITOR_SCRIPT_GROUPS: string[][] = [
 		"/generator/editor/chunk-utils.js",
 		"/generator/editor/timeline-panel.js",
 	],
-	["/lib/ffmpeg/ffmpeg.js"],
-	["/shared/ffmpeg-local.js"],
-	["/lib/mp4box.all.min.js"],
-	["/generator/editor/video-preprocessor.js"],
 	["/generator/editor/json-patch.js", "/shared/shotstack-merge-placeholder-fill.js"],
 	["/generator/editor/unified-editor.js"],
 ];
 
-/** Same scripts as `SHOTSTACK_EDITOR_SCRIPT_GROUPS`, in load order (flattened). */
+/**
+ * DEFERRED groups: render pipeline, media processing, TTS/STT, and utility
+ * scripts not needed until the user triggers a render, imports video, or uses
+ * speech features. Loaded in the background after the editor is visible.
+ */
+export const EDITOR_DEFERRED_GROUPS: string[][] = [
+	[
+		"/lib/html2canvas.min.js",
+		"/shared/step-comment.js",
+		"/shared/book-builder.js",
+		"/shared/walkthrough-export.js",
+		"/generator/core/srt.js",
+		"/shared/upload-post.js",
+		"/generator/templates/presets/loader.js",
+	],
+	[
+		"/cfs-web/cfs-web-ai.js",
+		"/generator/tts/default-tts.js",
+		"/generator/tts/tts-audio-cache.js",
+		"/generator/stt/default-stt.js",
+	],
+	["/generator/template-engine.js"],
+	["/lib/pixi.min.js"],
+	["/lib/pixi-unsafe-eval.min.js"],
+	["/generator/core/pixi-timeline-player.js"],
+	["/lib/ffmpeg/ffmpeg.js"],
+	["/shared/ffmpeg-local.js"],
+	["/lib/mp4box.all.min.js"],
+	["/generator/editor/video-preprocessor.js"],
+];
+
+/**
+ * ALL groups in order (core then deferred). Used by ensureCfsGeneratorLoaded()
+ * which must guarantee every script is present before returning.
+ */
+export const SHOTSTACK_EDITOR_SCRIPT_GROUPS: string[][] = [
+	...EDITOR_CORE_GROUPS,
+	...EDITOR_DEFERRED_GROUPS,
+];
+
+/** Flat list of all scripts in load order. */
 export const SHOTSTACK_EDITOR_SCRIPT_HREFS: string[] = SHOTSTACK_EDITOR_SCRIPT_GROUPS.flat();
 
 export const SHOTSTACK_EDITOR_STYLES: string[] = ["/generator/generator.css", "/generator/editor/editor.css"];

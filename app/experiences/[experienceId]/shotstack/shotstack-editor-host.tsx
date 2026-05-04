@@ -6,7 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRenderButton } from "./browser-render-button";
 import { afterCfsScriptLoaded, applyCfsGeneratorStubs } from "./ensure-cfs-generator";
 import type { ShotstackEditorContext } from "./shotstack-editor-context";
-import { SHOTSTACK_EDITOR_SCRIPT_GROUPS, SHOTSTACK_EDITOR_STYLES } from "./shotstack-editor-load-order";
+import {
+	EDITOR_CORE_GROUPS,
+	EDITOR_DEFERRED_GROUPS,
+	SHOTSTACK_EDITOR_STYLES,
+} from "./shotstack-editor-load-order";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -172,7 +176,7 @@ export function ShotstackEditorHost({
 			try {
 				for (const href of SHOTSTACK_EDITOR_STYLES) loadStyleOnce(href);
 				applyStubs();
-				for (const group of SHOTSTACK_EDITOR_SCRIPT_GROUPS) {
+				for (const group of EDITOR_CORE_GROUPS) {
 					if (cancelled) return;
 					await Promise.all(
 						group.map((src) =>
@@ -185,6 +189,19 @@ export function ShotstackEditorHost({
 				if (cancelled) return;
 				applyStubs();
 				bootEditor();
+
+				// Load render/media/TTS scripts in the background after the
+				// editor is visible so they don't block first paint.
+				for (const group of EDITOR_DEFERRED_GROUPS) {
+					if (cancelled) return;
+					await Promise.all(
+						group.map((src) =>
+							loadScriptOnce(src).then(() => {
+								afterCfsScriptLoaded(src);
+							}),
+						),
+					);
+				}
 			} catch (e) {
 				if (!cancelled) {
 					setStatus("error");
