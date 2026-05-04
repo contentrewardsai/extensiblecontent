@@ -10508,13 +10508,14 @@
       refreshPropertyPanel();
     }
 
-    var _cfsTimelineRefreshRafId = null;
+    var _cfsTimelineRefreshQueued = false;
     function refreshTimeline() {
       var panel = global.__CFS_timelinePanel;
       if (!panel || !panel.render) return;
-      if (_cfsTimelineRefreshRafId != null) return;
-      _cfsTimelineRefreshRafId = requestAnimationFrame(function () {
-        _cfsTimelineRefreshRafId = null;
+      if (_cfsTimelineRefreshQueued) return;
+      _cfsTimelineRefreshQueued = true;
+      Promise.resolve().then(function () {
+        _cfsTimelineRefreshQueued = false;
         refreshTimelineImmediate();
       });
     }

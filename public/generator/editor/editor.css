@@ -679,7 +679,6 @@
   flex: 1;
   overflow: auto;
   will-change: transform;
-  contain: layout style;
 }
 
 .cfs-editor-playhead {
