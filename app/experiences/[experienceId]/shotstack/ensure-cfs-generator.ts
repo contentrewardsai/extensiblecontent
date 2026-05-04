@@ -1,4 +1,4 @@
-import { SHOTSTACK_EDITOR_SCRIPT_HREFS, SHOTSTACK_EDITOR_STYLES } from "./shotstack-editor-load-order";
+import { SHOTSTACK_EDITOR_SCRIPT_GROUPS, SHOTSTACK_EDITOR_STYLES } from "./shotstack-editor-load-order";
 
 let loadPromise: Promise<void> | null = null;
 
@@ -114,9 +114,14 @@ export function ensureCfsGeneratorLoaded(): Promise<void> {
 			loadStyleOnce(href);
 		}
 		applyStubs();
-		for (const src of SHOTSTACK_EDITOR_SCRIPT_HREFS) {
-			await loadScriptOnce(src);
-			afterScriptLoaded(src);
+		for (const group of SHOTSTACK_EDITOR_SCRIPT_GROUPS) {
+			await Promise.all(
+				group.map((src) =>
+					loadScriptOnce(src).then(() => {
+						afterScriptLoaded(src);
+					}),
+				),
+			);
 		}
 		applyStubs();
 		const w = window as Window & {

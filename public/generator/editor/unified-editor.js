@@ -10508,7 +10508,17 @@
       refreshPropertyPanel();
     }
 
+    var _cfsTimelineRefreshRafId = null;
     function refreshTimeline() {
+      var panel = global.__CFS_timelinePanel;
+      if (!panel || !panel.render) return;
+      if (_cfsTimelineRefreshRafId != null) return;
+      _cfsTimelineRefreshRafId = requestAnimationFrame(function () {
+        _cfsTimelineRefreshRafId = null;
+        refreshTimelineImmediate();
+      });
+    }
+    function refreshTimelineImmediate() {
       var panel = global.__CFS_timelinePanel;
       if (!panel || !panel.render) return;
       function numericStart(clip) {

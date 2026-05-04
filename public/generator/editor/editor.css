@@ -533,6 +533,7 @@
   cursor: pointer;
   flex-shrink: 0;
   padding-left: 0;
+  will-change: transform;
 }
 
 .cfs-editor-track-row {
@@ -677,6 +678,8 @@
   min-height: 80px;
   flex: 1;
   overflow: auto;
+  will-change: transform;
+  contain: layout style;
 }
 
 .cfs-editor-playhead {

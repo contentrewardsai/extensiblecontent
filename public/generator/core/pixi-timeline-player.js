@@ -1326,8 +1326,10 @@
            that canvas as the Pixi texture source instead of the video element. */
         var isWebm = (src || '').toLowerCase().indexOf('.webm') !== -1 ||
                      ((asset._originalFormat || '').toLowerCase() === 'webm');
-        /* Route ALL video through canvas intermediary to avoid glCopySubTextureCHROMIUM errors */
-        if (true) {
+        /* WebM VP9 alpha + chromaKey: route through 2D canvas so alpha/filter paths stay correct.
+           Plain MP4/MOV uses Pixi VideoSource → GPU upload (avoids per-frame CPU drawImage). */
+        var needsCanvasIntermediary = isWebm || !!(asset.chromaKey);
+        if (needsCanvasIntermediary) {
           var alphaCanvas = document.createElement('canvas');
           alphaCanvas.width = vw;
           alphaCanvas.height = vh;
@@ -2315,18 +2317,12 @@
       })(tracks[_ri], _ri);
     }
 
-    function addNext(idx) {
-      if (idx >= flatList.length) {
-        self._clipDisplays = clipDisplays;
-        self.seek(self._currentTime);
-        return Promise.resolve();
-      }
+    function loadOneFlatItem(idx) {
       var item = flatList[idx];
       if (item.isLuma) {
-        return processLumaClip(self, stage, item.clip, item.trackIdx, canvasW, canvasH, merge, blobUrlMap, item.resolvedLen).then(function (disp) {
-          if (disp) clipDisplays.push(disp);
-          return addNext(idx + 1);
-        }).catch(function () { return addNext(idx + 1); });
+        return processLumaClip(self, stage, item.clip, item.trackIdx, canvasW, canvasH, merge, blobUrlMap, item.resolvedLen)
+          .then(function (disp) { return { idx: idx, disp: disp || null }; })
+          .catch(function () { return { idx: idx, disp: null }; });
       }
       var disp = buildClipDisplayObject(item.clip, item.trackIdx, canvasW, canvasH, merge, blobUrlMap, item.resolvedLen);
       if (disp && typeof disp.then === 'function') {
@@ -2336,21 +2332,37 @@
           if (d && stage) {
             if (_promiseMeta && !d.cfsClipMeta) d.cfsClipMeta = _promiseMeta;
             if (_promiseVisible && !d.cfsVisible) d.cfsVisible = true;
-            stage.addChild(d);
-            clipDisplays.push(d);
           }
-          return addNext(idx + 1);
-        }).catch(function () { return addNext(idx + 1); });
+          return { idx: idx, disp: d || null };
+        }).catch(function () { return { idx: idx, disp: null }; });
       }
-      if (disp) {
-        stage.addChild(disp);
-        clipDisplays.push(disp);
-      }
-      return addNext(idx + 1);
+      return Promise.resolve({ idx: idx, disp: disp || null });
+    }
+
+    if (!flatList.length) {
+      self._clipDisplays = clipDisplays;
+      self.seek(self._currentTime);
+      return Promise.resolve().then(function () {
+        return self._forceTextRewrap();
+      });
+    }
+
+    var loadTasks = [];
+    for (var _fi = 0; _fi < flatList.length; _fi++) {
+      loadTasks.push(loadOneFlatItem(_fi));
     }
 
     this._clipDisplays = clipDisplays;
-    return addNext(0).then(function () {
+    return Promise.all(loadTasks).then(function (results) {
+      results.sort(function (a, b) { return a.idx - b.idx; });
+      results.forEach(function (r) {
+        if (r.disp && stage) {
+          stage.addChild(r.disp);
+          clipDisplays.push(r.disp);
+        }
+      });
+      self._clipDisplays = clipDisplays;
+      self.seek(self._currentTime);
       return self._forceTextRewrap();
     });
   };
