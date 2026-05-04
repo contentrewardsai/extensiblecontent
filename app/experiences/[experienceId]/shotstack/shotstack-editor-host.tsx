@@ -213,10 +213,13 @@ export function ShotstackEditorHost({
 				applyStubs();
 				bootEditor();
 
-				// Load render/media/TTS scripts in the background after the
-				// editor is visible so they don't block first paint.
+				// Load utility scripts (export, TTS/STT, AI) in the background
+				// after the editor is visible. Yield between groups so the
+				// browser can process events / repaint and avoid "page
+				// unresponsive" dialogs.
 				for (const group of EDITOR_DEFERRED_GROUPS) {
 					if (cancelled) return;
+					await new Promise((r) => setTimeout(r, 0));
 					await Promise.all(
 						group.map((src) =>
 							loadScriptOnce(src).then(() => {
@@ -225,6 +228,10 @@ export function ShotstackEditorHost({
 						),
 					);
 				}
+				// Render pipeline scripts (Pixi, FFmpeg, mp4box, etc.) are NOT
+				// loaded here — they are loaded on demand via
+				// ensureCfsGeneratorLoaded() when the user clicks Render or
+				// imports a video.
 			} catch (e) {
 				if (!cancelled) {
 					setStatus("error");

@@ -10,12 +10,13 @@
 /**
  * CORE groups: minimum scripts needed to show the editor UI (Fabric canvas,
  * toolbar, timeline panel, undo/redo). Loaded before the editor is mounted.
+ *
+ * Small independent groups are merged to reduce sequential round-trips
+ * (e.g. manifest-loader loads in parallel with fabric).
  */
 export const EDITOR_CORE_GROUPS: string[][] = [
-	["/shared/manifest-loader.js"],
-	["/lib/fabric.min.js"],
-	["/lib/fabric-textbaseline-patch.js"],
-	["/generator/inputs/registry.js"],
+	["/shared/manifest-loader.js", "/lib/fabric.min.js"],
+	["/lib/fabric-textbaseline-patch.js", "/generator/inputs/registry.js"],
 	[
 		"/generator/inputs/text.js",
 		"/generator/inputs/textarea.js",
@@ -30,8 +31,8 @@ export const EDITOR_CORE_GROUPS: string[][] = [
 		"/generator/inputs/video.js",
 		"/generator/inputs/audio.js",
 	],
-	["/generator/outputs/registry.js"],
 	[
+		"/generator/outputs/registry.js",
 		"/generator/outputs/image.js",
 		"/generator/outputs/video.js",
 		"/generator/outputs/audio.js",
@@ -57,9 +58,8 @@ export const EDITOR_CORE_GROUPS: string[][] = [
 ];
 
 /**
- * DEFERRED groups: render pipeline, media processing, TTS/STT, and utility
- * scripts not needed until the user triggers a render, imports video, or uses
- * speech features. Loaded in the background after the editor is visible.
+ * DEFERRED groups: utility scripts loaded in the background after the editor
+ * is visible. These support export, TTS/STT, and AI features.
  */
 export const EDITOR_DEFERRED_GROUPS: string[][] = [
 	[
@@ -77,6 +77,14 @@ export const EDITOR_DEFERRED_GROUPS: string[][] = [
 		"/generator/tts/tts-audio-cache.js",
 		"/generator/stt/default-stt.js",
 	],
+];
+
+/**
+ * RENDER groups: heavy render pipeline scripts (~1 MB JS + 31 MB WASM on first
+ * FFmpeg use). NOT loaded eagerly -- only loaded on demand when the user clicks
+ * "Render" or imports a video (via ensureCfsGeneratorLoaded).
+ */
+export const EDITOR_RENDER_GROUPS: string[][] = [
 	["/generator/template-engine.js"],
 	["/lib/pixi.min.js"],
 	["/lib/pixi-unsafe-eval.min.js"],
@@ -88,12 +96,13 @@ export const EDITOR_DEFERRED_GROUPS: string[][] = [
 ];
 
 /**
- * ALL groups in order (core then deferred). Used by ensureCfsGeneratorLoaded()
+ * ALL groups in order (core + deferred + render). Used by ensureCfsGeneratorLoaded()
  * which must guarantee every script is present before returning.
  */
 export const SHOTSTACK_EDITOR_SCRIPT_GROUPS: string[][] = [
 	...EDITOR_CORE_GROUPS,
 	...EDITOR_DEFERRED_GROUPS,
+	...EDITOR_RENDER_GROUPS,
 ];
 
 /** Flat list of all scripts in load order. */
