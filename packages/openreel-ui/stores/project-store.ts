@@ -576,7 +576,7 @@ export const useProjectStore = create<ProjectState>()(
           const newHeight = settings.height ?? oldHeight;
           
           if (newWidth !== oldWidth || newHeight !== oldHeight) {
-            import("../../utils/responsive-resize").then(({ responsiveResize, rescaleTextClips, rescaleGraphicClips }) => {
+            import("../utils/responsive-resize").then(({ responsiveResize, rescaleTextClips, rescaleGraphicClips }) => {
               const resizeResult = responsiveResize(oldWidth, oldHeight, newWidth, newHeight, project);
               project.timeline.tracks = resizeResult.clips;
               project.timeline.subtitles = resizeResult.subtitles;
