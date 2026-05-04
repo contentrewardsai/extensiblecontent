@@ -41,6 +41,54 @@ export default {
 				fuchsia: colors.fuchsia,
 				pink: colors.pink,
 				rose: colors.rose,
+
+				/* OpenReel editor colour tokens — values come from
+				   CSS custom properties scoped to `.openreel-editor`
+				   in globals.css, so they only resolve inside the
+				   editor container. */
+				background: {
+					DEFAULT: "var(--or-bg, transparent)",
+					secondary: "var(--or-bg-secondary, transparent)",
+					tertiary: "var(--or-bg-tertiary, transparent)",
+					elevated: "var(--or-bg-elevated, transparent)",
+				},
+				foreground: "var(--or-text-primary, inherit)",
+				text: {
+					primary: "var(--or-text-primary, inherit)",
+					secondary: "var(--or-text-secondary, inherit)",
+					muted: "var(--or-text-muted, inherit)",
+				},
+				primary: {
+					DEFAULT: "var(--or-primary, #22c55e)",
+					foreground: "var(--or-primary-fg, #000)",
+				},
+				secondary: {
+					DEFAULT: "var(--or-secondary, transparent)",
+					foreground: "var(--or-secondary-fg, inherit)",
+				},
+				muted: {
+					DEFAULT: "var(--or-muted, transparent)",
+					foreground: "var(--or-muted-fg, inherit)",
+				},
+				accent: {
+					DEFAULT: "var(--or-accent, transparent)",
+					foreground: "var(--or-accent-fg, inherit)",
+				},
+				destructive: {
+					DEFAULT: "var(--or-destructive, #ef4444)",
+					foreground: "var(--or-destructive-fg, #fff)",
+				},
+				border: "var(--or-border, transparent)",
+				input: "var(--or-input, transparent)",
+				ring: "var(--or-ring, #22c55e)",
+				card: {
+					DEFAULT: "var(--or-card, transparent)",
+					foreground: "var(--or-card-fg, inherit)",
+				},
+				popover: {
+					DEFAULT: "var(--or-popover, transparent)",
+					foreground: "var(--or-popover-fg, inherit)",
+				},
 			},
 		},
 	},

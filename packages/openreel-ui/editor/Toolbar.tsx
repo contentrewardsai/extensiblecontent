@@ -221,7 +221,15 @@ export const Toolbar: React.FC = () => {
     };
     const mime = mimeMap[ext] || "application/octet-stream";
 
-    if ("showSaveFilePicker" in window) {
+    const canUseNativePicker = (() => {
+      try {
+        return "showSaveFilePicker" in window && window.self === window.top;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (canUseNativePicker) {
       const handle = await (window as unknown as {
         showSaveFilePicker: (opts: unknown) => Promise<FileSystemFileHandle>;
       }).showSaveFilePicker({
@@ -336,7 +344,10 @@ export const Toolbar: React.FC = () => {
           }
 
           if (finalResult?.success && finalResult.blob) {
-            if ("showSaveFilePicker" in window) {
+            const isNativePicker = (() => {
+              try { return "showSaveFilePicker" in window && window.self === window.top; } catch { return false; }
+            })();
+            if (isNativePicker) {
               await finalResult.blob.stream().pipeTo(writable as unknown as WritableStream<Uint8Array>);
             } else {
               const url = URL.createObjectURL(finalResult.blob);

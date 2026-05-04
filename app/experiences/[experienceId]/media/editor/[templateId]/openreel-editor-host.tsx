@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import type { MediaEditorContext } from "../../media-editor-context";
 import type { ShotstackEdit, ORProject } from "@/lib/template-converter";
 import { shotstackToOpenReel, openReelToShotstack } from "@/lib/template-converter";
-import { ensureAllServicesLoaded } from "@/lib/openreel-service-bridge";
+import { ensureAllServicesLoaded, generateTTS } from "@/lib/openreel-service-bridge";
 import { exportAndUpload, type ExportProgress } from "@/lib/openreel-export-bridge";
 
 interface Props {
@@ -36,11 +36,76 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 				projectName: templateName,
 				projectId: templateId,
 			});
+
+			// Fetch remote media (TTS audio, video, images) into blobs so
+			// the OpenReel engines can actually decode and play them.
+			const itemsToFetch = orProject.mediaLibrary.items.filter(
+				(item) => item.originalUrl && !item.blob,
+			);
+			if (itemsToFetch.length > 0) {
+				const results = await Promise.allSettled(
+					itemsToFetch.map(async (item) => {
+						const res = await fetch(item.originalUrl!);
+						if (!res.ok) throw new Error(`${res.status} fetching ${item.originalUrl}`);
+						return { id: item.id, blob: await res.blob() };
+					}),
+				);
+				for (const result of results) {
+					if (result.status !== "fulfilled") continue;
+					const { id, blob } = result.value;
+					const idx = orProject.mediaLibrary.items.findIndex((m) => m.id === id);
+					if (idx !== -1) {
+						(orProject.mediaLibrary.items as Array<typeof orProject.mediaLibrary.items[number]>)[idx] = {
+							...orProject.mediaLibrary.items[idx],
+							blob,
+							isPlaceholder: false,
+						};
+					}
+				}
+			}
+
+			// Generate TTS for clips that have text config but no audio URL.
+			// Raw clip data preserves the original ShotStack asset fields.
+			const rawClips = orProject._shotstack?.rawClipData ?? {};
+			await ensureAllServicesLoaded();
+			for (const [clipId, raw] of Object.entries(rawClips)) {
+				const origAsset = (raw as Record<string, unknown>).originalAsset as Record<string, unknown> | undefined;
+				if (!origAsset || String(origAsset.type).toLowerCase() !== "text-to-speech") continue;
+				if (origAsset.src) continue; // already has audio URL (handled above)
+
+				const ttsText = String(origAsset.text || "");
+				if (!ttsText) continue;
+
+				// Find the clip's mediaId so we can attach the generated blob
+				const clip = orProject.timeline.tracks
+					.flatMap((t) => t.clips)
+					.find((c) => c.id === clipId);
+				if (!clip) continue;
+
+				const idx = orProject.mediaLibrary.items.findIndex((m) => m.id === clip.mediaId);
+				if (idx === -1) continue;
+
+				try {
+					const voice = String(origAsset.voice || origAsset.localVoice || "");
+					const result = await generateTTS(ttsText, voice ? { voiceId: voice } : undefined);
+					(orProject.mediaLibrary.items as Array<typeof orProject.mediaLibrary.items[number]>)[idx] = {
+						...orProject.mediaLibrary.items[idx],
+						blob: result.blob,
+						isPlaceholder: false,
+						metadata: {
+							...orProject.mediaLibrary.items[idx].metadata,
+							duration: result.duration,
+						},
+					};
+				} catch (err) {
+					console.warn(`[OpenReelEditorHost] TTS generation failed for clip ${clipId}:`, err);
+				}
+			}
+
 			projectRef.current = orProject;
 
 			const [{ useProjectStore }] = await Promise.all([
 				import("@/packages/openreel-ui/stores/project-store"),
-				ensureAllServicesLoaded(),
 			]);
 			const store = useProjectStore.getState();
 			store.loadProject(orProject as Parameters<typeof store.loadProject>[0]);
@@ -85,7 +150,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			}
 
 			const saveRes = await fetch(`${context.templatesApiBase}/${targetId}${qs}`, {
-				method: "PUT",
+				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ edit }),
 			});
@@ -153,7 +218,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 	}
 
 	return (
-		<div className="flex flex-col h-[calc(100vh-80px)]">
+		<div className="openreel-editor flex flex-col h-[calc(100vh-80px)]">
 			<div className="flex items-center justify-between px-3 py-2 border-b border-gray-a4 bg-gray-a1 shrink-0">
 				<span className="text-3 text-gray-11 truncate">{templateName}</span>
 				<div className="flex items-center gap-2">

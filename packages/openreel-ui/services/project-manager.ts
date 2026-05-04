@@ -267,7 +267,10 @@ class ProjectManager {
   }
 
   async saveProjectAs(project: Project): Promise<boolean> {
-    if (!("showSaveFilePicker" in window)) {
+    const canUseNativePicker = (() => {
+      try { return "showSaveFilePicker" in window && window.self === window.top; } catch { return false; }
+    })();
+    if (!canUseNativePicker) {
       return this.downloadProject(project);
     }
 

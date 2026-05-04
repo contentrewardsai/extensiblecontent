@@ -76,7 +76,8 @@ export interface ORMediaItem {
 	name: string;
 	type: "video" | "audio" | "image";
 	fileHandle: null;
-	blob: null;
+	/** Aligns with OpenReel MediaItem: hydrated in editor host after fetch/TTS */
+	blob: Blob | null;
 	metadata: {
 		duration: number;
 		width: number;
@@ -90,6 +91,7 @@ export interface ORMediaItem {
 	thumbnailUrl: string | null;
 	waveformData: null;
 	originalUrl?: string;
+	isPlaceholder?: boolean;
 }
 
 export interface ORTransform {
@@ -140,8 +142,11 @@ export interface ORSubtitle {
 		color: string;
 		backgroundColor: string;
 		position: "top" | "center" | "bottom";
+		highlightColor?: string;
+		upcomingColor?: string;
 	};
 	words?: Array<{ text: string; startTime: number; endTime: number }>;
+	/** Matches @openreel/core CaptionAnimationStyle */
 	animationStyle?: string;
 }
 
@@ -172,6 +177,8 @@ export interface ORProject {
 		soundtrack?: { src: string; volume?: number; effect?: string };
 		outputOverrides?: Record<string, unknown>;
 		rawClipData?: Record<string, Record<string, unknown>>;
+		/** Full ShotStack clip per OpenReel subtitle id (caption / rich-caption round-trip) */
+		captionSourceBySubtitleId?: Record<string, { originalClip: ShotstackClip }>;
 	};
 }
 
@@ -305,6 +312,84 @@ function xyToPosition(x: number, y: number): { position: string; offset: { x: nu
 	return { position: pos, offset: { x: ox, y: oy } };
 }
 
+const OPENREEL_CAPTION_ANIMATIONS = new Set([
+	"none",
+	"word-highlight",
+	"word-by-word",
+	"karaoke",
+	"bounce",
+	"typewriter",
+]);
+
+/** Map ShotStack / legacy generator caption animation names to OpenReel CaptionAnimationStyle */
+function shotstackCaptionStyleToOpenReel(raw?: string): string {
+	const s = String(raw ?? "")
+		.toLowerCase()
+		.trim();
+	if (OPENREEL_CAPTION_ANIMATIONS.has(s)) return s;
+	switch (s) {
+		case "highlight":
+			return "word-highlight";
+		case "pop":
+		case "fade":
+			return "word-highlight";
+		default:
+			return "karaoke";
+	}
+}
+
+function shotstackClipPositionToSubtitleVertical(position?: string): "top" | "center" | "bottom" {
+	if (!position) return "bottom";
+	if (position.includes("top")) return "top";
+	if (position.includes("bottom")) return "bottom";
+	return "center";
+}
+
+function subtitleStyleFromCaptionAsset(asset: ShotstackAsset, stClipPosition?: string): NonNullable<ORSubtitle["style"]> {
+	const font = (asset.font || {}) as Record<string, unknown>;
+	const bg = (asset.background || {}) as Record<string, unknown>;
+	const active = (asset.active || {}) as Record<string, unknown>;
+	const activeFont = (active.font || {}) as Record<string, unknown>;
+
+	const fontFamily = String(font.family || font.fontFamily || "Inter");
+	const fontSizeRaw = font.size ?? font.fontSize ?? 48;
+	const fontSize = typeof fontSizeRaw === "number" ? fontSizeRaw : Number(fontSizeRaw);
+	const color = String(font.color || "#ffffff");
+
+	let backgroundColor = "rgba(0, 0, 0, 0.7)";
+	if (typeof bg.color === "string" && bg.color.length > 0) {
+		backgroundColor = bg.color;
+	} else if (typeof font.background === "string") {
+		backgroundColor = font.background;
+	}
+
+	const position = shotstackClipPositionToSubtitleVertical(stClipPosition);
+	const highlightColor =
+		activeFont.color != null && String(activeFont.color) !== ""
+			? String(activeFont.color)
+			: "#efbf04";
+
+	return {
+		fontFamily,
+		fontSize: Number.isFinite(fontSize) ? fontSize : 48,
+		color,
+		backgroundColor,
+		position,
+		highlightColor,
+		upcomingColor: color,
+	};
+}
+
+function openReelCaptionStyleToShotstack(raw?: string): string {
+	const s = String(raw || "karaoke").toLowerCase();
+	if (s === "word-highlight") return "highlight";
+	return s;
+}
+
+function deepCloneShotstackClip(clip: ShotstackClip): ShotstackClip {
+	return JSON.parse(JSON.stringify(clip)) as ShotstackClip;
+}
+
 // ─── ShotStack → OpenReel ────────────────────────────────────────────────────
 
 export function shotstackToOpenReel(
@@ -347,6 +432,7 @@ export function shotstackToOpenReel(
 	const orTracks: ORTrack[] = [];
 	const subtitles: ORSubtitle[] = [];
 	const rawClipData: Record<string, Record<string, unknown>> = {};
+	const captionSourceBySubtitleId: Record<string, { originalClip: ShotstackClip }> = {};
 	let maxTime = 0;
 
 	const stTracks = edit.timeline?.tracks || [];
@@ -369,22 +455,46 @@ export function shotstackToOpenReel(
 			if (clipEnd > maxTime) maxTime = clipEnd;
 
 			if (assetType === "caption" || assetType === "rich-caption") {
-				if (Array.isArray(asset.words)) {
-					for (const word of asset.words as Array<{ text: string; start: number; end: number }>) {
-						subtitles.push({
-							id: uuidv4(),
-							text: word.text,
-							startTime: start + (word.start || 0),
-							endTime: start + (word.end || 0),
-						});
-					}
+				const subtitleId = uuidv4();
+				const animObj = asset.animation as Record<string, unknown> | undefined;
+				const animRaw = typeof animObj?.style === "string" ? animObj.style : undefined;
+				const wordRows = Array.isArray(asset.words)
+					? (asset.words as Array<{ text: string; start: number; end: number }>)
+					: [];
+				const animationStyle =
+					wordRows.length > 0
+						? shotstackCaptionStyleToOpenReel(animRaw ?? "karaoke")
+						: "none";
+
+				const style = subtitleStyleFromCaptionAsset(asset, stClip.position);
+
+				let fullText = "";
+				let wordsAbsolute: Array<{ text: string; startTime: number; endTime: number }> | undefined;
+
+				if (wordRows.length > 0) {
+					wordsAbsolute = wordRows.map((w) => ({
+						text: w.text,
+						startTime: start + (w.start ?? 0),
+						endTime: start + (w.end ?? 0),
+					}));
+					fullText = wordRows.map((w) => w.text).join(" ");
 				} else if (asset.text) {
+					fullText = String(asset.text);
+				}
+
+				if (fullText.trim().length > 0) {
 					subtitles.push({
-						id: uuidv4(),
-						text: String(asset.text),
+						id: subtitleId,
+						text: fullText,
 						startTime: start,
 						endTime: clipEnd,
+						style,
+						words: wordsAbsolute,
+						animationStyle,
 					});
+					captionSourceBySubtitleId[subtitleId] = {
+						originalClip: deepCloneShotstackClip(stClip),
+					};
 				}
 				continue;
 			}
@@ -402,6 +512,19 @@ export function shotstackToOpenReel(
 					fileHandle: null,
 					blob: null,
 					metadata: { duration: length, width, height, frameRate: 0, codec: "", sampleRate: 0, channels: 0, fileSize: 0 },
+					thumbnailUrl: null,
+					waveformData: null,
+				});
+			}
+
+			if (!src && assetType === "text-to-speech") {
+				mediaItems.push({
+					id: mediaId,
+					name: String(asset.text || "TTS Audio").slice(0, 50),
+					type: "audio",
+					fileHandle: null,
+					blob: null,
+					metadata: { duration: length, width: 0, height: 0, frameRate: 0, codec: "", sampleRate: 44100, channels: 2, fileSize: 0 },
 					thumbnailUrl: null,
 					waveformData: null,
 				});
@@ -480,6 +603,7 @@ export function shotstackToOpenReel(
 			soundtrack: edit.timeline?.soundtrack,
 			outputOverrides: edit.output as Record<string, unknown>,
 			rawClipData,
+			captionSourceBySubtitleId,
 		},
 	};
 }
@@ -549,20 +673,103 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 		}
 	}
 
-	if (project.timeline.subtitles.length > 0) {
+	const captionMeta = preserved.captionSourceBySubtitleId || {};
+	const consumedSubtitleIds = new Set<string>();
+
+	for (const sub of project.timeline.subtitles) {
+		const meta = captionMeta[sub.id];
+		if (!meta) continue;
+		consumedSubtitleIds.add(sub.id);
+
+		const clipStart = sub.startTime;
+		const clipLen = Math.max(0.001, sub.endTime - sub.startTime);
+		const oc = meta.originalClip;
+		const baseAsset = (oc.asset || { type: "caption" }) as ShotstackAsset;
+
+		const asset: ShotstackAsset = {
+			...baseAsset,
+			type: String(baseAsset.type || "caption"),
+			text: sub.text,
+		};
+
+		if (sub.words && sub.words.length > 0) {
+			asset.words = sub.words.map((w) => ({
+				text: w.text,
+				start: w.startTime - clipStart,
+				end: w.endTime - clipStart,
+			}));
+		}
+
+		const stAnim = openReelCaptionStyleToShotstack(sub.animationStyle);
+		const prevAnim = (baseAsset.animation || {}) as Record<string, unknown>;
+		asset.animation = { ...prevAnim, style: stAnim };
+
+		if (sub.style?.highlightColor) {
+			const prevActive = (baseAsset.active || {}) as Record<string, unknown>;
+			const prevActiveFont = (prevActive.font || {}) as Record<string, unknown>;
+			asset.active = {
+				...prevActive,
+				font: { ...prevActiveFont, color: sub.style.highlightColor },
+			};
+		}
+
+		if (sub.style) {
+			const prevFont = (baseAsset.font || {}) as Record<string, unknown>;
+			asset.font = {
+				...prevFont,
+				family: sub.style.fontFamily,
+				size: sub.style.fontSize,
+				color: sub.style.color,
+			};
+		}
+
+		if (sub.style?.backgroundColor) {
+			const prevBg = (baseAsset.background || {}) as Record<string, unknown>;
+			asset.background = { ...prevBg, color: sub.style.backgroundColor };
+		}
+
+		const stClip: ShotstackClip = {
+			...oc,
+			asset,
+			start: clipStart,
+			length: clipLen,
+		};
+
+		stTracks.push({ clips: [stClip] });
+	}
+
+	const remainingSubs = project.timeline.subtitles.filter((s) => !consumedSubtitleIds.has(s.id));
+	if (remainingSubs.length > 0) {
+		const clipStart = Math.min(...remainingSubs.map((s) => s.startTime));
+		const clipEnd = Math.max(...remainingSubs.map((s) => s.endTime));
+
+		const mergedWords = remainingSubs.flatMap((s) =>
+			s.words && s.words.length > 0
+				? s.words.map((w) => ({
+						text: w.text,
+						start: w.startTime - clipStart,
+						end: w.endTime - clipStart,
+					}))
+				: [
+						{
+							text: s.text,
+							start: s.startTime - clipStart,
+							end: s.endTime - clipStart,
+						},
+					],
+		);
+
 		const captionClip: ShotstackClip = {
 			asset: {
 				type: "caption",
-				text: project.timeline.subtitles.map((s) => s.text).join(" "),
-				words: project.timeline.subtitles.map((s) => ({
-					text: s.text,
-					start: s.startTime,
-					end: s.endTime,
-				})),
+				text: remainingSubs.map((s) => s.text).join(" "),
+				words: mergedWords,
+				animation: {
+					style: openReelCaptionStyleToShotstack(remainingSubs[0]?.animationStyle),
+				},
 			},
-			start: Math.min(...project.timeline.subtitles.map((s) => s.startTime)),
-			length: Math.max(...project.timeline.subtitles.map((s) => s.endTime)) -
-				Math.min(...project.timeline.subtitles.map((s) => s.startTime)),
+			start: clipStart,
+			length: clipEnd - clipStart,
 		};
 		stTracks.push({ clips: [captionClip] });
 	}

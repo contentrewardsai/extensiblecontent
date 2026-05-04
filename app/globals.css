@@ -8,8 +8,44 @@
 /* biome-ignore lint/suspicious/noUnknownAtRules: this rule is imported from whop */
 @config '../tailwind.config.ts';
 
+/* Ensure Tailwind scans vendored OpenReel packages for class usage */
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind v4 directive */
+@source "../packages";
+
 body {
 	background: var(--background);
 	color: var(--foreground);
 	font-family: Arial, Helvetica, sans-serif;
+}
+
+/*
+ * OpenReel editor theme tokens.
+ * Scoped to .openreel-editor so they only apply inside the editor
+ * container and don't interfere with the rest of the app.
+ */
+.openreel-editor {
+	--or-bg: #0e0e10;
+	--or-bg-secondary: #18181c;
+	--or-bg-tertiary: #272729;
+	--or-bg-elevated: #2f2f33;
+	--or-text-primary: #f2f2f2;
+	--or-text-secondary: #a0a0ab;
+	--or-text-muted: #6b6b76;
+	--or-primary: #22c55e;
+	--or-primary-fg: #000;
+	--or-secondary: #272729;
+	--or-secondary-fg: #f2f2f2;
+	--or-muted: #272729;
+	--or-muted-fg: #a0a0ab;
+	--or-destructive: #cf3131;
+	--or-destructive-fg: #f2f2f2;
+	--or-border: #313134;
+	--or-input: #313134;
+	--or-ring: #22c55e;
+	--or-card: #18181c;
+	--or-card-fg: #f2f2f2;
+	--or-popover: #18181c;
+	--or-popover-fg: #f2f2f2;
+	--or-accent: #272729;
+	--or-accent-fg: #f2f2f2;
 }
