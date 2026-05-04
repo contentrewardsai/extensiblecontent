@@ -109,6 +109,29 @@ function dataUrlToBlob(dataUrl: string): Blob | null {
 	return new Blob([buf], { type: mime });
 }
 
+/**
+ * Walk the template JSON and remove any data-URL or blob-URL strings that
+ * would bloat the save payload past Vercel's 4.5 MB body limit. These are
+ * ephemeral runtime artefacts (canvas snapshots, blob previews) that should
+ * never be persisted -- the real assets live at HTTP URLs after upload.
+ */
+function stripDataUrls(obj: unknown): void {
+	if (obj == null || typeof obj !== "object") return;
+	if (Array.isArray(obj)) {
+		for (const item of obj) stripDataUrls(item);
+		return;
+	}
+	const rec = obj as Record<string, unknown>;
+	for (const key of Object.keys(rec)) {
+		const val = rec[key];
+		if (typeof val === "string" && (val.startsWith("data:") || val.startsWith("blob:"))) {
+			if (val.length > 256) rec[key] = "";
+		} else if (typeof val === "object" && val !== null) {
+			stripDataUrls(val);
+		}
+	}
+}
+
 export function ShotstackEditorHost({
 	templateId,
 	templateName,
@@ -354,6 +377,7 @@ export function ShotstackEditorHost({
 				// Upload any data-URL images to Supabase before serializing.
 				await uploadDataUrlImages();
 				const edit = inst.getShotstackTemplate();
+				stripDataUrls(edit);
 				const savedId = await persistEdit(edit);
 				inst.markSaved?.();
 				setIsDirty(false);

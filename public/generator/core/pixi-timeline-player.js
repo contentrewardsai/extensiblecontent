@@ -200,18 +200,21 @@
       ? applyMerge(template.timeline.soundtrack.src, mergeObj)
       : '';
     addUrl(soundtrackSrc);
+    var videoAudioUrls = {};
     tracks.forEach(function (track) {
       (track.clips || []).forEach(function (clip) {
         var asset = clip.asset || {};
         var type = (asset.type || '').toLowerCase();
         var src = asset.src != null ? applyMerge(asset.src, mergeObj) : '';
         if (type === 'video' || type === 'image' || type === 'svg' || type === 'audio' || type === 'luma') addUrl(src);
+        if (type === 'video' || type === 'audio' || type === 'luma') videoAudioUrls[src] = true;
       });
     });
     var urls = Object.keys(map);
-    if (urls.length === 0) return Promise.resolve({ map: {}, toRevoke: [] });
+    if (urls.length === 0) return Promise.resolve({ map: {}, toRevoke: [], imageRevoke: [] });
     var resolved = {};
     var revokeList = [];
+    var imageRevokeList = [];
     function imageToBlobUrl(url, useCors) {
       return new Promise(function (resolve) {
         var img = new Image();
@@ -226,7 +229,7 @@
               if (blob) {
                 var blobUrl = URL.createObjectURL(blob);
                 resolved[url] = blobUrl;
-                revokeList.push(blobUrl);
+                classifyBlobUrl(url, blobUrl);
               }
               resolve();
             });
@@ -236,6 +239,12 @@
         img.src = url;
       });
     }
+    function classifyBlobUrl(origUrl, blobUrl) {
+      revokeList.push(blobUrl);
+      if (!videoAudioUrls[origUrl] && origUrl !== soundtrackSrc) {
+        imageRevokeList.push(blobUrl);
+      }
+    }
     function fetchOne(url) {
       return fetch(url, { mode: 'cors' }).then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -244,7 +253,7 @@
         if (!blob) return;
         var blobUrl = URL.createObjectURL(blob);
         resolved[url] = blobUrl;
-        revokeList.push(blobUrl);
+        classifyBlobUrl(url, blobUrl);
       }).catch(function (err) {
         /* CORS fetch failed — try server-side media proxy */
         var proxyBase = (typeof location !== 'undefined' && location.origin) || '';
@@ -257,7 +266,7 @@
             if (!blob) return;
             var blobUrl = URL.createObjectURL(blob);
             resolved[url] = blobUrl;
-            revokeList.push(blobUrl);
+            classifyBlobUrl(url, blobUrl);
           }).catch(function () {
             /* Proxy also failed — try image canvas fallback */
             return imageToBlobUrl(url, true).then(function () {
@@ -285,7 +294,7 @@
       });
     }
     return Promise.all(urls.map(fetchOne)).then(function () {
-      return { map: resolved, toRevoke: revokeList };
+      return { map: resolved, toRevoke: revokeList, imageRevoke: imageRevokeList };
     });
   }
 
@@ -2163,6 +2172,23 @@
     player._blobUrlMap = {};
   }
 
+  /**
+   * Revoke image-only blob URLs once their textures are in GPU memory.
+   * Video/audio blob URLs must stay alive for <video>.src playback.
+   */
+  function revokeImageBlobUrls(player, imageUrls) {
+    if (!imageUrls || !imageUrls.length) return;
+    var revokedSet = {};
+    imageUrls.forEach(function (url) {
+      if (revokedSet[url]) return;
+      revokedSet[url] = true;
+      try { if (url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url); } catch (e) {}
+    });
+    if (player._blobUrlsToRevoke) {
+      player._blobUrlsToRevoke = player._blobUrlsToRevoke.filter(function (u) { return !revokedSet[u]; });
+    }
+  }
+
   PixiShotstackPlayer.prototype.load = function (templateJson) {
     var self = this;
     var template = typeof templateJson === 'string' ? (function () { try { return JSON.parse(templateJson); } catch (e) { return null; } })() : templateJson;
@@ -2227,9 +2253,11 @@
     if (this._duration <= 0) this._duration = 10;
 
     revokeBlobUrls(self);
+    var imageRevokeUrls = [];
     return resolveMediaToBlobUrls(this._template, this._merge).then(function (resolved) {
       self._blobUrlMap = resolved.map || {};
       self._blobUrlsToRevoke = resolved.toRevoke || [];
+      imageRevokeUrls = resolved.imageRevoke || [];
       return loadTimelineFonts(self._template);
     }).then(function () {
       if (typeof document !== 'undefined' && document.fonts && typeof document.fonts.ready === 'object') {
@@ -2240,6 +2268,7 @@
     }).then(function () {
       return self._buildStage();
     }).then(function () {
+      revokeImageBlobUrls(self, imageRevokeUrls);
       return self;
     });
   };
@@ -2412,7 +2441,10 @@
     resolveMediaToBlobUrls(this._template, this._merge).then(function (resolved) {
       self._blobUrlMap = resolved.map || {};
       self._blobUrlsToRevoke = resolved.toRevoke || [];
-      self._buildStage();
+      var imgRevoke = resolved.imageRevoke || [];
+      return Promise.resolve(self._buildStage()).then(function () {
+        revokeImageBlobUrls(self, imgRevoke);
+      });
     }).catch(function (err) { console.warn('[CFS] setMerge media resolve failed', err); self._buildStage(); });
   };
 

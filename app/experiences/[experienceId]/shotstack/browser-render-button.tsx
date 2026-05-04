@@ -93,9 +93,12 @@ async function warmFfmpegWasmCache(onProgress: (msg: string) => void): Promise<v
 	onProgress("Compiling FFmpeg WASM…");
 }
 
-function runWithTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+function runWithTimeout<T>(p: Promise<T>, ms: number, message: string, onTimeout?: () => void): Promise<T> {
 	return new Promise((resolve, reject) => {
-		const t = setTimeout(() => reject(new Error(message)), ms);
+		const t = setTimeout(() => {
+			if (onTimeout) { try { onTimeout(); } catch (_) { /* ignore */ } }
+			reject(new Error(message));
+		}, ms);
 		p.then(
 			(v) => {
 				clearTimeout(t);
@@ -348,7 +351,7 @@ export function BrowserRenderButton({
 			await ensureCfsGeneratorLoaded();
 			type CfsEngine = {
 				applyMergeToTemplate: (t: unknown, m: unknown[]) => unknown;
-				renderTimelineToVideoBlob: (t: unknown) => Promise<Blob | null>;
+				renderTimelineToVideoBlob: (t: unknown, opts?: { signal?: AbortSignal }) => Promise<Blob | null>;
 			};
 			const engine = (window as unknown as { __CFS_templateEngine?: CfsEngine }).__CFS_templateEngine;
 			if (!engine?.applyMergeToTemplate || !engine?.renderTimelineToVideoBlob) {
@@ -407,16 +410,46 @@ export function BrowserRenderButton({
 							}
 						})
 					: undefined;
+			/* Install the intermediate upload hook so template-engine.js can
+			   push TTS audio, mixed audio, and WebM blobs to Supabase Storage
+			   instead of holding everything in browser memory. */
+			const wHook = window as unknown as { __CFS_uploadIntermediate?: unknown };
+			const prevHook = wHook.__CFS_uploadIntermediate;
+			if (context.presignedUploadUrl) {
+				wHook.__CFS_uploadIntermediate = async (
+					blob: Blob,
+					filename: string,
+					contentType: string,
+				): Promise<string | null> => {
+					try {
+						const result = await presignedUploadBlob(
+							blob,
+							contentType,
+							`intermediates/${filename}`,
+							context,
+							templateId,
+							() => {},
+						);
+						return result.ok && result.file_url ? result.file_url : null;
+					} catch (err) {
+						console.warn("[BrowserRender] intermediate upload failed", filename, err);
+						return null;
+					}
+				};
+			}
 			let webm: Blob | null = null;
+			const renderAbort = new AbortController();
 			try {
 				setMsg("Rendering video (TTS + timeline)…");
 				const e = JSON.parse(JSON.stringify(edit)) as { merge?: unknown[] };
 				const merge = Array.isArray(e.merge) ? e.merge : [];
 				const merged = engine.applyMergeToTemplate(e, merge) as Record<string, unknown>;
+				const renderPromise = engine.renderTimelineToVideoBlob(merged, { signal: renderAbort.signal });
 				webm = await runWithTimeout(
-					engine.renderTimelineToVideoBlob(merged),
+					renderPromise,
 					900_000,
 					"Video render (Kokoro / Whisper + timeline) timed out after 15 minutes",
+					() => renderAbort.abort(),
 				);
 				if (!webm) throw new Error("No video from renderer");
 			} finally {
@@ -425,15 +458,24 @@ export function BrowserRenderButton({
 				} catch {
 					/* ignore */
 				}
+				wHook.__CFS_uploadIntermediate = prevHook;
 			}
 			if (!webm) {
 				throw new Error("No video from renderer");
 			}
 
+			const webmExt = webm as Blob & { _cfsAudioWav?: Blob; _cfsAudioUrl?: string; _cfsVideoUrl?: string; _cfsAudioFailed?: boolean };
+			if (webmExt._cfsAudioFailed) {
+				console.warn("[BrowserRender] Audio mix failed — video may be silent.");
+				setMsg("Warning: audio mix failed — video may be silent.");
+			}
+			const audioWav: Blob | string | null = webmExt._cfsAudioUrl || webmExt._cfsAudioWav || null;
+			const videoInput: Blob | string = webmExt._cfsVideoUrl || webm;
 			const ff = (window as unknown as {
 				FFmpegLocal?: {
 					ensureLoaded?: (cb?: (s: string) => void) => Promise<unknown>;
 					convertToMp4: (b: Blob, c?: (s: string) => void) => Promise<unknown>;
+					convertToMp4WithAudio?: (v: Blob | string, a: Blob | string, c?: (s: string) => void, opts?: { fps?: number }) => Promise<unknown>;
 				};
 			}).FFmpegLocal;
 			let mp4result: { ok?: boolean; blob?: Blob; error?: string } | null = null;
@@ -481,13 +523,25 @@ export function BrowserRenderButton({
 					// Now actually transcode. Load is done (or skipped); this is
 					// pure CPU-bound encoding. Long videos can take several
 					// minutes, so keep the original 10-minute budget.
-					console.log("[BrowserRender] FFmpeg convertToMp4 starting");
-					mp4result = (await runWithTimeout(
-						ff.convertToMp4(webm, (s) => setMsg(s)),
-						1_200_000,
-						"FFmpeg conversion timed out after 20 minutes — uploading WebM instead.",
-					)) as { ok?: boolean; blob?: Blob; error?: string };
-					console.log("[BrowserRender] FFmpeg convertToMp4 done", { ok: mp4result?.ok });
+					if (audioWav && ff.convertToMp4WithAudio) {
+						const outFps = (edit as Record<string, unknown> & { output?: { fps?: number } }).output?.fps;
+						const fps = Math.max(1, Math.min(60, Number(outFps) || 25));
+						console.log("[BrowserRender] FFmpeg convertToMp4WithAudio starting (video + audio, fps=" + fps + ")");
+						mp4result = (await runWithTimeout(
+							ff.convertToMp4WithAudio(videoInput, audioWav, (s: string) => setMsg(s), { fps }),
+							1_200_000,
+							"FFmpeg conversion timed out after 20 minutes — uploading WebM instead.",
+						)) as { ok?: boolean; blob?: Blob; error?: string };
+						console.log("[BrowserRender] FFmpeg convertToMp4WithAudio done", { ok: mp4result?.ok });
+					} else {
+						console.log("[BrowserRender] FFmpeg convertToMp4 starting (video only, no separate audio)");
+						mp4result = (await runWithTimeout(
+							ff.convertToMp4(webm, (s) => setMsg(s)),
+							1_200_000,
+							"FFmpeg conversion timed out after 20 minutes — uploading WebM instead.",
+						)) as { ok?: boolean; blob?: Blob; error?: string };
+						console.log("[BrowserRender] FFmpeg convertToMp4 done", { ok: mp4result?.ok });
+					}
 				} catch (err) {
 					console.warn("[BrowserRender] FFmpeg pipeline failed — falling back to WebM", err);
 					mp4result = { ok: false, error: err instanceof Error ? err.message : String(err) };

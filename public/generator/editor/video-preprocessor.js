@@ -487,12 +487,14 @@
               throw err;
             });
         } else {
-          /* Direct — no processing, use source URL */
+          /* Direct — no processing, use source URL; preserve trim so caller can apply via asset.trim */
           return {
             blobUrl: src,
             blob: null,
             metadata: quickMeta,
-            tier: 'direct'
+            tier: 'direct',
+            trimStart: opts.trimStart || 0,
+            trimDuration: opts.duration || 0
           };
         }
 
@@ -515,6 +517,8 @@
         blob: null,
         metadata: { width: 0, height: 0, duration: 0, fileSize: 0 },
         tier: 'direct',
+        trimStart: opts.trimStart || 0,
+        trimDuration: opts.duration || 0,
         error: err.message || String(err)
       };
     });
@@ -540,6 +544,8 @@
           metadata: result.metadata,
           tier: result.tier,
           persisted: false,
+          trimStart: result.trimStart || 0,
+          trimDuration: result.trimDuration || 0,
           error: result.error
         };
       }
