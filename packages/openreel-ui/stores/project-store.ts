@@ -559,7 +559,11 @@ export const useProjectStore = create<ProjectState>()(
 
       // Update project settings
       updateSettings: async (settings: Partial<ProjectSettings>) => {
-        const { project, actionExecutor } = get();
+        const { project, actionExecutor, graphicsEngine } = get();
+        
+        const oldWidth = project.settings.width;
+        const oldHeight = project.settings.height;
+
         const action: Action = {
           type: "project/updateSettings",
           id: uuidv4(),
@@ -568,7 +572,40 @@ export const useProjectStore = create<ProjectState>()(
         };
         const result = await actionExecutor.execute(action, project);
         if (result.success) {
-          set({ project: { ...project } });
+          const newWidth = settings.width ?? oldWidth;
+          const newHeight = settings.height ?? oldHeight;
+          
+          if (newWidth !== oldWidth || newHeight !== oldHeight) {
+            import("../../utils/responsive-resize").then(({ responsiveResize, rescaleTextClips, rescaleGraphicClips }) => {
+              const resizeResult = responsiveResize(oldWidth, oldHeight, newWidth, newHeight, project);
+              project.timeline.tracks = resizeResult.clips;
+              project.timeline.subtitles = resizeResult.subtitles;
+              
+              const scaleX = newWidth / oldWidth;
+              const scaleY = newHeight / oldHeight;
+              const uniformScale = Math.min(scaleX, scaleY);
+              
+              if (project.textClips) {
+                (project as any).textClips = rescaleTextClips(project.textClips, scaleX, scaleY, uniformScale);
+              }
+              if (project.shapeClips) {
+                (project as any).shapeClips = rescaleGraphicClips(project.shapeClips, scaleX, scaleY, uniformScale);
+              }
+              if (project.svgClips) {
+                (project as any).svgClips = rescaleGraphicClips(project.svgClips, scaleX, scaleY, uniformScale);
+                if (graphicsEngine) {
+                  graphicsEngine.loadSVGClips(project.svgClips);
+                }
+              }
+              if (project.stickerClips) {
+                (project as any).stickerClips = rescaleGraphicClips(project.stickerClips, scaleX, scaleY, uniformScale);
+              }
+              
+              set({ project: { ...project } });
+            });
+          } else {
+            set({ project: { ...project } });
+          }
         }
         return result;
       },

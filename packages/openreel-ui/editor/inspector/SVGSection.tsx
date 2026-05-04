@@ -159,8 +159,32 @@ export const SVGSection: React.FC<SVGSectionProps> = ({ clipId }) => {
     );
   }
 
+  const handleSVGContentChange = useCallback(
+    (content: string) => {
+      if (!svgClip) return;
+      updateSVGClip(clipId, { svgContent: content });
+    },
+    [clipId, svgClip, updateSVGClip],
+  );
+
   return (
     <div className="space-y-4">
+      <div className="space-y-3">
+        <span className="text-[10px] font-medium text-text-secondary">
+          SVG Source
+        </span>
+        <textarea
+          value={svgClip.svgContent}
+          onChange={(e) => handleSVGContentChange(e.target.value)}
+          className="w-full h-32 px-3 py-2 bg-background-tertiary border border-border rounded-lg text-[9px] font-mono text-text-primary resize-y focus:outline-none focus:border-primary"
+          placeholder="<svg>...</svg>"
+          spellCheck={false}
+        />
+        <p className="text-[9px] text-text-muted">
+          Edit SVG code to update. Source is preserved for lossless round-trip.
+        </p>
+      </div>
+
       <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-text-secondary">Mode</span>

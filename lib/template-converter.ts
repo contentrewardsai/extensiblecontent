@@ -475,19 +475,25 @@ export function shotstackToOpenReel(
 	const orTracks: ORTrack[] = [];
 	const subtitles: ORSubtitle[] = [];
 	const rawClipData: Record<string, Record<string, unknown>> = {};
+	const svgClipData: Record<string, any> = {};
+	const textClipData: Record<string, any> = {};
 	const captionSourceBySubtitleId: Record<string, { originalClip: ShotstackClip }> = {};
 	let maxTime = 0;
+	
+	const textTrackId = uuidv4();
+	const graphicsTrackId = uuidv4();
+	let hasTextClips = false;
+	let hasSvgClips = false;
 
 	const stTracks = edit.timeline?.tracks || [];
 	for (let ti = 0; ti < stTracks.length; ti++) {
 		const stTrack = stTracks[ti];
-		const trackId = uuidv4();
-		const orClips: ORClip[] = [];
 
-		let trackType: ORTrack["type"] = "video";
-		if (stTrack.clips.length > 0) {
-			trackType = assetTypeToTrackType(stTrack.clips[0].asset?.type || "video");
-		}
+		// ShotStack allows mixed asset types on one track, but OpenReel
+		// tracks are typed (video, audio, text, image, graphics).  Group
+		// the clips by their resolved track type so each OpenReel track
+		// contains only homogeneous clip types.
+		const clipsByTrackType = new Map<ORTrack["type"], { trackId: string; clips: ORClip[] }>();
 
 		for (const stClip of stTrack.clips) {
 			const asset = stClip.asset || { type: "video" };
@@ -542,44 +548,73 @@ export function shotstackToOpenReel(
 				continue;
 			}
 
+			const clipId = uuidv4();
+
+			if (assetType === "svg") {
+				svgClipData[clipId] = {
+					svgSrc: asset.src,
+					startTime: start,
+					duration: length,
+					trackId: graphicsTrackId,
+					position: positionToXY(stClip.position, stClip.offset),
+					scale: stClip.scale || 1,
+					opacity: stClip.opacity ?? 1,
+					originalAsset: { ...asset },
+				};
+				hasSvgClips = true;
+				continue;
+			}
+
+			if (assetType === "title" || assetType === "html") {
+				textClipData[clipId] = {
+					text: asset.text || asset.html || "Text",
+					startTime: start,
+					duration: length,
+					trackId: textTrackId,
+					position: positionToXY(stClip.position, stClip.offset),
+					scale: stClip.scale || 1,
+					opacity: stClip.opacity ?? 1,
+					fontFamily: asset.font?.family || "Inter",
+					fontSize: asset.font?.size || 48,
+					color: asset.font?.color || "#ffffff",
+					originalAsset: { ...asset },
+				};
+				hasTextClips = true;
+				continue;
+			}
+
+			// Resolve track type per-clip so mixed tracks get split properly
+			const resolvedTrackType = assetTypeToTrackType(assetType);
+			if (!clipsByTrackType.has(resolvedTrackType)) {
+				clipsByTrackType.set(resolvedTrackType, { trackId: uuidv4(), clips: [] });
+			}
+			const bucket = clipsByTrackType.get(resolvedTrackType)!;
+
 			const src = asset.src as string | undefined;
 			const mediaId = src
 				? getOrCreateMediaItem(src, assetType)
 				: uuidv4();
 
-			if (!src && (assetType === "title" || assetType === "html")) {
-				mediaItems.push({
-					id: mediaId,
-					name: String(asset.text || asset.html || "Text").slice(0, 50),
-					type: "image",
-					fileHandle: null,
-					blob: null,
-					metadata: { duration: length, width, height, frameRate: 0, codec: "", sampleRate: 0, channels: 0, fileSize: 0 },
-					thumbnailUrl: null,
-					waveformData: null,
-				});
-			}
-
-			if (!src && assetType === "text-to-speech") {
+			if (!src && (assetType === "text-to-speech")) {
 				mediaItems.push({
 					id: mediaId,
 					name: String(asset.text || "TTS Audio").slice(0, 50),
 					type: "audio",
 					fileHandle: null,
 					blob: null,
+					isPlaceholder: true,
 					metadata: { duration: length, width: 0, height: 0, frameRate: 0, codec: "", sampleRate: 44100, channels: 2, fileSize: 0 },
 					thumbnailUrl: null,
 					waveformData: null,
 				});
 			}
 
-			const clipId = uuidv4();
 			const pos = positionToXY(stClip.position, stClip.offset);
 
 			const orClip: ORClip = {
 				id: clipId,
 				mediaId,
-				trackId,
+				trackId: bucket.trackId,
 				startTime: start,
 				duration: length,
 				inPoint: resolveNumber(asset.trim, 0),
@@ -607,15 +642,17 @@ export function shotstackToOpenReel(
 				} : {}),
 			};
 
-			orClips.push(orClip);
+			bucket.clips.push(orClip);
 		}
 
-		if (orClips.length > 0 || stTrack.clips.length > 0) {
+		// Emit one OpenReel track per resolved track type
+		for (const [tType, bucket] of clipsByTrackType) {
+			const suffix = clipsByTrackType.size > 1 ? ` (${tType})` : "";
 			orTracks.push({
-				id: trackId,
-				type: trackType,
-				name: `Track ${ti + 1}`,
-				clips: orClips,
+				id: bucket.trackId,
+				type: tType,
+				name: `Track ${ti + 1}${suffix}`,
+				clips: bucket.clips,
 				transitions: [],
 				locked: false,
 				hidden: false,
@@ -623,6 +660,33 @@ export function shotstackToOpenReel(
 				solo: false,
 			});
 		}
+	}
+
+	if (hasTextClips) {
+		orTracks.push({
+			id: textTrackId,
+			type: "text",
+			name: "Text Track",
+			clips: [],
+			transitions: [],
+			locked: false,
+			hidden: false,
+			muted: false,
+			solo: false,
+		});
+	}
+	if (hasSvgClips) {
+		orTracks.push({
+			id: graphicsTrackId,
+			type: "graphics",
+			name: "Graphics Track",
+			clips: [],
+			transitions: [],
+			locked: false,
+			hidden: false,
+			muted: false,
+			solo: false,
+		});
 	}
 
 	const result: ORProject = {
@@ -651,6 +715,8 @@ export function shotstackToOpenReel(
 			soundtrack: edit.timeline?.soundtrack,
 			outputOverrides: edit.output as Record<string, unknown>,
 			rawClipData,
+			svgClipData,
+			textClipData,
 			captionSourceBySubtitleId,
 		},
 	};

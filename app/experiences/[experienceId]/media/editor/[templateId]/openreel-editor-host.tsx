@@ -98,6 +98,19 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							duration: result.duration,
 						},
 					};
+					// Also update the clip's duration/outPoint to match
+					// the actual generated audio length so the timeline
+					// doesn't show a 3-minute bar for a 10-second TTS clip.
+					const actualDuration = result.duration;
+					if (actualDuration > 0) {
+						const clipRef = orProject.timeline.tracks
+							.flatMap((t) => t.clips)
+							.find((c) => c.id === clipId);
+						if (clipRef) {
+							(clipRef as { duration: number; outPoint: number }).duration = actualDuration;
+							(clipRef as { duration: number; outPoint: number }).outPoint = clipRef.inPoint + actualDuration;
+						}
+					}
 				} catch (err) {
 					console.warn(`[OpenReelEditorHost] TTS generation failed for clip ${clipId}:`, err);
 				}
@@ -108,6 +121,73 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			// Stash _shotstack metadata in the dedicated Zustand store
 			if (orProject._shotstack) {
 				useShotstackMetadataStore.getState().setMetadata(orProject._shotstack);
+			}
+
+			// Process SVGs
+			const svgClips: any[] = [];
+			if (orProject._shotstack?.svgClipData) {
+				for (const [clipId, data] of Object.entries(orProject._shotstack.svgClipData)) {
+					try {
+						const res = await fetch(data.svgSrc);
+						const svgContent = await res.text();
+						svgClips.push({
+							id: clipId,
+							type: "svg",
+							trackId: data.trackId || `track-graphics`,
+							startTime: data.startTime,
+							duration: data.duration,
+							svgContent,
+							viewBox: { minX: 0, minY: 0, width: 100, height: 100 }, // Will be parsed by engine
+							preserveAspectRatio: "xMidYMid",
+							colorStyle: { colorMode: "none" },
+							transform: {
+								position: data.position,
+								scale: { x: data.scale, y: data.scale },
+								rotation: 0,
+								anchor: { x: 0.5, y: 0.5 },
+								opacity: data.opacity,
+							},
+							keyframes: [],
+						});
+					} catch (e) {
+						console.error(`Failed to load SVG ${data.svgSrc}`, e);
+					}
+				}
+			}
+			if (svgClips.length > 0) {
+				(orProject as any).svgClips = svgClips;
+			}
+
+			// Process Texts
+			const textClips: any[] = [];
+			if (orProject._shotstack?.textClipData) {
+				for (const [clipId, data] of Object.entries(orProject._shotstack.textClipData)) {
+					textClips.push({
+						id: clipId,
+						trackId: data.trackId || `track-text`,
+						startTime: data.startTime,
+						duration: data.duration,
+						text: data.text,
+						style: {
+							fontFamily: data.fontFamily,
+							fontSize: data.fontSize,
+							color: data.color,
+							fontWeight: "bold",
+							textAlign: "center",
+						},
+						transform: {
+							position: data.position,
+							scale: { x: data.scale, y: data.scale },
+							rotation: 0,
+							anchor: { x: 0.5, y: 0.5 },
+							opacity: data.opacity,
+						},
+						keyframes: [],
+					});
+				}
+			}
+			if (textClips.length > 0) {
+				(orProject as any).textClips = textClips;
 			}
 
 			const [{ useProjectStore }] = await Promise.all([

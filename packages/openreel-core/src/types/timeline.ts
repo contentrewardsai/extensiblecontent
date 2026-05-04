@@ -182,6 +182,10 @@ export interface SubtitleStyle {
   readonly position: "top" | "center" | "bottom";
   readonly highlightColor?: string;
   readonly upcomingColor?: string;
+  /** Number of words to show per line in karaoke/chunked modes (default 3) */
+  readonly wordsPerLine?: number;
+  /** Number of lines to show at once in karaoke/chunked modes (default 1) */
+  readonly linesToShow?: number;
 }
 
 export interface AutomationPoint {

@@ -665,7 +665,7 @@ export class VideoEngine {
     this.renderParticlesToContext(ctx, time, width, height);
 
     for (const subtitle of activeSubtitles) {
-      this.renderSubtitleToCanvasCtx(ctx, subtitle, width, height);
+      this.renderSubtitleToCanvasCtx(ctx, subtitle, width, height, time);
     }
 
     const imageBitmap = await createImageBitmap(canvas);
@@ -949,8 +949,9 @@ export class VideoEngine {
     subtitle: Subtitle,
     canvasWidth: number,
     canvasHeight: number,
+    time: number,
   ): void {
-    const { text, style } = subtitle;
+    const { text, style, words, animationStyle } = subtitle;
     if (!text || text.trim().length === 0) return;
 
     ctx.save();
@@ -960,7 +961,116 @@ export class VideoEngine {
     const color = style?.color || "#ffffff";
     const backgroundColor = style?.backgroundColor || "rgba(0, 0, 0, 0.7)";
     const position = style?.position || "bottom";
+    const highlightColor = style?.highlightColor || "#ffff00";
+    const upcomingColor = style?.upcomingColor || "rgba(255,255,255,0.5)";
+    const wordsPerLine = style?.wordsPerLine || 3;
+    const linesToShow = style?.linesToShow || 1;
 
+    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const lineHeight = fontSize * 1.3;
+
+    // Compute base Y position
+    const getBaseY = (totalH: number): number => {
+      if (position === "top") return fontSize * 2;
+      if (position === "center") return canvasHeight / 2 - totalH / 2;
+      return canvasHeight - fontSize * 2 - totalH;
+    };
+
+    // ── No words data or no animation: plain text fallback ──
+    if (!words || words.length === 0 || !animationStyle || animationStyle === "none") {
+      this.renderPlainSubtitle(ctx, text, fontSize, fontFamily, color, backgroundColor, canvasWidth, canvasHeight, position);
+      ctx.restore();
+      return;
+    }
+
+    // ── Find active word index ──
+    let activeWordIdx = -1;
+    for (let i = 0; i < words.length; i++) {
+      if (time >= words[i].startTime && time < words[i].endTime) {
+        activeWordIdx = i;
+        break;
+      }
+    }
+    // If between words, find the next upcoming word
+    if (activeWordIdx === -1) {
+      for (let i = 0; i < words.length; i++) {
+        if (time < words[i].startTime) {
+          // Between previous and this word — show the chunk containing this word
+          activeWordIdx = i;
+          break;
+        }
+      }
+      // If past all words, show last chunk
+      if (activeWordIdx === -1) {
+        activeWordIdx = words.length - 1;
+      }
+    }
+
+    switch (animationStyle) {
+      case "karaoke":
+        this.renderKaraokeSubtitle(
+          ctx, words, activeWordIdx, time,
+          fontSize, fontFamily, color, highlightColor, upcomingColor,
+          backgroundColor, canvasWidth, canvasHeight, position,
+          wordsPerLine, linesToShow,
+        );
+        break;
+
+      case "word-highlight":
+        this.renderWordHighlightSubtitle(
+          ctx, words, activeWordIdx, time,
+          fontSize, fontFamily, color, highlightColor, upcomingColor,
+          backgroundColor, canvasWidth, canvasHeight, position,
+        );
+        break;
+
+      case "word-by-word":
+        this.renderWordByWordSubtitle(
+          ctx, words, activeWordIdx, time,
+          fontSize, fontFamily, color, backgroundColor,
+          canvasWidth, canvasHeight, position,
+        );
+        break;
+
+      case "bounce":
+        this.renderBounceSubtitle(
+          ctx, words, activeWordIdx, time,
+          fontSize, fontFamily, color, highlightColor,
+          backgroundColor, canvasWidth, canvasHeight, position,
+        );
+        break;
+
+      case "typewriter":
+        this.renderTypewriterSubtitle(
+          ctx, words, time,
+          fontSize, fontFamily, color, backgroundColor,
+          canvasWidth, canvasHeight, position,
+        );
+        break;
+
+      default:
+        this.renderPlainSubtitle(ctx, text, fontSize, fontFamily, color, backgroundColor, canvasWidth, canvasHeight, position);
+        break;
+    }
+
+    ctx.restore();
+  }
+
+  /** Plain text subtitle — no animation */
+  private renderPlainSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    text: string,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+  ): void {
     ctx.font = `bold ${fontSize}px "${fontFamily}"`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -988,18 +1098,343 @@ export class VideoEngine {
       const bgHeight = lineHeight;
 
       ctx.fillStyle = backgroundColor;
-      ctx.fillRect(
-        canvasWidth / 2 - bgWidth / 2,
-        y - bgHeight / 2,
-        bgWidth,
-        bgHeight,
-      );
+      ctx.fillRect(canvasWidth / 2 - bgWidth / 2, y - bgHeight / 2, bgWidth, bgHeight);
 
       ctx.fillStyle = color;
       ctx.fillText(line, canvasWidth / 2, y);
     }
+  }
 
-    ctx.restore();
+  /**
+   * Karaoke: chunked word display (ShotStack style).
+   * Shows wordsPerLine words per line, linesToShow lines at once.
+   * Active word highlighted, spoken words revert, upcoming words dimmed.
+   */
+  private renderKaraokeSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    words: readonly { text: string; startTime: number; endTime: number }[],
+    activeWordIdx: number,
+    time: number,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    highlightColor: string,
+    upcomingColor: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+    wordsPerLine: number,
+    linesToShow: number,
+  ): void {
+    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    const lineHeight = fontSize * 1.3;
+    const totalChunkWords = wordsPerLine * linesToShow;
+
+    // Determine which chunk to show based on active word
+    const chunkIndex = Math.floor(Math.max(0, activeWordIdx) / totalChunkWords);
+    const chunkStart = chunkIndex * totalChunkWords;
+    const chunkEnd = Math.min(chunkStart + totalChunkWords, words.length);
+    const chunkWords = words.slice(chunkStart, chunkEnd);
+
+    if (chunkWords.length === 0) return;
+
+    // Split chunk into lines
+    const lines: typeof chunkWords[] = [];
+    for (let i = 0; i < chunkWords.length; i += wordsPerLine) {
+      lines.push(chunkWords.slice(i, i + wordsPerLine) as unknown as typeof chunkWords);
+    }
+
+    const totalHeight = lines.length * lineHeight;
+    let baseY: number;
+    if (position === "top") {
+      baseY = fontSize * 2;
+    } else if (position === "center") {
+      baseY = canvasHeight / 2 - totalHeight / 2;
+    } else {
+      baseY = canvasHeight - fontSize * 2 - totalHeight;
+    }
+
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      const lineWords = lines[lineIdx];
+      const y = baseY + lineIdx * lineHeight + lineHeight / 2;
+
+      // Measure full line width for background
+      const lineText = lineWords.map((w) => w.text).join(" ");
+      const lineMetrics = ctx.measureText(lineText);
+      const bgWidth = lineMetrics.width + 24;
+      const bgHeight = lineHeight + 4;
+
+      // Draw background
+      const bgX = canvasWidth / 2 - bgWidth / 2;
+      const bgY = y - bgHeight / 2;
+      ctx.fillStyle = backgroundColor;
+      // Rounded rect background
+      const radius = 6;
+      ctx.beginPath();
+      ctx.moveTo(bgX + radius, bgY);
+      ctx.lineTo(bgX + bgWidth - radius, bgY);
+      ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
+      ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
+      ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
+      ctx.lineTo(bgX + radius, bgY + bgHeight);
+      ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
+      ctx.lineTo(bgX, bgY + radius);
+      ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Draw words with per-word coloring
+      let xCursor = canvasWidth / 2 - lineMetrics.width / 2;
+      for (const word of lineWords) {
+        const wordWidth = ctx.measureText(word.text + " ").width;
+
+        if (time >= word.startTime && time < word.endTime) {
+          // Active word — highlighted
+          ctx.fillStyle = highlightColor;
+        } else if (time >= word.endTime) {
+          // Spoken word — revert to base color
+          ctx.fillStyle = color;
+        } else {
+          // Upcoming word — dimmed
+          ctx.fillStyle = upcomingColor;
+        }
+
+        ctx.textAlign = "left";
+        ctx.fillText(word.text, xCursor, y);
+        xCursor += ctx.measureText(word.text + " ").width;
+      }
+      ctx.textAlign = "center"; // Reset
+    }
+  }
+
+  /** Word-highlight: full text shown, active word highlighted & scaled */
+  private renderWordHighlightSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    words: readonly { text: string; startTime: number; endTime: number }[],
+    activeWordIdx: number,
+    time: number,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    highlightColor: string,
+    upcomingColor: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+  ): void {
+    const lineHeight = fontSize * 1.3;
+    const fullText = words.map((w) => w.text).join(" ");
+    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+    const totalWidth = ctx.measureText(fullText).width;
+    const bgWidth = totalWidth + 24;
+    const bgHeight = lineHeight + 4;
+
+    let baseY: number;
+    if (position === "top") {
+      baseY = fontSize * 2 + lineHeight / 2;
+    } else if (position === "center") {
+      baseY = canvasHeight / 2;
+    } else {
+      baseY = canvasHeight - fontSize * 2 - lineHeight / 2;
+    }
+
+    // Background
+    ctx.fillStyle = backgroundColor;
+    const bgX = canvasWidth / 2 - bgWidth / 2;
+    const bgY = baseY - bgHeight / 2;
+    ctx.beginPath();
+    const r = 6;
+    ctx.moveTo(bgX + r, bgY);
+    ctx.lineTo(bgX + bgWidth - r, bgY);
+    ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + r);
+    ctx.lineTo(bgX + bgWidth, bgY + bgHeight - r);
+    ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - r, bgY + bgHeight);
+    ctx.lineTo(bgX + r, bgY + bgHeight);
+    ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - r);
+    ctx.lineTo(bgX, bgY + r);
+    ctx.quadraticCurveTo(bgX, bgY, bgX + r, bgY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw words
+    ctx.textAlign = "left";
+    let xCursor = canvasWidth / 2 - totalWidth / 2;
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const isActive = time >= word.startTime && time < word.endTime;
+      const isSpoken = time >= word.endTime;
+
+      if (isActive) {
+        ctx.fillStyle = highlightColor;
+        ctx.font = `bold ${Math.round(fontSize * 1.1)}px "${fontFamily}"`;
+      } else if (isSpoken) {
+        ctx.fillStyle = color;
+        ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+      } else {
+        ctx.fillStyle = upcomingColor;
+        ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+      }
+
+      ctx.fillText(word.text, xCursor, baseY);
+      // Always measure with base font for consistent spacing
+      ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+      xCursor += ctx.measureText(word.text + " ").width;
+    }
+    ctx.textAlign = "center";
+  }
+
+  /** Word-by-word: show only the currently-spoken word */
+  private renderWordByWordSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    words: readonly { text: string; startTime: number; endTime: number }[],
+    activeWordIdx: number,
+    time: number,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+  ): void {
+    const activeWord = words.find((w) => time >= w.startTime && time < w.endTime);
+    if (!activeWord) return;
+
+    const lineHeight = fontSize * 1.3;
+    let baseY: number;
+    if (position === "top") {
+      baseY = fontSize * 2 + lineHeight / 2;
+    } else if (position === "center") {
+      baseY = canvasHeight / 2;
+    } else {
+      baseY = canvasHeight - fontSize * 2 - lineHeight / 2;
+    }
+
+    ctx.font = `bold ${Math.round(fontSize * 1.2)}px "${fontFamily}"`;
+    const metrics = ctx.measureText(activeWord.text);
+    const bgWidth = metrics.width + 30;
+    const bgHeight = lineHeight + 8;
+
+    // Background
+    ctx.fillStyle = backgroundColor;
+    const bgX = canvasWidth / 2 - bgWidth / 2;
+    const bgY = baseY - bgHeight / 2;
+    ctx.beginPath();
+    const r = 8;
+    ctx.moveTo(bgX + r, bgY);
+    ctx.lineTo(bgX + bgWidth - r, bgY);
+    ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + r);
+    ctx.lineTo(bgX + bgWidth, bgY + bgHeight - r);
+    ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - r, bgY + bgHeight);
+    ctx.lineTo(bgX + r, bgY + bgHeight);
+    ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - r);
+    ctx.lineTo(bgX, bgY + r);
+    ctx.quadraticCurveTo(bgX, bgY, bgX + r, bgY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Text
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.fillText(activeWord.text, canvasWidth / 2, baseY);
+  }
+
+  /** Bounce: full text shown, active word has vertical bounce */
+  private renderBounceSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    words: readonly { text: string; startTime: number; endTime: number }[],
+    activeWordIdx: number,
+    time: number,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    highlightColor: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+  ): void {
+    const lineHeight = fontSize * 1.3;
+    const fullText = words.map((w) => w.text).join(" ");
+    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+    const totalWidth = ctx.measureText(fullText).width;
+    const bgWidth = totalWidth + 24;
+    const bgHeight = lineHeight + 12;
+
+    let baseY: number;
+    if (position === "top") {
+      baseY = fontSize * 2 + lineHeight / 2;
+    } else if (position === "center") {
+      baseY = canvasHeight / 2;
+    } else {
+      baseY = canvasHeight - fontSize * 2 - lineHeight / 2;
+    }
+
+    // Background
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(canvasWidth / 2 - bgWidth / 2, baseY - bgHeight / 2, bgWidth, bgHeight);
+
+    // Draw words
+    ctx.textAlign = "left";
+    let xCursor = canvasWidth / 2 - totalWidth / 2;
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const isActive = time >= word.startTime && time < word.endTime;
+      let yOffset = 0;
+
+      if (isActive) {
+        // Bounce: sinusoidal vertical offset
+        const progress = (time - word.startTime) / (word.endTime - word.startTime);
+        yOffset = -Math.sin(progress * Math.PI) * fontSize * 0.3;
+        ctx.fillStyle = highlightColor;
+      } else {
+        ctx.fillStyle = color;
+      }
+
+      ctx.fillText(word.text, xCursor, baseY + yOffset);
+      xCursor += ctx.measureText(word.text + " ").width;
+    }
+    ctx.textAlign = "center";
+  }
+
+  /** Typewriter: reveal characters progressively based on word timing */
+  private renderTypewriterSubtitle(
+    ctx: OffscreenCanvasRenderingContext2D,
+    words: readonly { text: string; startTime: number; endTime: number }[],
+    time: number,
+    fontSize: number,
+    fontFamily: string,
+    color: string,
+    backgroundColor: string,
+    canvasWidth: number,
+    canvasHeight: number,
+    position: string,
+  ): void {
+    // Build the revealed text up to current time
+    let revealedText = "";
+    for (const word of words) {
+      if (time >= word.endTime) {
+        revealedText += word.text + " ";
+      } else if (time >= word.startTime) {
+        // Partially reveal: calculate character progress
+        const progress = (time - word.startTime) / (word.endTime - word.startTime);
+        const charsToShow = Math.ceil(progress * word.text.length);
+        revealedText += word.text.substring(0, charsToShow);
+        break;
+      } else {
+        break;
+      }
+    }
+
+    revealedText = revealedText.trim();
+    if (revealedText.length === 0) return;
+
+    this.renderPlainSubtitle(ctx, revealedText, fontSize, fontFamily, color, backgroundColor, canvasWidth, canvasHeight, position);
   }
 
   private getClipsAtTime(track: Track, time: number): Clip[] {

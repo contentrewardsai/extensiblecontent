@@ -1331,6 +1331,50 @@ export const InspectorPanel: React.FC = () => {
                     selectedSubtitle.animationStyle === "none") &&
                     "Static text, no animation"}
                 </p>
+                {selectedSubtitle.animationStyle === "karaoke" && (
+                  <div className="pt-2 border-t border-border space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-text-secondary">
+                        Words per Line
+                      </span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={selectedSubtitle.style?.wordsPerLine || 3}
+                        onChange={(e) =>
+                          updateSubtitle(selectedSubtitle.id, {
+                            style: {
+                              ...(selectedSubtitle.style || {}),
+                              wordsPerLine: parseInt(e.target.value) || 3,
+                            } as typeof selectedSubtitle.style,
+                          })
+                        }
+                        className="w-16 h-7 text-[10px] bg-background-tertiary border-border text-text-primary text-right"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-text-secondary">
+                        Lines to Show
+                      </span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={5}
+                        value={selectedSubtitle.style?.linesToShow || 1}
+                        onChange={(e) =>
+                          updateSubtitle(selectedSubtitle.id, {
+                            style: {
+                              ...(selectedSubtitle.style || {}),
+                              linesToShow: parseInt(e.target.value) || 1,
+                            } as typeof selectedSubtitle.style,
+                          })
+                        }
+                        className="w-16 h-7 text-[10px] bg-background-tertiary border-border text-text-primary text-right"
+                      />
+                    </div>
+                  </div>
+                )}
                 {selectedSubtitle.animationStyle &&
                   selectedSubtitle.animationStyle !== "none" &&
                   !selectedSubtitle.words?.length && (
