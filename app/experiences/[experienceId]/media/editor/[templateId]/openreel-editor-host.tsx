@@ -128,8 +128,36 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			if (orProject._shotstack?.svgClipData) {
 				for (const [clipId, data] of Object.entries(orProject._shotstack.svgClipData)) {
 					try {
-						const res = await fetch(data.svgSrc);
-						const svgContent = await res.text();
+						let svgContent: string | null = null;
+						const svgSrc = data.svgSrc as string | undefined;
+
+						if (!svgSrc) {
+							console.warn(`[SVG] Clip ${clipId} has no svgSrc, skipping`);
+							continue;
+						} else if (svgSrc.trimStart().startsWith("<svg") || svgSrc.trimStart().startsWith("<?xml")) {
+							// Inline SVG content — use directly
+							svgContent = svgSrc;
+						} else if (svgSrc.startsWith("data:")) {
+							// Data URI — decode base64/text content
+							const commaIdx = svgSrc.indexOf(",");
+							if (commaIdx > -1) {
+								const payload = svgSrc.slice(commaIdx + 1);
+								svgContent = svgSrc.includes(";base64") ? atob(payload) : decodeURIComponent(payload);
+							}
+						} else if (svgSrc.startsWith("http")) {
+							// Remote URL — fetch
+							const res = await fetch(svgSrc);
+							if (!res.ok) {
+								console.warn(`[SVG] Failed to fetch ${svgSrc}: ${res.status}`);
+								continue;
+							}
+							svgContent = await res.text();
+						} else {
+							console.warn(`[SVG] Unsupported SVG source for clip ${clipId}: ${svgSrc.slice(0, 80)}`);
+							continue;
+						}
+
+						if (!svgContent) continue;
 
 						// Parse viewBox from SVG content
 						let viewBox = { minX: 0, minY: 0, width: 100, height: 100 };
