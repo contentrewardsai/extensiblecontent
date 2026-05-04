@@ -130,6 +130,17 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 					try {
 						const res = await fetch(data.svgSrc);
 						const svgContent = await res.text();
+
+						// Parse viewBox from SVG content
+						let viewBox = { minX: 0, minY: 0, width: 100, height: 100 };
+						const vbMatch = svgContent.match(/viewBox=["']([^"']+)["']/i);
+						if (vbMatch) {
+							const parts = vbMatch[1].trim().split(/[\s,]+/).map(Number);
+							if (parts.length >= 4 && parts.every(Number.isFinite)) {
+								viewBox = { minX: parts[0], minY: parts[1], width: parts[2], height: parts[3] };
+							}
+						}
+
 						svgClips.push({
 							id: clipId,
 							type: "svg",
@@ -137,7 +148,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							startTime: data.startTime,
 							duration: data.duration,
 							svgContent,
-							viewBox: { minX: 0, minY: 0, width: 100, height: 100 }, // Will be parsed by engine
+							viewBox,
 							preserveAspectRatio: "xMidYMid",
 							colorStyle: { colorMode: "none" },
 							transform: {

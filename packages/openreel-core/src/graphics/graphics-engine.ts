@@ -1704,6 +1704,7 @@ export class GraphicsEngine {
       entryAnimation?: GraphicAnimation;
       exitAnimation?: GraphicAnimation;
       colorStyle?: SVGColorStyle;
+      svgContent?: string;
       blendMode?: import("../video/types").BlendMode;
       blendOpacity?: number;
       emphasisAnimation?: EmphasisAnimation;
@@ -1719,6 +1720,7 @@ export class GraphicsEngine {
       ...existing,
       startTime: updates.startTime ?? existing.startTime,
       duration: updates.duration ?? existing.duration,
+      svgContent: updates.svgContent ?? existing.svgContent,
       transform: updates.transform
         ? { ...existing.transform, ...updates.transform }
         : existing.transform,
