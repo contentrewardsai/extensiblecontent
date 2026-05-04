@@ -1228,13 +1228,12 @@
         }
         renderTick();
       });
+      }).then(function (blob) {
+        /* Attach the offline-rendered audio WAV to the video blob so
+           convertToMp4 can mux them together. */
+        if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;
+        return blob;
       });
-    }).then(function (blob) {
-      /* Attach the offline-rendered audio WAV to the video blob so
-         convertToMp4 can mux them together. */
-      if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;
-      return blob;
-    });
     }).then(function (blob) { return blob; });
     }).finally(function () {
       ttsRevoke.forEach(function (url) {
