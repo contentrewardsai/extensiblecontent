@@ -197,6 +197,53 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 				(orProject as any).svgClips = svgClips;
 			}
 
+			// Process Shape assets → OpenReel ShapeClips
+			const shapeClips: any[] = [];
+			if (orProject._shotstack?.shapeClipData) {
+				for (const [clipId, data] of Object.entries(orProject._shotstack.shapeClipData)) {
+					const shapeType = (data.shapeType as string) || "rectangle";
+					const fillColor = (data.fillColor as string) || "#cccccc";
+					const strokeColor = data.strokeColor as string | undefined;
+					const strokeWidth = (data.strokeWidth as number) || 0;
+					const cornerRadius = (data.cornerRadius as number) || 0;
+					const w = (data.width as number) || 100;
+					const h = (data.height as number) || 100;
+
+					shapeClips.push({
+						id: clipId,
+						type: "shape",
+						trackId: data.trackId || `track-graphics`,
+						startTime: data.startTime,
+						duration: data.duration,
+						shapeType: shapeType as "rectangle" | "circle" | "ellipse" | "triangle",
+						style: {
+							fill: { type: "solid", color: fillColor, opacity: 1 },
+							stroke: {
+								color: strokeColor || "transparent",
+								width: strokeWidth,
+								opacity: strokeColor ? 1 : 0,
+								dashArray: [],
+							},
+							cornerRadius,
+						},
+						transform: {
+							position: data.position,
+							scale: {
+								x: (data.scale as number || 1) * (w / 1080),
+								y: (data.scale as number || 1) * (h / 1080),
+							},
+							rotation: 0,
+							anchor: { x: 0.5, y: 0.5 },
+							opacity: data.opacity,
+						},
+						keyframes: [],
+					});
+				}
+			}
+			if (shapeClips.length > 0) {
+				(orProject as any).shapeClips = shapeClips;
+			}
+
 			// Process Texts
 			const textClips: any[] = [];
 			if (orProject._shotstack?.textClipData) {

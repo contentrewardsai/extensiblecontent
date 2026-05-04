@@ -180,6 +180,7 @@ export interface ORProject {
 		svgClipData?: Record<string, any>;
 		textClipData?: Record<string, any>;
 		htmlClipData?: Record<string, any>;
+		shapeClipData?: Record<string, any>;
 		/** Full ShotStack clip per OpenReel subtitle id (caption / rich-caption round-trip) */
 		captionSourceBySubtitleId?: Record<string, { originalClip: ShotstackClip }>;
 	};
@@ -256,6 +257,7 @@ function assetTypeToTrackType(assetType: string): ORTrack["type"] {
 		case "luma":
 			return "image";
 		case "text":
+		case "rich-text":
 		case "title":
 		case "html":
 		case "caption":
@@ -482,6 +484,7 @@ export function shotstackToOpenReel(
 	const svgClipData: Record<string, any> = {};
 	const textClipData: Record<string, any> = {};
 	const htmlClipData: Record<string, any> = {};
+	const shapeClipData: Record<string, any> = {};
 	const captionSourceBySubtitleId: Record<string, { originalClip: ShotstackClip }> = {};
 	let maxTime = 0;
 	
@@ -491,6 +494,7 @@ export function shotstackToOpenReel(
 	let hasTextClips = false;
 	let hasSvgClips = false;
 	let hasHtmlClips = false;
+	let hasShapeClips = false;
 
 	const stTracks = edit.timeline?.tracks || [];
 	for (let ti = 0; ti < stTracks.length; ti++) {
@@ -557,6 +561,8 @@ export function shotstackToOpenReel(
 
 			const clipId = uuidv4();
 
+			console.log(`[ShotStack→OR] Track ${ti}, clip: type="${assetType}", src="${(asset.src as string || "").slice(0, 80)}", text="${(asset.text as string || "").slice(0, 40)}", html="${(asset.html as string || "").slice(0, 40)}"`);
+
 			if (assetType === "svg") {
 				svgClipData[clipId] = {
 					svgSrc: asset.src,
@@ -570,6 +576,33 @@ export function shotstackToOpenReel(
 					originalTrackIndex: ti,
 				};
 				hasSvgClips = true;
+				continue;
+			}
+
+			if (assetType === "shape") {
+				const shapeType = (asset.shape as string) || "rectangle";
+				const fillColor = (asset.fill as any)?.color || "#cccccc";
+				const strokeColor = (asset.stroke as any)?.color;
+				const strokeWidth = (asset.stroke as any)?.width || 0;
+				const cornerRadius = (asset.rectangle as any)?.cornerRadius ?? (asset.circle as any)?.radius ?? 0;
+				shapeClipData[clipId] = {
+					shapeType,
+					fillColor,
+					strokeColor,
+					strokeWidth,
+					cornerRadius,
+					width: resolveNumber(stClip.width as number, asset.width as number || 100),
+					height: resolveNumber(stClip.height as number, asset.height as number || 100),
+					startTime: start,
+					duration: length,
+					trackId: graphicsTrackId,
+					position: positionToXY(stClip.position, stClip.offset),
+					scale: stClip.scale || 1,
+					opacity: stClip.opacity ?? 1,
+					originalAsset: { ...asset },
+					originalTrackIndex: ti,
+				};
+				hasShapeClips = true;
 				continue;
 			}
 
@@ -610,7 +643,7 @@ export function shotstackToOpenReel(
 				continue;
 			}
 
-			if (assetType === "title" || assetType === "text") {
+			if (assetType === "title" || assetType === "text" || assetType === "rich-text") {
 				textClipData[clipId] = {
 					text: asset.text || asset.html || "Text",
 					startTime: start,
@@ -721,7 +754,7 @@ export function shotstackToOpenReel(
 			solo: false,
 		});
 	}
-	if (hasSvgClips) {
+	if (hasSvgClips || hasShapeClips) {
 		orTracks.push({
 			id: graphicsTrackId,
 			type: "graphics",
@@ -802,6 +835,7 @@ export function shotstackToOpenReel(
 			svgClipData,
 			textClipData,
 			htmlClipData,
+			shapeClipData,
 			captionSourceBySubtitleId,
 		},
 	};
