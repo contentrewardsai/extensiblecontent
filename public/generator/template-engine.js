@@ -760,23 +760,6 @@
               /* Concatenate WAV blobs into one */
               return concatenateWavBlobs(chunkBlobs.map(function (c) { return c.blob; })).then(function (combined) {
                 if (!combined || combined.size < 100) return;
-                var uploadHook = typeof window !== 'undefined' && window.__CFS_uploadIntermediate;
-                if (typeof uploadHook === 'function') {
-                  return Promise.resolve(uploadHook(combined, 'tts_' + mapKey + '.wav', 'audio/wav')).then(function (httpUrl) {
-                    if (httpUrl) { map[mapKey] = httpUrl; return; }
-                    if (typeof URL !== 'undefined' && URL.createObjectURL) {
-                      var url = URL.createObjectURL(combined);
-                      map[mapKey] = url;
-                      revoke.push(url);
-                    }
-                  }).catch(function () {
-                    if (typeof URL !== 'undefined' && URL.createObjectURL) {
-                      var url = URL.createObjectURL(combined);
-                      map[mapKey] = url;
-                      revoke.push(url);
-                    }
-                  });
-                }
                 if (typeof URL !== 'undefined' && URL.createObjectURL) {
                   var url = URL.createObjectURL(combined);
                   map[mapKey] = url;
@@ -1058,146 +1041,6 @@
    * options.onProgress: optional function(seconds, totalSeconds) for bulk status.
    * Returns Promise<Blob> or rejects if Pixi/MediaRecorder unavailable.
    */
-
-  /* ── Trim range sanitizer (shared with unified-editor.js) ── */
-  function sanitizeTrimRange(rawStart, rawEnd, totalDuration) {
-    var s = parseFloat(rawStart);
-    var e = parseFloat(rawEnd);
-    if (isNaN(s)) s = 0;
-    if (isNaN(e)) e = 0;
-    s = Math.max(0, s);
-    if (e <= 0) e = totalDuration || 0;
-    if (totalDuration > 0) e = Math.min(e, totalDuration);
-    if (e > 0 && e < s) { var tmp = s; s = e; e = tmp; }
-    if (e > 0 && e === s) return { trimStart: 0, duration: 0 };
-    var dur = (e > 0) ? (e - s) : 0;
-    return { trimStart: s, duration: dur };
-  }
-
-  /**
-   * Pre-trim video sources so the render pipeline only works with the
-   * segments actually used on the timeline. Mutates mergedTemplate in place.
-   * Returns { revoke: [blobUrl, ...] } for cleanup after render.
-   */
-  function preSegmentVideoSources(mergedTemplate) {
-    var FFmpegLocal = typeof window !== 'undefined' && window.FFmpegLocal;
-    if (!FFmpegLocal || typeof FFmpegLocal.extractSegment !== 'function') {
-      return Promise.resolve({ revoke: [] });
-    }
-    var tracks = (mergedTemplate && mergedTemplate.timeline && mergedTemplate.timeline.tracks) || [];
-    /* Collect per-source usage ranges */
-    var usageByUrl = {};
-    tracks.forEach(function (track) {
-      (track.clips || []).forEach(function (clip) {
-        var asset = clip.asset || {};
-        var type = (asset.type || '').toLowerCase();
-        if (type !== 'video') return;
-        var src = asset.src || '';
-        if (!src || src.indexOf('{{') !== -1) return;
-        if (src.startsWith('data:') || src.startsWith('blob:')) return;
-        var trimOffset = asset.trim != null ? Math.max(0, Number(asset.trim) || 0) : 0;
-        var clipLength = (clip.length === 'end' || clip.length === 'auto') ? 3600 : (typeof clip.length === 'number' ? clip.length : 5);
-        var sourceEnd = trimOffset + clipLength;
-        if (!usageByUrl[src]) {
-          usageByUrl[src] = { minStart: trimOffset, maxEnd: sourceEnd, clips: [] };
-        }
-        usageByUrl[src].minStart = Math.min(usageByUrl[src].minStart, trimOffset);
-        usageByUrl[src].maxEnd = Math.max(usageByUrl[src].maxEnd, sourceEnd);
-        usageByUrl[src].clips.push({ clip: clip, asset: asset });
-      });
-    });
-
-    var urls = Object.keys(usageByUrl);
-    if (urls.length === 0) return Promise.resolve({ revoke: [] });
-
-    var BUFFER_SEC = 2;
-    var MIN_SOURCE_DURATION = 30;
-    var revoke = [];
-
-    function processOne(url) {
-      var usage = usageByUrl[url];
-      /* Probe duration via <video> element (doesn't require FFmpeg WASM or downloading full blob) */
-      return probeDurationViaVideo(url).then(function (totalDur) {
-        if (totalDur <= 0 || totalDur < MIN_SOURCE_DURATION) return;
-        var range = sanitizeTrimRange(usage.minStart, usage.maxEnd, totalDur);
-        if (range.duration <= 0) return;
-        /* Skip if the used range covers >= 80% of the file */
-        if (range.duration >= totalDur * 0.8) return;
-        var segStart = Math.max(0, range.trimStart - BUFFER_SEC);
-        var segDuration = range.duration + BUFFER_SEC * 2;
-        if (segStart + segDuration > totalDur) segDuration = totalDur - segStart;
-        /* Fetch the source to a Blob for extractSegment */
-        return fetch(url, { mode: 'cors' }).then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.blob();
-        }).then(function (srcBlob) {
-          return FFmpegLocal.extractSegment(srcBlob, segStart, segDuration, { mode: 'video', includeAudio: true });
-        }).then(function (result) {
-          if (!result.ok || !result.blob) return;
-          var blobUrl = URL.createObjectURL(result.blob);
-          revoke.push(blobUrl);
-          /* Rewrite all clips that reference this source */
-          var offsetShift = segStart;
-          usage.clips.forEach(function (entry) {
-            entry.asset.src = blobUrl;
-            var oldTrim = entry.asset.trim != null ? Math.max(0, Number(entry.asset.trim) || 0) : 0;
-            entry.asset.trim = Math.max(0, oldTrim - offsetShift);
-          });
-        });
-      }).catch(function (err) {
-        console.warn('[CFS] preSegment failed for', url, err);
-      });
-    }
-
-    function withTimeout(promise, ms) {
-      return new Promise(function (resolve, reject) {
-        var timer = setTimeout(function () {
-          reject(new Error('Pre-trim timed out after ' + (ms / 1000) + 's'));
-        }, ms);
-        promise.then(function (v) { clearTimeout(timer); resolve(v); })
-               .catch(function (e) { clearTimeout(timer); reject(e); });
-      });
-    }
-
-    return Promise.all(urls.map(function (url) {
-      return withTimeout(processOne(url), 60000).catch(function (err) {
-        console.warn('[CFS] preSegment skipped for', url, err);
-      });
-    })).then(function () {
-      return { revoke: revoke };
-    });
-  }
-
-  /**
-   * Quick duration probe via a temporary <video> element. No FFmpeg needed.
-   */
-  function probeDurationViaVideo(src) {
-    return new Promise(function (resolve) {
-      if (!src || typeof document === 'undefined') { resolve(0); return; }
-      var video = document.createElement('video');
-      video.preload = 'metadata';
-      video.muted = true;
-      video.playsInline = true;
-      video.crossOrigin = 'anonymous';
-      video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-      document.body.appendChild(video);
-      var done = false;
-      function finish() {
-        if (done) return;
-        done = true;
-        var dur = (video.duration && isFinite(video.duration)) ? video.duration : 0;
-        try { video.pause(); video.removeAttribute('src'); video.load(); } catch (_) {}
-        try { document.body.removeChild(video); } catch (_) {}
-        resolve(dur);
-      }
-      video.addEventListener('loadedmetadata', finish);
-      video.addEventListener('error', finish);
-      video.src = src;
-      video.load();
-      setTimeout(finish, 8000);
-    });
-  }
-
   function renderTimelineToVideoBlob(mergedTemplate, options) {
     options = options || {};
     const createPlayer = typeof window !== 'undefined' && window.__CFS_pixiShotstackPlayer;
@@ -1209,18 +1052,12 @@
       return Promise.reject(new Error('Video export requires the MediaRecorder API.'));
     }
     let ttsRevoke = [];
-    let segmentRevoke = [];
-    let ttsMap = {};
     return preGenerateTtsForTemplate(mergedTemplate).then(function (ttsResult) {
       ttsRevoke = ttsResult.revoke || [];
-      ttsMap = ttsResult.map || {};
-      return preSegmentVideoSources(mergedTemplate);
-    }).then(function (segResult) {
-      segmentRevoke = segResult.revoke || [];
       const merge = {};
-      const player = createPlayer({ merge: merge, preGeneratedTts: ttsMap });
+      const player = createPlayer({ merge: merge, preGeneratedTts: ttsResult.map || {} });
       return player.load(mergedTemplate).then(function () {
-      var totalDuration = Math.max(1, Math.min(900, player.getDuration() || 10));
+      var totalDuration = Math.max(1, Math.min(120, player.getDuration() || 10));
       var rangeStart = 0;
       var rangeLength = totalDuration;
       if (mergedTemplate && mergedTemplate.output && mergedTemplate.output.range) {
@@ -1251,62 +1088,43 @@
         : Promise.resolve(null)
       ).then(function (audioBuffer) {
         if (!audioBuffer) return null;
-        /* Encode AudioBuffer → 16-bit PCM WAV (chunked to limit peak memory) */
+        /* Encode AudioBuffer → 16-bit PCM WAV */
         var numCh = audioBuffer.numberOfChannels;
         var sr = audioBuffer.sampleRate;
         var length = audioBuffer.length;
         var bitsPerSample = 16;
         var bytesPerSample = bitsPerSample / 8;
         var dataSize = length * numCh * bytesPerSample;
-        var headerBuf = new ArrayBuffer(44);
-        var hv = new DataView(headerBuf);
-        function writeStr(buf, offset, s) { for (var i = 0; i < s.length; i++) buf.setUint8(offset + i, s.charCodeAt(i)); }
-        writeStr(hv, 0, 'RIFF');
-        hv.setUint32(4, 36 + dataSize, true);
-        writeStr(hv, 8, 'WAVE');
-        writeStr(hv, 12, 'fmt ');
-        hv.setUint32(16, 16, true);
-        hv.setUint16(20, 1, true);
-        hv.setUint16(22, numCh, true);
-        hv.setUint32(24, sr, true);
-        hv.setUint32(28, sr * numCh * bytesPerSample, true);
-        hv.setUint16(32, numCh * bytesPerSample, true);
-        hv.setUint16(34, bitsPerSample, true);
-        writeStr(hv, 36, 'data');
-        hv.setUint32(40, dataSize, true);
+        var headerSize = 44;
+        var wavBuf = new ArrayBuffer(headerSize + dataSize);
+        var view = new DataView(wavBuf);
+        function writeStr(offset, s) { for (var i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); }
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numCh, true);
+        view.setUint32(24, sr, true);
+        view.setUint32(28, sr * numCh * bytesPerSample, true);
+        view.setUint16(32, numCh * bytesPerSample, true);
+        view.setUint16(34, bitsPerSample, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataSize, true);
         var channels = [];
         for (var c = 0; c < numCh; c++) channels.push(audioBuffer.getChannelData(c));
-        var CHUNK_SAMPLES = sr;
-        var parts = [headerBuf];
-        for (var pos = 0; pos < length; pos += CHUNK_SAMPLES) {
-          var chunkEnd = Math.min(pos + CHUNK_SAMPLES, length);
-          var chunkBuf = new ArrayBuffer((chunkEnd - pos) * numCh * bytesPerSample);
-          var cv = new DataView(chunkBuf);
-          var off = 0;
-          for (var i = pos; i < chunkEnd; i++) {
-            for (var c = 0; c < numCh; c++) {
-              var s = Math.max(-1, Math.min(1, channels[c][i]));
-              cv.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-              off += 2;
-            }
+        var offset = headerSize;
+        for (var i = 0; i < length; i++) {
+          for (var c = 0; c < numCh; c++) {
+            var s = Math.max(-1, Math.min(1, channels[c][i]));
+            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            offset += 2;
           }
-          parts.push(chunkBuf);
         }
-        var wavBlob = new Blob(parts, { type: 'audio/wav' });
-        var uploadHook = typeof window !== 'undefined' && window.__CFS_uploadIntermediate;
-        if (typeof uploadHook === 'function') {
-          return Promise.resolve(uploadHook(wavBlob, 'audio_mix.wav', 'audio/wav')).then(function (httpUrl) {
-            return { blob: wavBlob, url: httpUrl || null };
-          }).catch(function () { return { blob: wavBlob, url: null }; });
-        }
-        return { blob: wavBlob, url: null };
-      }).catch(function (audioErr) {
-        console.warn('[CFS] Audio mix failed — video will have no audio:', audioErr);
-        return null;
-      });
-      return audioWavPromise.then(function (audioWavResult) {
-      var audioWavBlob = audioWavResult ? audioWavResult.blob : null;
-      var audioWavUrl = audioWavResult ? audioWavResult.url : null;
+        return new Blob([wavBuf], { type: 'audio/wav' });
+      }).catch(function () { return null; });
+      return audioWavPromise.then(function (audioWavBlob) {
       return Promise.resolve(null).then(function (audioPlayback) {
         let recorder;
         try {
@@ -1324,35 +1142,9 @@
             try { if (url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url); } catch (_) {}
           });
           ttsRevoke = [];
-          segmentRevoke.forEach(function (url) {
-            try { if (url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url); } catch (_) {}
-          });
-          segmentRevoke = [];
         }
-        /* ── Ticker + render loop setup (before handlers so cleanup is in scope) ── */
-        if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);
-        var renderStartTime = Date.now();
-        var lastReportedSec = -1;
-        var renderDone = false;
-        var tickerWorker = null;
-        var tickerWorkerBlobUrl = null;
-        try {
-          var workerCode = 'var iv=setInterval(function(){postMessage("tick")},16);self.onmessage=function(e){if(e.data==="stop"){clearInterval(iv);self.close()}}';
-          var workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-          tickerWorkerBlobUrl = URL.createObjectURL(workerBlob);
-          tickerWorker = new Worker(tickerWorkerBlobUrl);
-        } catch (_) { tickerWorker = null; }
-        var onstopTimer = null;
-        function stopRenderLoop() {
-          renderDone = true;
-          if (tickerWorker) { try { tickerWorker.postMessage('stop'); } catch (_) {} }
-          if (tickerWorkerBlobUrl) { try { URL.revokeObjectURL(tickerWorkerBlobUrl); } catch (_) {} tickerWorkerBlobUrl = null; }
-          if (onstopTimer) { clearTimeout(onstopTimer); onstopTimer = null; }
-        }
-
         recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
         recorder.onstop = function () {
-          stopRenderLoop();
           if (audioPlayback && audioPlayback.stop) audioPlayback.stop();
           player.destroy();
           revokeTts();
@@ -1360,7 +1152,6 @@
           resolve(blob);
         };
         recorder.onerror = function (e) {
-          stopRenderLoop();
           if (audioPlayback && audioPlayback.stop) audioPlayback.stop();
           player.destroy();
           revokeTts();
@@ -1370,38 +1161,37 @@
         try {
           recorder.start(100);
         } catch (startErr) {
-          stopRenderLoop();
           player.destroy();
           revokeTts();
           reject(new Error('Could not start recording: ' + (startErr && startErr.message ? startErr.message : String(startErr))));
           return;
         }
-        /* Safety timeout: if onstop never fires, reject after duration + 30s */
-        onstopTimer = setTimeout(function () {
-          if (!renderDone) {
-            stopRenderLoop();
-            try { recorder.stop(); } catch (_) {}
-            if (audioPlayback && audioPlayback.stop) audioPlayback.stop();
-            player.destroy();
-            revokeTts();
-            reject(new Error('MediaRecorder onstop did not fire within 30s of render completion'));
-          }
-        }, (durationSec + 30) * 1000);
-        var abortSignal = options.signal || null;
+        /* ── Hybrid real-time render with Worker ticker ──
+           Videos play natively at real speed (fast, no per-frame
+           seeking). A Web Worker ticker drives the render loop so
+           it keeps running in background tabs. On each tick we
+           redraw video canvas intermediaries and explicitly push
+           the frame to MediaRecorder via requestFrame(). */
+        if (player.startVideoPlayback) player.startVideoPlayback(rangeStart);
+        var renderStartTime = Date.now();
+        var lastReportedSec = -1;
+        var renderDone = false;
+        var tickerWorker = null;
+        try {
+          var workerCode = 'var iv=setInterval(function(){postMessage("tick")},16);self.onmessage=function(e){if(e.data==="stop"){clearInterval(iv);self.close()}}';
+          var workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+          tickerWorker = new Worker(URL.createObjectURL(workerBlob));
+        } catch (_) { tickerWorker = null; }
         function renderTick() {
           if (renderDone) return;
-          if (abortSignal && abortSignal.aborted) {
-            stopRenderLoop();
-            try { recorder.stop(); } catch (_) {}
-            return;
-          }
           var elapsed = (Date.now() - renderStartTime) / 1000;
           if (onProgress) {
             var sec = Math.floor(elapsed);
             if (sec !== lastReportedSec) { lastReportedSec = sec; onProgress(elapsed, durationSec); }
           }
           if (elapsed >= durationSec) {
-            stopRenderLoop();
+            renderDone = true;
+            if (tickerWorker) { try { tickerWorker.postMessage('stop'); } catch (_) {} }
             try { recorder.stop(); } catch (_) {}
             return;
           }
@@ -1438,32 +1228,16 @@
         }
         renderTick();
       });
-      }).then(function (blob) {
-        /* Attach the offline-rendered audio WAV (blob and/or uploaded URL)
-           so convertToMp4WithAudio can mux them together. */
-        if (!audioWavBlob) blob._cfsAudioFailed = true;
-        if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;
-        if (audioWavUrl) blob._cfsAudioUrl = audioWavUrl;
-        /* Upload the WebM itself if the hook is available */
-        var uploadHook = typeof window !== 'undefined' && window.__CFS_uploadIntermediate;
-        if (typeof uploadHook === 'function') {
-          return Promise.resolve(uploadHook(blob, 'render.webm', blob.type || 'video/webm')).then(function (httpUrl) {
-            if (httpUrl) blob._cfsVideoUrl = httpUrl;
-            return blob;
-          }).catch(function () { return blob; });
-        }
-        return blob;
       });
+    }).then(function (blob) {
+      /* Attach the offline-rendered audio WAV to the video blob so
+         convertToMp4 can mux them together. */
+      if (audioWavBlob) blob._cfsAudioWav = audioWavBlob;
+      return blob;
     });
-    }).catch(function (err) {
-      player.destroy();
-      throw err;
-    });
+    }).then(function (blob) { return blob; });
     }).finally(function () {
       ttsRevoke.forEach(function (url) {
-        try { if (url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url); } catch (_) {}
-      });
-      segmentRevoke.forEach(function (url) {
         try { if (url && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url); } catch (_) {}
       });
     });
@@ -1766,15 +1540,9 @@
       return Promise.reject(new Error('Audio export requires OfflineAudioContext, which is not available.'));
     }
     let ttsRevoke = [];
-    let segRevoke = [];
-    let ttsMap = {};
     return preGenerateTtsForTemplate(mergedTemplate).then(function (ttsResult) {
       ttsRevoke = ttsResult.revoke || [];
-      ttsMap = ttsResult.map || {};
-      return preSegmentVideoSources(mergedTemplate);
-    }).then(function (segResult) {
-      segRevoke = segResult.revoke || [];
-      const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsMap });
+      const player = createPlayer({ merge: (options.merge || {}), preGeneratedTts: ttsResult.map || {} });
       return player.load(mergedTemplate).then(function () {
         const durationSec = player.getDuration ? player.getDuration() : 10;
         if (player.renderMixedAudioBuffer) {
@@ -1784,7 +1552,6 @@
       });
     }).then(function (audioBuffer) {
       ttsRevoke.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-      segRevoke.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
       if (!audioBuffer) return null;
       var numChannels = audioBuffer.numberOfChannels;
       var sampleRate = audioBuffer.sampleRate;
@@ -1817,9 +1584,6 @@
         }
       }
       return new Blob([buffer], { type: 'audio/wav' });
-    }).finally(function () {
-      ttsRevoke.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-      segRevoke.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
     });
   }
 

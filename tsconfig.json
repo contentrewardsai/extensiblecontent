@@ -29,5 +29,5 @@
 		".next/types/**/*.ts",
 		".next/dev/types/**/*.ts"
 	],
-	"exclude": ["node_modules"]
+	"exclude": ["node_modules", "packages/openreel-ui", "packages/openreel-ui-lib", "**/assembly/**"]
 }

@@ -1191,3 +1191,134 @@ export async function acceptProjectInviteAction(
 		return { ok: false, error: projectActionError(e) };
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pipeline: Source Videos
+// ──────────────────────────────────────────────────────────────────────────
+
+export type AddSourceVideoState =
+	| { ok: true; id: string }
+	| { ok: false; error: string }
+	| null;
+
+export async function addSourceVideoAction(
+	_prev: AddSourceVideoState,
+	formData: FormData,
+): Promise<AddSourceVideoState> {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const projectId = String(formData.get("projectId") ?? "");
+	const url = String(formData.get("url") ?? "").trim();
+	const filename = String(formData.get("filename") ?? "").trim() || "Untitled";
+
+	if (!experienceId || !projectId || !url) {
+		return { ok: false, error: "Missing required fields" };
+	}
+
+	try {
+		const { internalUserId } = await requireExperienceActionUser(experienceId);
+		const supabase = getServiceSupabase();
+		await assertProjectAccess(supabase, projectId, internalUserId, "editor");
+
+		const isGhl = url.includes("highlevel") || url.includes("leadconnector");
+
+		const { data, error } = await supabase
+			.from("project_source_videos")
+			.insert({
+				project_id: projectId,
+				ghl_media_url: isGhl ? url : null,
+				storage_path: isGhl ? null : url,
+				original_filename: filename,
+			})
+			.select("id")
+			.single();
+
+		if (error || !data) return { ok: false, error: error?.message ?? "Insert failed" };
+
+		revalidatePath(`/experiences/${experienceId}/projects/${projectId}`);
+		return { ok: true, id: data.id as string };
+	} catch (e) {
+		return { ok: false, error: projectActionError(e) };
+	}
+}
+
+export async function removeSourceVideoAction(formData: FormData): Promise<void> {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const projectId = String(formData.get("projectId") ?? "");
+	const videoId = String(formData.get("videoId") ?? "");
+	if (!experienceId || !projectId || !videoId) return;
+
+	try {
+		const { internalUserId } = await requireExperienceActionUser(experienceId);
+		const supabase = getServiceSupabase();
+		await assertProjectAccess(supabase, projectId, internalUserId, "editor");
+
+		await supabase
+			.from("project_source_videos")
+			.delete()
+			.eq("id", videoId)
+			.eq("project_id", projectId);
+
+		revalidatePath(`/experiences/${experienceId}/projects/${projectId}`);
+	} catch {
+		// noop
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pipeline: Config
+// ──────────────────────────────────────────────────────────────────────────
+
+export type UpdatePipelineConfigState =
+	| { ok: true }
+	| { ok: false; error: string }
+	| null;
+
+export async function updatePipelineConfigAction(
+	_prev: UpdatePipelineConfigState,
+	formData: FormData,
+): Promise<UpdatePipelineConfigState> {
+	const experienceId = String(formData.get("experienceId") ?? "");
+	const projectId = String(formData.get("projectId") ?? "");
+
+	if (!experienceId || !projectId) {
+		return { ok: false, error: "Missing required fields" };
+	}
+
+	try {
+		const { internalUserId } = await requireExperienceActionUser(experienceId);
+		const supabase = getServiceSupabase();
+		await assertProjectAccess(supabase, projectId, internalUserId, "editor");
+
+		const clipsPerDay = Math.max(0, Math.min(100, Number(formData.get("clips_per_day")) || 0));
+		const postingTarget = String(formData.get("posting_target") ?? "none");
+		const autoRun = formData.get("auto_run") === "on";
+
+		const validTargets = ["highlevel", "uploadpost", "none"];
+		if (!validTargets.includes(postingTarget)) {
+			return { ok: false, error: "Invalid posting target" };
+		}
+
+		const templateIdsRaw = String(formData.get("template_ids") ?? "").trim();
+		const templateIds = templateIdsRaw
+			? templateIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+			: [];
+
+		const { error } = await supabase
+			.from("projects")
+			.update({
+				pipeline_clips_per_day: clipsPerDay,
+				pipeline_default_template_ids: templateIds,
+				pipeline_posting_target: postingTarget,
+				pipeline_auto_run: autoRun,
+				updated_at: new Date().toISOString(),
+			})
+			.eq("id", projectId);
+
+		if (error) return { ok: false, error: error.message };
+
+		revalidatePath(`/experiences/${experienceId}/projects/${projectId}`);
+		return { ok: true };
+	} catch (e) {
+		return { ok: false, error: projectActionError(e) };
+	}
+}

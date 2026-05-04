@@ -4,11 +4,16 @@ import { useActionState, useState, useTransition } from "react";
 import {
 	addProjectMemberAction,
 	type AddProjectMemberActionState,
+	addSourceVideoAction,
+	type AddSourceVideoState,
 	changeProjectMemberRoleAction,
 	createProjectInviteAction,
 	type CreateProjectInviteState,
 	removeProjectMemberAction,
+	removeSourceVideoAction,
 	revokeProjectInviteAction,
+	updatePipelineConfigAction,
+	type UpdatePipelineConfigState,
 	updateProjectMemberCreditOverrideAction,
 	type UpdateMemberCreditOverrideState,
 	updateProjectSettingsAction,
@@ -17,6 +22,17 @@ import {
 import type { ProjectAuditEntry } from "@/lib/project-audit";
 import type { ProjectInviteRow, ProjectMemberRow } from "@/lib/project-members";
 import { formatBytes } from "@/lib/storage-post-media";
+import { ClipPipelineRunner } from "./clip-pipeline-runner";
+
+export interface SourceVideoRow {
+	id: string;
+	original_filename: string;
+	storage_path: string | null;
+	ghl_media_url: string | null;
+	duration_sec: number | null;
+	stt_status: string;
+	created_at: string;
+}
 
 interface Props {
 	experienceId: string;
@@ -28,11 +44,14 @@ interface Props {
 		name: string;
 		description: string | null;
 		quotaBytes: number | null;
-		/** Optional monthly ShotStack credit cap for this project (credits = render minutes). */
 		shotstackMonthlyCreditCap: number | null;
 		ownerId: string;
 		createdAt: string;
 		updatedAt: string;
+		pipelineClipsPerDay: number;
+		pipelineDefaultTemplateIds: string[];
+		pipelinePostingTarget: string;
+		pipelineAutoRun: boolean;
 	};
 	usage: {
 		projectUsedBytes: number;
@@ -41,21 +60,23 @@ interface Props {
 		ownerMaxBytes: number;
 	};
 	creditUsage: {
-		/** Sum of debits charged to this project this calendar month. */
 		projectSpentThisMonth: number;
 	};
 	members: ProjectMemberRow[];
-	/** Map of user_id → per-member monthly credit cap. Missing key = no override. */
 	memberCreditOverrides: Record<string, number>;
 	invites: ProjectInviteRow[];
 	auditEntries: ProjectAuditEntry[];
 	memberNames: Record<string, string>;
+	sourceVideos: SourceVideoRow[];
+	templates: Array<{ id: string; name: string }>;
 }
 
-type Tab = "settings" | "members" | "activity";
+type Tab = "settings" | "sources" | "pipeline" | "members" | "activity";
 
 const TAB_LABELS: Record<Tab, string> = {
 	settings: "Settings",
+	sources: "Source Videos",
+	pipeline: "Pipeline",
 	members: "Members",
 	activity: "Activity",
 };
@@ -66,13 +87,13 @@ export function ProjectDetailClient(props: Props) {
 	return (
 		<div className="flex flex-col gap-6">
 			<UsageSummary usage={props.usage} />
-			<nav className="flex gap-2 border-b border-gray-a4">
+			<nav className="flex gap-2 border-b border-gray-a4 overflow-x-auto">
 				{(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
 					<button
 						key={t}
 						type="button"
 						onClick={() => setTab(t)}
-						className={`text-3 px-3 py-2 -mb-px border-b-2 ${
+						className={`text-3 px-3 py-2 -mb-px border-b-2 whitespace-nowrap ${
 							tab === t ? "border-gray-12 text-gray-12 font-medium" : "border-transparent text-gray-10 hover:text-gray-12"
 						}`}
 					>
@@ -89,6 +110,24 @@ export function ProjectDetailClient(props: Props) {
 					ownerCapBytes={props.usage.ownerMaxBytes}
 					ownerUsedBytes={props.usage.ownerUsedBytes}
 					projectShotstackSpentThisMonth={props.creditUsage.projectSpentThisMonth}
+				/>
+			) : null}
+			{tab === "sources" ? (
+				<SourceVideosTab
+					experienceId={props.experienceId}
+					projectId={props.projectId}
+					role={props.role}
+					sourceVideos={props.sourceVideos}
+				/>
+			) : null}
+			{tab === "pipeline" ? (
+				<PipelineConfigTab
+					experienceId={props.experienceId}
+					projectId={props.projectId}
+					project={props.project}
+					role={props.role}
+					templates={props.templates}
+					sourceVideoCount={props.sourceVideos.length}
 				/>
 			) : null}
 			{tab === "members" ? (
@@ -655,4 +694,256 @@ function sourceColor(source: ProjectAuditEntry["source"]): string {
 		default:
 			return "bg-gray-a3 text-gray-11";
 	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Source Videos Tab
+// ──────────────────────────────────────────────────────────────────────────
+
+const STT_STATUS_LABELS: Record<string, { label: string; cls: string }> = {
+	pending: { label: "Pending", cls: "bg-gray-a3 text-gray-11" },
+	processing: { label: "Processing", cls: "bg-yellow-a3 text-yellow-11" },
+	done: { label: "STT Done", cls: "bg-green-a3 text-green-11" },
+	failed: { label: "STT Failed", cls: "bg-red-a3 text-red-11" },
+};
+
+function SourceVideosTab({
+	experienceId,
+	projectId,
+	role,
+	sourceVideos,
+}: {
+	experienceId: string;
+	projectId: string;
+	role: Props["role"];
+	sourceVideos: SourceVideoRow[];
+}) {
+	const isEditor = role === "editor" || role === "owner";
+	const initial: AddSourceVideoState = null;
+	const [state, formAction, pending] = useActionState(addSourceVideoAction, initial);
+	const [removePending, startRemove] = useTransition();
+
+	return (
+		<div className="flex flex-col gap-6">
+			{isEditor ? (
+				<form action={formAction} className="border border-gray-a4 rounded-lg p-4 bg-gray-a2 flex flex-col gap-3">
+					<div>
+						<h3 className="text-4 font-semibold text-gray-12">Link a source video</h3>
+						<p className="text-2 text-gray-10 mt-1">
+							Paste a URL from Supabase Storage or HighLevel media library. The same video can be linked to multiple projects.
+						</p>
+					</div>
+					<input type="hidden" name="experienceId" value={experienceId} />
+					<input type="hidden" name="projectId" value={projectId} />
+					<div className="flex flex-col sm:flex-row gap-2">
+						<input
+							type="url"
+							name="url"
+							placeholder="https://… video URL"
+							required
+							className="text-3 text-gray-12 bg-gray-a1 border border-gray-a4 rounded-md px-2 py-1.5 flex-1"
+						/>
+						<input
+							type="text"
+							name="filename"
+							placeholder="Display name (optional)"
+							className="text-3 text-gray-12 bg-gray-a1 border border-gray-a4 rounded-md px-2 py-1.5 w-48"
+						/>
+						<button
+							type="submit"
+							disabled={pending}
+							className="text-3 px-4 py-1.5 rounded-md bg-gray-12 text-gray-1 hover:opacity-90 disabled:opacity-50"
+						>
+							{pending ? "Adding…" : "Add video"}
+						</button>
+					</div>
+					{state && state.ok === false ? <p className="text-2 text-red-11">{state.error}</p> : null}
+					{state && state.ok ? <p className="text-2 text-green-11">Video linked.</p> : null}
+				</form>
+			) : null}
+
+			<section>
+				<h3 className="text-4 font-semibold text-gray-12 mb-2">
+					Source Videos ({sourceVideos.length})
+				</h3>
+				{sourceVideos.length === 0 ? (
+					<p className="text-2 text-gray-10">No source videos linked yet. Add one above to start the pipeline.</p>
+				) : (
+					<ul className="border border-gray-a4 rounded-lg divide-y divide-gray-a4">
+						{sourceVideos.map((v) => {
+							const sttInfo = STT_STATUS_LABELS[v.stt_status] ?? STT_STATUS_LABELS.pending;
+							const displayUrl = v.ghl_media_url || v.storage_path || "";
+							return (
+								<li key={v.id} className="p-3 flex items-center justify-between gap-3">
+									<div className="min-w-0 flex-1">
+										<div className="text-3 text-gray-12 truncate">{v.original_filename || "Untitled"}</div>
+										<div className="text-2 text-gray-10 truncate font-mono">{displayUrl}</div>
+										<div className="flex items-center gap-2 mt-1">
+											<span className={`text-2 px-1.5 py-0.5 rounded ${sttInfo.cls}`}>
+												{sttInfo.label}
+											</span>
+											{v.duration_sec != null ? (
+												<span className="text-2 text-gray-10">
+													{Math.floor(v.duration_sec / 60)}m {Math.round(v.duration_sec % 60)}s
+												</span>
+											) : null}
+											<span className="text-2 text-gray-10">
+												{new Date(v.created_at).toLocaleDateString()}
+											</span>
+										</div>
+									</div>
+									{isEditor ? (
+										<form
+											action={(formData) => {
+												startRemove(async () => {
+													await removeSourceVideoAction(formData);
+												});
+											}}
+										>
+											<input type="hidden" name="experienceId" value={experienceId} />
+											<input type="hidden" name="projectId" value={projectId} />
+											<input type="hidden" name="videoId" value={v.id} />
+											<button
+												type="submit"
+												disabled={removePending}
+												className="text-2 px-2 py-1 rounded-md border border-red-a5 text-red-11 hover:bg-red-a3 disabled:opacity-50"
+											>
+												Remove
+											</button>
+										</form>
+									) : null}
+								</li>
+							);
+						})}
+					</ul>
+				)}
+			</section>
+		</div>
+	);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pipeline Config Tab
+// ──────────────────────────────────────────────────────────────────────────
+
+function PipelineConfigTab({
+	experienceId,
+	projectId,
+	project,
+	role,
+	templates,
+	sourceVideoCount,
+}: {
+	experienceId: string;
+	projectId: string;
+	project: Props["project"];
+	role: Props["role"];
+	templates: Array<{ id: string; name: string }>;
+	sourceVideoCount: number;
+}) {
+	const isEditor = role === "editor" || role === "owner";
+	const initial: UpdatePipelineConfigState = null;
+	const [state, formAction, pending] = useActionState(updatePipelineConfigAction, initial);
+
+	return (
+		<div className="flex flex-col gap-6">
+			<div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+				<div className="border border-gray-a4 rounded-lg p-3 bg-gray-a2">
+					<div className="text-2 text-gray-10">Source videos</div>
+					<div className="text-4 text-gray-12 font-medium">{sourceVideoCount}</div>
+				</div>
+				<div className="border border-gray-a4 rounded-lg p-3 bg-gray-a2">
+					<div className="text-2 text-gray-10">Clips / day</div>
+					<div className="text-4 text-gray-12 font-medium">{project.pipelineClipsPerDay}</div>
+				</div>
+				<div className="border border-gray-a4 rounded-lg p-3 bg-gray-a2">
+					<div className="text-2 text-gray-10">Auto-run</div>
+					<div className="text-4 text-gray-12 font-medium">{project.pipelineAutoRun ? "On" : "Off"}</div>
+				</div>
+			</div>
+
+			<form action={formAction} className="flex flex-col gap-4 max-w-xl">
+				<input type="hidden" name="experienceId" value={experienceId} />
+				<input type="hidden" name="projectId" value={projectId} />
+
+				<label className="text-2 text-gray-11 flex flex-col gap-1">
+					<span>Clips per day</span>
+					<input
+						type="number"
+						name="clips_per_day"
+						min={0}
+						max={100}
+						defaultValue={project.pipelineClipsPerDay}
+						disabled={!isEditor}
+						className="text-3 text-gray-12 bg-gray-a2 border border-gray-a4 rounded-md px-2 py-1.5 disabled:opacity-50 font-mono w-32"
+					/>
+				</label>
+
+				<label className="text-2 text-gray-11 flex flex-col gap-1">
+					<span>Default template</span>
+					<select
+						name="template_ids"
+						defaultValue={project.pipelineDefaultTemplateIds[0] ?? ""}
+						disabled={!isEditor}
+						className="text-3 text-gray-12 bg-gray-a2 border border-gray-a4 rounded-md px-2 py-1.5 disabled:opacity-50"
+					>
+						<option value="">None selected</option>
+						{templates.map((t) => (
+							<option key={t.id} value={t.id}>{t.name}</option>
+						))}
+					</select>
+					<span className="text-2 text-gray-10">Template used to wrap clipped segments.</span>
+				</label>
+
+				<label className="text-2 text-gray-11 flex flex-col gap-1">
+					<span>Posting target</span>
+					<select
+						name="posting_target"
+						defaultValue={project.pipelinePostingTarget}
+						disabled={!isEditor}
+						className="text-3 text-gray-12 bg-gray-a2 border border-gray-a4 rounded-md px-2 py-1.5 disabled:opacity-50"
+					>
+						<option value="none">None (render only)</option>
+						<option value="highlevel">HighLevel</option>
+						<option value="uploadpost">UploadPost</option>
+					</select>
+				</label>
+
+				<label className="text-2 text-gray-11 flex items-center gap-2">
+					<input
+						type="checkbox"
+						name="auto_run"
+						defaultChecked={project.pipelineAutoRun}
+						disabled={!isEditor}
+						className="rounded border-gray-a4"
+					/>
+					<span>Auto-run pipeline when tab is open</span>
+				</label>
+
+				{isEditor ? (
+					<button
+						type="submit"
+						disabled={pending}
+						className="text-3 px-4 py-2 rounded-md bg-gray-12 text-gray-1 hover:opacity-90 disabled:opacity-50 self-start"
+					>
+						{pending ? "Saving…" : "Save pipeline config"}
+					</button>
+				) : (
+					<p className="text-2 text-gray-10">You have view-only access.</p>
+				)}
+				{state && state.ok === false ? <p className="text-2 text-red-11">{state.error}</p> : null}
+				{state && state.ok ? <p className="text-2 text-green-11">Pipeline config saved.</p> : null}
+			</form>
+
+			<div className="border-t border-gray-a4 pt-6">
+				<h3 className="text-4 font-semibold text-gray-12 mb-4">Pipeline Runner</h3>
+				<ClipPipelineRunner
+					experienceId={experienceId}
+					projectId={projectId}
+					presignedUploadUrl="/api/whop/shotstack/presigned-upload"
+					presignedUploadFields={{ experienceId }}
+				/>
+			</div>
+		</div>
+	);
 }

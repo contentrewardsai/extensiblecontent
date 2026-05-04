@@ -31,13 +31,13 @@ export default async function ProjectDetailPage({
 	const { data: project } = await supabase
 		.from("projects")
 		.select(
-			"id, name, description, quota_bytes, shotstack_monthly_credit_cap, owner_id, created_at, updated_at",
+			"id, name, description, quota_bytes, shotstack_monthly_credit_cap, owner_id, created_at, updated_at, pipeline_clips_per_day, pipeline_default_template_ids, pipeline_posting_target, pipeline_auto_run",
 		)
 		.eq("id", projectId)
 		.single();
 	if (!project) notFound();
 
-	const [members, invites, auditEntries, projectStats, ownerStats, memberOverrideRows, projectSpentRow] =
+	const [members, invites, auditEntries, projectStats, ownerStats, memberOverrideRows, projectSpentRow, sourceVideosRes, templatesRes] =
 		await Promise.all([
 			listProjectMembers(supabase, projectId),
 			membership.role === "owner" ? listActiveInvites(supabase, projectId) : Promise.resolve([]),
@@ -52,6 +52,16 @@ export default async function ProjectDetailPage({
 				p_project_id: projectId,
 				p_actor_user_id: null,
 			}),
+			supabase
+				.from("project_source_videos")
+				.select("id, original_filename, storage_path, ghl_media_url, duration_sec, stt_status, created_at")
+				.eq("project_id", projectId)
+				.order("created_at", { ascending: false }),
+			supabase
+				.from("shotstack_templates")
+				.select("id, name")
+				.or(`project_id.eq.${projectId},is_builtin.eq.true`)
+				.order("name"),
 		]);
 
 	const memberNames: Record<string, string> = {};
@@ -106,6 +116,10 @@ export default async function ProjectDetailPage({
 					ownerId: project.owner_id as string,
 					createdAt: project.created_at as string,
 					updatedAt: project.updated_at as string,
+					pipelineClipsPerDay: (project.pipeline_clips_per_day as number | null) ?? 0,
+					pipelineDefaultTemplateIds: (project.pipeline_default_template_ids as string[] | null) ?? [],
+					pipelinePostingTarget: (project.pipeline_posting_target as string) ?? "none",
+					pipelineAutoRun: (project.pipeline_auto_run as boolean) ?? false,
 				}}
 				usage={{
 					projectUsedBytes: projectStats.usedBytes,
@@ -121,6 +135,16 @@ export default async function ProjectDetailPage({
 				invites={invites}
 				auditEntries={auditEntries}
 				memberNames={memberNames}
+				sourceVideos={(sourceVideosRes.data ?? []) as Array<{
+					id: string;
+					original_filename: string;
+					storage_path: string | null;
+					ghl_media_url: string | null;
+					duration_sec: number | null;
+					stt_status: string;
+					created_at: string;
+				}>}
+				templates={(templatesRes.data ?? []) as Array<{ id: string; name: string }>}
 			/>
 		</div>
 	);

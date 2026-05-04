@@ -2,6 +2,14 @@ import { withWhopAppConfig } from "@whop/react/next.config";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+	transpilePackages: ["@openreel/core", "@openreel/ui"],
+	webpack: (config) => {
+		config.module.rules.push({
+			test: /\.wasm$/,
+			type: "asset/resource",
+		});
+		return config;
+	},
 	images: {
 		remotePatterns: [{ hostname: "**" }],
 	},
@@ -54,6 +62,23 @@ const nextConfig: NextConfig = {
 			headers: [
 				{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
 			],
+		},
+	],
+	redirects: async () => [
+		{
+			source: "/experiences/:experienceId/shotstack",
+			destination: "/experiences/:experienceId/media",
+			permanent: true,
+		},
+		{
+			source: "/experiences/:experienceId/shotstack/:path*",
+			destination: "/experiences/:experienceId/media/:path*",
+			permanent: true,
+		},
+		{
+			source: "/ext/shotstack/:path*",
+			destination: "/ext/media/:path*",
+			permanent: true,
 		},
 	],
 	rewrites: async () => [

@@ -1069,7 +1069,7 @@ export default function GhlSettingsPage() {
 											const qs = new URLSearchParams();
 											if (ghlLocationId) qs.set("location_id", ghlLocationId);
 											if (ghlCompanyId) qs.set("company_id", ghlCompanyId);
-											return `/ext/shotstack${qs.toString() ? `?${qs.toString()}` : ""}`;
+											return `/ext/media${qs.toString() ? `?${qs.toString()}` : ""}`;
 										})()}
 										style={{ ...styles.link, fontWeight: 500 }}
 									>
@@ -1091,7 +1091,7 @@ export default function GhlSettingsPage() {
 												const editorQs = new URLSearchParams();
 												if (ghlLocationId) editorQs.set("location_id", ghlLocationId);
 												if (ghlCompanyId) editorQs.set("company_id", ghlCompanyId);
-												const editorHref = `/ext/shotstack/editor/${tpl.id}${
+												const editorHref = `/ext/media/editor/${tpl.id}${
 													editorQs.toString() ? `?${editorQs.toString()}` : ""
 												}`;
 												return (

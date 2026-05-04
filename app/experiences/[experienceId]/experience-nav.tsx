@@ -7,7 +7,7 @@ const LINKS = [
 	{ segment: "activity", label: "Activity" },
 	{ segment: "following", label: "Following" },
 	{ segment: "uploads", label: "Uploads" },
-	{ segment: "shotstack", label: "ShotStack" },
+	{ segment: "media", label: "Media Editor" },
 	{ segment: "upload-post", label: "Upload Post" },
 	{ segment: "social", label: "Social" },
 	{ segment: "integrations", label: "Integrations" },
@@ -21,7 +21,7 @@ export function ExperienceNav({ experienceId }: { experienceId: string }) {
 		<nav className="flex flex-wrap gap-2 border-b border-gray-a4 pb-4 mb-6" aria-label="Experience sections">
 			{LINKS.map(({ segment, label }) => {
 				const href = `${base}/${segment}`;
-				const active = pathname === href;
+				const active = pathname === href || pathname.startsWith(`${href}/`);
 				return (
 					<Link
 						key={segment}

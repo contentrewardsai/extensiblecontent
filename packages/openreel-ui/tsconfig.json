@@ -1,0 +1,24 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["dom", "dom.iterable", "esnext"],
+		"allowJs": true,
+		"skipLibCheck": true,
+		"strict": false,
+		"noEmit": true,
+		"esModuleInterop": true,
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"jsx": "react-jsx",
+		"paths": {
+			"@openreel/core": ["../openreel-core/src/index.ts"],
+			"@openreel/core/*": ["../openreel-core/src/*"],
+			"@openreel/ui": ["../openreel-ui-lib/src/index.ts"],
+			"@openreel/ui/*": ["../openreel-ui-lib/src/*"]
+		}
+	},
+	"include": ["**/*.ts", "**/*.tsx"],
+	"exclude": ["node_modules"]
+}

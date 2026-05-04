@@ -7858,40 +7858,31 @@
         var file = input.files && input.files[0];
         if (file) {
           videoUrl = URL.createObjectURL(file);
-          placeVideoOnCanvas(videoUrl, '', '');
+          placeVideoOnCanvas(videoUrl);
         }
       };
       if (typeof showIframePrompt === 'function') {
         showIframePrompt('Enter video URL, or choose a file.', 'video/*', function (result) {
-          var ts = result.trimStart || '';
-          var te = result.trimEnd || '';
-          if (result.url) { videoUrl = result.url; placeVideoOnCanvas(videoUrl, ts, te); }
-          else if (result.file) { videoUrl = URL.createObjectURL(result.file); placeVideoOnCanvas(videoUrl, ts, te); }
-        }, { extraFields: 'videoTrim' });
+          if (result.url) { videoUrl = result.url; placeVideoOnCanvas(videoUrl); }
+          else if (result.file) { videoUrl = URL.createObjectURL(result.file); placeVideoOnCanvas(videoUrl); }
+        });
       } else {
         var promptUrl = window.prompt('Enter video URL, or click Cancel to choose a file.');
         if (promptUrl != null && promptUrl.trim() !== '') {
-          videoUrl = promptUrl.trim(); placeVideoOnCanvas(videoUrl, '', '');
+          videoUrl = promptUrl.trim(); placeVideoOnCanvas(videoUrl);
         } else { input.click(); }
       }
-      function placeVideoOnCanvas(src, rawTrimStart, rawTrimEnd) {
+      function placeVideoOnCanvas(src) {
         if (!src || !canvas) return;
-        /* Sanitize trim without totalDuration (not known yet); FFmpeg handles overshoot */
-        var trim = sanitizeTrimRange(rawTrimStart, rawTrimEnd, 0);
         var defaultW = 320;
         var defaultH = 180;
         var rect = new fabric.Rect({ width: defaultW, height: defaultH, fill: '#2d3748', left: 0, top: 0 });
-        var labelText = trim.duration > 0
-          ? 'Video (' + trim.trimStart + 's–' + (trim.trimStart + trim.duration) + 's)…'
-          : 'Video…';
-        var label = new fabric.Text(labelText, { fontSize: 18, fill: '#e2e8f0', originX: 'center', originY: 'center', left: defaultW / 2, top: defaultH / 2 });
+        var label = new fabric.Text('Video…', { fontSize: 18, fill: '#e2e8f0', originX: 'center', originY: 'center', left: defaultW / 2, top: defaultH / 2 });
         var group = new fabric.Group([rect, label], { left: 80, top: 80, name: 'video_' + Date.now(), selectable: true, evented: true });
         group.set('cfsVideoSrc', src);
         group.set('cfsStart', 0);
-        group.set('cfsLength', trim.duration > 0 ? trim.duration : (getTimelineEnd() || 5));
+        group.set('cfsLength', getTimelineEnd() || 5);
         group.set('cfsTrackIndex', getNextTrackIndex());
-        if (trim.trimStart > 0) group.set('cfsTrimStart', trim.trimStart);
-        if (trim.duration > 0) group.set('cfsTrimEnd', trim.trimStart + trim.duration);
         canvas.add(group);
         canvas.setActiveObject(group);
         canvas.renderAll();
@@ -7899,53 +7890,37 @@
         refreshLayersPanel();
         refreshPropertyPanel();
         /* ── Video Preprocessor: process on add ── */
-        var preprocessPromise = null;
         if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.processAndPersist) {
-          preprocessPromise = (function (g, lbl, trimOpts) {
+          (function (g, lbl) {
             var uUrl = (typeof window !== 'undefined' && window.__CFS_videoUploadUrl) || '';
             var uFields = (typeof window !== 'undefined' && window.__CFS_videoUploadFields) || {};
             var _pCfg = (typeof window !== 'undefined' && window.__CFS_presignedConfig) || null;
-            var ppOpts = { width: 0, height: 0, fps: 30 };
-            if (trimOpts.trimStart > 0) ppOpts.trimStart = trimOpts.trimStart;
-            if (trimOpts.duration > 0) ppOpts.duration = trimOpts.duration;
-            return CfsVideoPreprocessor.processAndPersist(src, ppOpts, uUrl, uFields, function (msg) {
+            CfsVideoPreprocessor.processAndPersist(src, { width: 0, height: 0, fps: 30 }, uUrl, uFields, function (msg) {
               try { if (lbl) { lbl.set('text', msg); if (canvas) canvas.renderAll(); } } catch (_) {}
             }, _pCfg).then(function (result) {
               if (!g.canvas) return;
-              if (result.tier === 'direct' && (result.trimStart > 0 || result.trimDuration > 0)) {
-                g.set('cfsTrimStart', result.trimStart || 0);
-                if (result.trimDuration > 0) {
-                  g.set('cfsTrimEnd', (result.trimStart || 0) + result.trimDuration);
-                  g.set('cfsLength', Math.round(result.trimDuration * 10) / 10);
-                }
-              }
               var previewUrl = result.url || result.blobUrl || src;
               if (result.url) g.set('cfsProcessedUrl', result.url);
+              /* Start live video preview from the processed MP4 */
               CfsVideoPreprocessor.createLivePreview(g, previewUrl, canvas).then(function () {
                 if (typeof saveStateDebounced === 'function') saveStateDebounced();
               });
             }).catch(function () {
+              /* Preprocessing failed — try live preview from raw source */
               CfsVideoPreprocessor.createLivePreview(g, src, canvas).catch(function () {});
               try { if (lbl) lbl.set('text', '▶ Video'); if (canvas) canvas.renderAll(); } catch (_) {}
             });
-          })(group, label, trim);
+          })(group, label);
         } else {
+          /* No preprocessor — try direct live preview */
           if (typeof CfsVideoPreprocessor !== 'undefined' && CfsVideoPreprocessor.createLivePreview) {
             CfsVideoPreprocessor.createLivePreview(group, src, canvas).catch(function () {});
           }
-          preprocessPromise = Promise.resolve();
         }
-        var metadataPromise = getVideoMetadata(src).then(function (meta) {
+        getVideoMetadata(src).then(function (meta) {
           if (!group.canvas || !canvas) return;
           if (meta.duration > 0) {
-            var finalTrim = sanitizeTrimRange(rawTrimStart, rawTrimEnd, meta.duration);
-            if (finalTrim.duration > 0) {
-              group.set('cfsTrimStart', finalTrim.trimStart);
-              group.set('cfsTrimEnd', finalTrim.trimStart + finalTrim.duration);
-              group.set('cfsLength', Math.round(finalTrim.duration * 10) / 10);
-            } else {
-              group.set('cfsLength', Math.round(meta.duration * 10) / 10);
-            }
+            group.set('cfsLength', Math.round(meta.duration * 10) / 10);
           }
           if (meta.width > 0 && meta.height > 0) {
             group.set('cfsVideoWidth', meta.width);
@@ -7975,11 +7950,6 @@
           if (label) label.set('text', 'Video');
           if (canvas) canvas.renderAll();
         });
-        if (src.indexOf('blob:') === 0) {
-          Promise.all([metadataPromise, preprocessPromise]).finally(function () {
-            try { URL.revokeObjectURL(src); } catch (_) {}
-          });
-        }
       }
     }
 
@@ -10349,28 +10319,8 @@
       }
     }
 
-    /**
-     * Sanitize user-provided trim start/end into { trimStart, duration }.
-     * Handles negatives, end>duration, end<start (flipped), NaN, empty.
-     * duration=0 means "use full file" (no trim).
-     */
-    function sanitizeTrimRange(rawStart, rawEnd, totalDuration) {
-      var s = parseFloat(rawStart);
-      var e = parseFloat(rawEnd);
-      if (isNaN(s)) s = 0;
-      if (isNaN(e)) e = 0;
-      s = Math.max(0, s);
-      if (e <= 0) e = totalDuration || 0;
-      if (totalDuration > 0) e = Math.min(e, totalDuration);
-      if (e > 0 && e < s) { var tmp = s; s = e; e = tmp; }
-      if (e > 0 && e === s) return { trimStart: 0, duration: 0 };
-      var dur = (e > 0) ? (e - s) : 0;
-      return { trimStart: s, duration: dur };
-    }
-
     /** Compute the next available track index so each new element gets its own track. */
-    function showIframePrompt(message, fileAccept, cb, opts) {
-      opts = opts || {};
+    function showIframePrompt(message, fileAccept, cb) {
       var overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
       var box = document.createElement('div');
@@ -10381,31 +10331,6 @@
       var urlInput = document.createElement('input');
       urlInput.type = 'text'; urlInput.placeholder = 'https://...';
       urlInput.style.cssText = 'width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#f1f5f9;font-size:14px;margin-bottom:12px;outline:none;';
-
-      var trimStartInput = null;
-      var trimEndInput = null;
-      if (opts.extraFields === 'videoTrim') {
-        var trimRow = document.createElement('div');
-        trimRow.style.cssText = 'display:flex;gap:10px;margin-bottom:12px;';
-        var trimInputCss = 'flex:1;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#f1f5f9;font-size:13px;outline:none;';
-        var startWrap = document.createElement('div'); startWrap.style.cssText = 'flex:1;';
-        var startLabel = document.createElement('label'); startLabel.textContent = 'Start (sec)';
-        startLabel.style.cssText = 'display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;';
-        trimStartInput = document.createElement('input'); trimStartInput.type = 'number'; trimStartInput.placeholder = '0'; trimStartInput.min = '0'; trimStartInput.step = 'any';
-        trimStartInput.style.cssText = trimInputCss;
-        startWrap.appendChild(startLabel); startWrap.appendChild(trimStartInput);
-        var endWrap = document.createElement('div'); endWrap.style.cssText = 'flex:1;';
-        var endLabel = document.createElement('label'); endLabel.textContent = 'End (sec)';
-        endLabel.style.cssText = 'display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;';
-        trimEndInput = document.createElement('input'); trimEndInput.type = 'number'; trimEndInput.placeholder = 'Full length'; trimEndInput.min = '0'; trimEndInput.step = 'any';
-        trimEndInput.style.cssText = trimInputCss;
-        endWrap.appendChild(endLabel); endWrap.appendChild(trimEndInput);
-        trimRow.appendChild(startWrap); trimRow.appendChild(endWrap);
-        box.appendChild(title); box.appendChild(urlInput); box.appendChild(trimRow);
-      } else {
-        box.appendChild(title); box.appendChild(urlInput);
-      }
-
       var btnRow = document.createElement('div'); btnRow.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
       var fileBtn = document.createElement('button'); fileBtn.textContent = 'Choose File';
       fileBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:#334155;color:#e2e8f0;cursor:pointer;font-size:13px;';
@@ -10414,21 +10339,16 @@
       var cancelBtn = document.createElement('button'); cancelBtn.textContent = 'Cancel';
       cancelBtn.style.cssText = 'padding:8px 16px;border-radius:8px;border:1px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-size:13px;';
       btnRow.appendChild(cancelBtn); btnRow.appendChild(fileBtn); btnRow.appendChild(okBtn);
-      box.appendChild(btnRow);
+      box.appendChild(title); box.appendChild(urlInput); box.appendChild(btnRow);
       overlay.appendChild(box); document.body.appendChild(overlay); urlInput.focus();
       function cleanup() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }
-      function collectTrim(result) {
-        if (trimStartInput) result.trimStart = trimStartInput.value;
-        if (trimEndInput) result.trimEnd = trimEndInput.value;
-        return result;
-      }
       cancelBtn.onclick = function () { cleanup(); };
       overlay.onclick = function (e) { if (e.target === overlay) cleanup(); };
-      okBtn.onclick = function () { var val = urlInput.value.trim(); cleanup(); if (val) cb(collectTrim({ url: val })); };
+      okBtn.onclick = function () { var val = urlInput.value.trim(); cleanup(); if (val) cb({ url: val }); };
       urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') okBtn.click(); if (e.key === 'Escape') cleanup(); });
       fileBtn.onclick = function () {
         var fi = document.createElement('input'); fi.type = 'file'; fi.accept = fileAccept || '*/*';
-        fi.onchange = function () { var file = fi.files && fi.files[0]; cleanup(); if (file) cb(collectTrim({ file: file })); };
+        fi.onchange = function () { var file = fi.files && fi.files[0]; cleanup(); if (file) cb({ file: file }); };
         fi.click();
       };
     }
@@ -10588,18 +10508,7 @@
       refreshPropertyPanel();
     }
 
-    var _cfsTimelineRefreshQueued = false;
     function refreshTimeline() {
-      var panel = global.__CFS_timelinePanel;
-      if (!panel || !panel.render) return;
-      if (_cfsTimelineRefreshQueued) return;
-      _cfsTimelineRefreshQueued = true;
-      Promise.resolve().then(function () {
-        _cfsTimelineRefreshQueued = false;
-        refreshTimelineImmediate();
-      });
-    }
-    function refreshTimelineImmediate() {
       var panel = global.__CFS_timelinePanel;
       if (!panel || !panel.render) return;
       function numericStart(clip) {

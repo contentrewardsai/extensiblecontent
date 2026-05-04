@@ -15,15 +15,28 @@
 		"sync:generator-assets": "node scripts/sync-extension-assets.mjs"
 	},
 	"dependencies": {
+		"@openreel/core": "workspace:*",
+		"@openreel/ui": "workspace:*",
 		"@supabase/ssr": "^0.9.0",
 		"@supabase/supabase-js": "^2.99.2",
 		"@vercel/functions": "^3.1.4",
 		"@whop/react": "0.3.0",
 		"@whop/sdk": "0.0.3",
+		"class-variance-authority": "^0.7.1",
+		"clsx": "^2.1.1",
+		"gsap": "^3.14.2",
+		"idb-keyval": "^6.2.2",
+		"immer": "^11.0.1",
 		"lucide-react": "^1.8.0",
+		"mediabunny": "^1.25.3",
+		"motion": "^12.0.0",
 		"next": "16.1.1",
 		"react": "19.2.0",
-		"react-dom": "19.2.0"
+		"react-dom": "19.2.0",
+		"tailwind-merge": "^3.4.0",
+		"three": "^0.184.0",
+		"uuid": "^13.0.0",
+		"zustand": "^4.5.2"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.2.6",
@@ -31,6 +44,7 @@
 		"@types/node": "^20.19.21",
 		"@types/react": "19.2.2",
 		"@types/react-dom": "19.2.2",
+		"@types/three": "^0.184.0",
 		"@whop-apps/dev-proxy": "0.0.1-canary.117",
 		"dotenv-cli": "^10.0.0",
 		"supabase": "^2.81.0",

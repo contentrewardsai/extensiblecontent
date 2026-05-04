@@ -465,98 +465,9 @@
       });
   }
 
-  /**
-   * Resolve a Blob or HTTP/blob URL to a Uint8Array.
-   * Allows FFmpeg functions to accept either in-memory blobs or remote URLs
-   * so intermediates can be fetched from Supabase instead of held in memory.
-   */
-  function toUint8Array(input) {
-    if (input instanceof Blob) {
-      return input.arrayBuffer().then(function (b) { return new Uint8Array(b); });
-    }
-    if (typeof input === 'string') {
-      return fetch(input).then(function (r) {
-        if (!r.ok) throw new Error('Fetch failed (' + r.status + '): ' + input);
-        return r.arrayBuffer();
-      }).then(function (b) { return new Uint8Array(b); });
-    }
-    return Promise.reject(new Error('toUint8Array: expected Blob or URL string'));
-  }
-
-  /**
-   * Mux a video-only WebM with a separate audio WAV/blob into a single MP4.
-   * Accepts Blob or URL string for each input.
-   * @param {Blob|string} videoInput - WebM video (Blob or URL).
-   * @param {Blob|string} audioInput - WAV/WebM audio (Blob or URL).
-   * @param {function} [onProgress] - Optional status callback.
-   * @returns {Promise<{ok:boolean, blob?:Blob, error?:string}>}
-   */
-  function convertToMp4WithAudio(videoInput, audioInput, onProgress, opts) {
-    opts = opts || {};
-    var fps = opts.fps || 30;
-    var report = typeof onProgress === 'function' ? onProgress : function () {};
-
-    report('Loading FFmpeg WASM...');
-
-    return ensureLoaded(report)
-      .then(function (ff) {
-        report('Reading video...');
-        return toUint8Array(videoInput)
-          .then(function (videoBuf) {
-            report('Writing video to FFmpeg FS...');
-            return ff.writeFile('input.webm', videoBuf);
-          })
-          .then(function () {
-            report('Reading audio...');
-            return toUint8Array(audioInput);
-          })
-          .then(function (audioBuf) {
-            report('Writing audio to FFmpeg FS...');
-            return ff.writeFile('audio.wav', audioBuf);
-          })
-          .then(function () {
-            report('Muxing video + audio to MP4...');
-            return ff.exec([
-              '-i', 'input.webm',
-              '-i', 'audio.wav',
-              '-map', '0:v:0',
-              '-map', '1:a:0',
-              '-r', String(fps),
-              '-vsync', 'cfr',
-              '-c:v', 'libx264',
-              '-preset', 'ultrafast',
-              '-crf', '23',
-              '-pix_fmt', 'yuv420p',
-              '-c:a', 'aac',
-              '-b:a', '192k',
-              '-movflags', '+faststart',
-              '-shortest',
-              'output.mp4',
-            ]);
-          })
-          .then(function () {
-            report('Reading output...');
-            return ff.readFile('output.mp4');
-          })
-          .then(function (data) {
-            var mp4Blob = new Blob([data], { type: 'video/mp4' });
-            ff.deleteFile('input.webm').catch(function () {});
-            ff.deleteFile('audio.wav').catch(function () {});
-            ff.deleteFile('output.mp4').catch(function () {});
-            report('Conversion complete.');
-            return { ok: true, blob: mp4Blob };
-          });
-      })
-      .catch(function (err) {
-        var msg = err && err.message ? err.message : String(err);
-        return { ok: false, error: msg };
-      });
-  }
-
   global.FFmpegLocal = {
     ensureLoaded: ensureLoaded,
     convertToMp4: convertToMp4,
-    convertToMp4WithAudio: convertToMp4WithAudio,
     convertToM4a: convertToM4a,
     probeDurationSeconds: probeDurationSeconds,
     extractSegment: extractSegment,
