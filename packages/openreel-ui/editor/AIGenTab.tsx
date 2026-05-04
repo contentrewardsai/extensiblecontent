@@ -10,6 +10,7 @@ import {
   Wand2,
   FileStack,
   Volume2,
+  GitMerge,
 } from "lucide-react";
 import { ScrollArea } from "@openreel/ui";
 import { AutoCaptionPanel } from "./inspector/AutoCaptionPanel";
@@ -18,10 +19,12 @@ import { FilterPresetsPanel } from "./inspector/FilterPresetsPanel";
 import { MusicLibraryPanel } from "./inspector/MusicLibraryPanel";
 import { TemplatesBrowserPanel } from "./inspector/TemplatesBrowserPanel";
 import { MultiCameraPanel } from "./inspector/MultiCameraPanel";
+import { MergeFieldsPanel } from "./inspector/MergeFieldsPanel";
 import { useTtsAudioStore } from "../stores/tts-store";
+import { useShotstackMetadataStore } from "../stores/shotstack-metadata-store";
 import { toast } from "../stores/notification-store";
 
-type FeatureId = "templates" | "captions" | "tts" | "filters" | "music" | "multicam" | null;
+type FeatureId = "templates" | "captions" | "tts" | "filters" | "music" | "multicam" | "merge" | null;
 
 interface FeatureCardProps {
   icon: React.ElementType;
@@ -99,6 +102,7 @@ const FeatureSection: React.FC<FeatureSectionProps> = ({ title, icon: Icon, chil
 export const AIGenTab: React.FC = () => {
   const [activeFeature, setActiveFeature] = useState<FeatureId>(null);
   const ttsHasUnsaved = useTtsAudioStore((s) => s.generatedAudio !== null && !s.isAudioSaved);
+  const hasMergeFields = useShotstackMetadataStore((s) => (s.metadata.merge ?? []).length > 0);
 
   const navigateAway = useCallback((next: FeatureId) => {
     if (activeFeature === "tts" && next !== "tts" && ttsHasUnsaved) {
@@ -125,6 +129,8 @@ export const AIGenTab: React.FC = () => {
         return <MusicLibraryPanel />;
       case "multicam":
         return <MultiCameraPanel />;
+      case "merge":
+        return <MergeFieldsPanel />;
       default:
         return null;
     }
@@ -241,6 +247,23 @@ export const AIGenTab: React.FC = () => {
             onClick={() => handleFeatureClick("multicam")}
           />
         </FeatureSection>
+
+        {hasMergeFields && (
+          <FeatureSection title="Template Data" icon={GitMerge}>
+            <FeatureCard
+              icon={GitMerge}
+              title="Merge Fields"
+              description="Edit template placeholders and dynamic values"
+              iconColor="text-amber-400"
+              iconBg="bg-amber-500/20"
+              activeBorder="border-amber-500/50"
+              activeBg="bg-amber-500/10"
+              activeRing="ring-amber-500/30"
+              isActive={activeFeature === "merge"}
+              onClick={() => handleFeatureClick("merge")}
+            />
+          </FeatureSection>
+        )}
 
         <div className="pt-2 border-t border-border">
           <p className="text-[9px] text-text-muted text-center">

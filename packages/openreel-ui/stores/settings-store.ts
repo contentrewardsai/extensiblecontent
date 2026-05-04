@@ -46,7 +46,7 @@ export const SERVICE_REGISTRY: readonly ServiceConfig[] = [
   },
 ] as const;
 
-export type TtsProvider = "piper" | "elevenlabs";
+export type TtsProvider = "kokoro" | "elevenlabs";
 export type LlmProvider = "openai" | "anthropic";
 export type AggregatorProvider = "kie-ai" | "freepik";
 export type SettingsTab = "general" | "api-keys";
@@ -103,7 +103,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoSaveInterval: 5,
         language: "en",
 
-        defaultTtsProvider: "elevenlabs" as TtsProvider,
+        defaultTtsProvider: "kokoro" as TtsProvider,
         defaultLlmProvider: "openai" as LlmProvider,
         defaultAggregator: "kie-ai" as AggregatorProvider,
         elevenLabsModel: "eleven_v3",

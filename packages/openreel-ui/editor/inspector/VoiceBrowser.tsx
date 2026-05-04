@@ -13,7 +13,7 @@ import {
 import type { TtsProvider } from "../../stores/settings-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import type { ElevenLabsVoice } from "./tts-types";
-import { PIPER_VOICES } from "./tts-constants";
+import { KOKORO_VOICES } from "./tts-constants";
 
 interface VoiceBrowserProps {
   provider: TtsProvider;
@@ -111,14 +111,14 @@ export const VoiceBrowser: React.FC<VoiceBrowserProps> = ({
     });
   }, [allVoices, voiceSearch]);
 
-  if (provider === "piper") {
+  if (provider === "kokoro") {
     return (
       <div className="space-y-2">
         <label className="text-[10px] font-medium text-text-secondary">
           Voice
         </label>
         <div className="flex flex-wrap gap-1.5">
-          {PIPER_VOICES.map((voice) => (
+          {KOKORO_VOICES.map((voice) => (
             <button
               key={voice.id}
               onClick={() => onSelectVoice(voice.id)}
@@ -131,6 +131,7 @@ export const VoiceBrowser: React.FC<VoiceBrowserProps> = ({
               <User size={10} />
               <span>{voice.name}</span>
               <span className="text-[8px] opacity-70">{voice.gender === "female" ? "F" : "M"}</span>
+              <span className="text-[7px] opacity-50">{voice.language === "en-GB" ? "🇬🇧" : "🇺🇸"}</span>
             </button>
           ))}
         </div>

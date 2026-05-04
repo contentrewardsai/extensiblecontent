@@ -29,7 +29,28 @@ export async function generateTTS(
 	if (!window.__CFS_ttsGenerate) {
 		throw new Error("TTS engine not loaded. Ensure Kokoro scripts are loaded.");
 	}
-	return window.__CFS_ttsGenerate(text, options);
+	const result = await window.__CFS_ttsGenerate(text, options);
+	// __CFS_ttsGenerate may return just a Blob (legacy) or { blob, duration }
+	if (result instanceof Blob) {
+		const duration = await extractAudioDuration(result);
+		return { blob: result, duration };
+	}
+	return result;
+}
+
+/** Decode a Blob to extract its audio duration via AudioContext. */
+async function extractAudioDuration(blob: Blob): Promise<number> {
+	try {
+		const buffer = await blob.arrayBuffer();
+		const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+		const decoded = await ctx.decodeAudioData(buffer);
+		const dur = decoded.duration;
+		ctx.close().catch(() => {});
+		return dur;
+	} catch {
+		// Fallback: estimate from file size (~22050 Hz mono 16-bit WAV)
+		return Math.max(0.5, blob.size / (22050 * 2));
+	}
 }
 
 // ─── STT (Whisper) ───────────────────────────────────────────────────────────

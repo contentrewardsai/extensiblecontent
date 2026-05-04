@@ -34,14 +34,14 @@ export const TextToSpeechPanel: React.FC = () => {
   const defaultProvider: TtsProvider =
     defaultTtsProvider === "elevenlabs" && hasElevenLabsKey
       ? "elevenlabs"
-      : "piper";
+      : "kokoro";
 
   const [provider, setProvider] = useState<TtsProvider>(defaultProvider);
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<string>(
     defaultProvider === "elevenlabs" && favoriteVoices.length > 0
       ? favoriteVoices[0].voiceId
-      : "amy",
+      : "af_heart",
   );
   const [speed, setSpeed] = useState(1.0);
   const [error, setError] = useState<string | null>(null);
@@ -53,8 +53,8 @@ export const TextToSpeechPanel: React.FC = () => {
     allModels,
     isLoadingVoices,
     isLoadingModels,
+    generateWithKokoro,
     generateWithElevenLabs,
-    generateWithPiper,
     enhanceViaLlm,
   } = useElevenLabsApi({
     provider,
@@ -90,8 +90,8 @@ export const TextToSpeechPanel: React.FC = () => {
     enhancedPreview,
     allVoices,
     favoriteVoices,
+    generateWithKokoro,
     generateWithElevenLabs,
-    generateWithPiper,
     enhanceViaLlm,
     setText,
     setError,
@@ -117,7 +117,7 @@ export const TextToSpeechPanel: React.FC = () => {
     setSelectedVoice(
       newProvider === "elevenlabs"
         ? (favoriteVoices.length > 0 ? favoriteVoices[0].voiceId : "")
-        : "amy",
+        : "af_heart",
     );
     setGeneratedAudio(null);
   }, [provider, warnUnsavedAudio, favoriteVoices, setGeneratedAudio]);
@@ -234,7 +234,7 @@ export const TextToSpeechPanel: React.FC = () => {
         isLoadingVoices={isLoadingVoices}
       />
 
-      {provider === "piper" && (
+      {provider === "kokoro" && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-[10px] font-medium text-text-secondary">Speed</label>
@@ -318,7 +318,7 @@ export const TextToSpeechPanel: React.FC = () => {
       )}
 
       <p className="text-[9px] text-text-muted text-center">
-        Powered by {provider === "elevenlabs" ? "ElevenLabs" : "Piper TTS"}
+        Powered by {provider === "elevenlabs" ? "ElevenLabs" : "Kokoro TTS (in-browser)"}
         {provider === "elevenlabs" && ` · ${getSelectedModelName()}`}
       </p>
     </div>

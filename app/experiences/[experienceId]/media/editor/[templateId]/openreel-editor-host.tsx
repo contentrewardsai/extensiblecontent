@@ -6,6 +6,7 @@ import type { ShotstackEdit, ORProject } from "@/lib/template-converter";
 import { shotstackToOpenReel, openReelToShotstack } from "@/lib/template-converter";
 import { ensureAllServicesLoaded, generateTTS } from "@/lib/openreel-service-bridge";
 import { exportAndUpload, type ExportProgress } from "@/lib/openreel-export-bridge";
+import { useShotstackMetadataStore } from "@/packages/openreel-ui/stores/shotstack-metadata-store";
 
 interface Props {
 	templateId: string;
@@ -104,6 +105,11 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 
 			projectRef.current = orProject;
 
+			// Stash _shotstack metadata in the dedicated Zustand store
+			if (orProject._shotstack) {
+				useShotstackMetadataStore.getState().setMetadata(orProject._shotstack);
+			}
+
 			const [{ useProjectStore }] = await Promise.all([
 				import("@/packages/openreel-ui/stores/project-store"),
 			]);
@@ -129,7 +135,23 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 				"@/packages/openreel-ui/stores/project-store"
 			);
 			const currentProject = useProjectStore.getState().project;
-			const edit = openReelToShotstack(currentProject as ORProject);
+
+			// Inject current merge field values from the metadata store
+			const metadata = useShotstackMetadataStore.getState().getMetadata();
+			const projectWithMeta: ORProject = {
+				...(currentProject as ORProject),
+				_shotstack: {
+					...((currentProject as ORProject)._shotstack ?? {}),
+					merge: metadata.merge as Array<{ find: string; replace: string }>,
+					rawClipData: metadata.rawClipData ?? ((currentProject as ORProject)._shotstack?.rawClipData),
+					captionSourceBySubtitleId: (metadata.captionSourceBySubtitleId ?? ((currentProject as ORProject)._shotstack?.captionSourceBySubtitleId)) as ORProject["_shotstack"] extends infer T ? T extends { captionSourceBySubtitleId?: infer C } ? C : never : never,
+					background: metadata.background ?? ((currentProject as ORProject)._shotstack?.background),
+					fonts: metadata.fonts ?? ((currentProject as ORProject)._shotstack?.fonts),
+					soundtrack: metadata.soundtrack ?? ((currentProject as ORProject)._shotstack?.soundtrack),
+					outputOverrides: metadata.outputOverrides ?? ((currentProject as ORProject)._shotstack?.outputOverrides),
+				},
+			};
+			const edit = openReelToShotstack(projectWithMeta);
 
 			let targetId = templateId;
 			const qs = context.templatesApiQuery ? `?${context.templatesApiQuery}` : "";

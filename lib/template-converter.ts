@@ -390,6 +390,49 @@ function deepCloneShotstackClip(clip: ShotstackClip): ShotstackClip {
 	return JSON.parse(JSON.stringify(clip)) as ShotstackClip;
 }
 
+/** Infer merge field types (text, image, video) from how tokens are used in ShotStack assets. */
+function inferMergeTypes(
+	merge: Array<{ find: string; replace: string }> | undefined,
+	stTracks: ShotstackTrack[],
+): Array<{ find: string; replace: string; type?: "text" | "image" | "video" }> | undefined {
+	if (!merge || merge.length === 0) return merge;
+
+	// Build a map: MERGE_KEY → "text" | "image" | "video"
+	const keyUsage = new Map<string, "text" | "image" | "video">();
+
+	for (const track of stTracks) {
+		for (const clip of track.clips) {
+			const asset = clip.asset;
+			if (!asset) continue;
+			const assetType = (asset.type || "").toLowerCase();
+
+			const checkField = (val: unknown, fieldContext: "src" | "text") => {
+				if (typeof val !== "string") return;
+				const regex = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+				let m: RegExpExecArray | null;
+				while ((m = regex.exec(val)) !== null) {
+					const key = m[1].toUpperCase();
+					if (keyUsage.has(key)) continue;
+					if (fieldContext === "src") {
+						keyUsage.set(key, assetType === "image" || assetType === "svg" || assetType === "luma" ? "image" : "video");
+					} else {
+						keyUsage.set(key, "text");
+					}
+				}
+			};
+
+			checkField(asset.src, "src");
+			checkField(asset.text, "text");
+			checkField(asset.html, "text");
+		}
+	}
+
+	return merge.map((m) => ({
+		...m,
+		type: keyUsage.get(m.find.toUpperCase()) ?? "text",
+	}));
+}
+
 // ─── ShotStack → OpenReel ────────────────────────────────────────────────────
 
 export function shotstackToOpenReel(
@@ -557,6 +600,11 @@ export function shotstackToOpenReel(
 			rawClipData[clipId] = {
 				originalAsset: { ...asset },
 				originalClip: { ...stClip, asset: undefined },
+				// Preserve TTS voice fields for round-trip
+				...(assetType === "text-to-speech" ? {
+					voiceId: asset.voice ?? asset.localVoice ?? undefined,
+					ttsText: asset.text ?? undefined,
+				} : {}),
 			};
 
 			orClips.push(orClip);
@@ -577,7 +625,7 @@ export function shotstackToOpenReel(
 		}
 	}
 
-	return {
+	const result: ORProject = {
 		id: projectId,
 		name: options?.projectName || "Untitled",
 		createdAt: now,
@@ -597,7 +645,7 @@ export function shotstackToOpenReel(
 			markers: [],
 		},
 		_shotstack: {
-			merge: edit.merge,
+			merge: inferMergeTypes(edit.merge, stTracks),
 			background: edit.timeline?.background,
 			fonts: edit.timeline?.fonts,
 			soundtrack: edit.timeline?.soundtrack,
@@ -606,6 +654,48 @@ export function shotstackToOpenReel(
 			captionSourceBySubtitleId,
 		},
 	};
+
+	// ── Soundtrack → audio track ─────────────────────────────────────────────
+	if (edit.timeline?.soundtrack?.src) {
+		const stSrc = edit.timeline.soundtrack.src;
+		const stVol = edit.timeline.soundtrack.volume ?? 1;
+		const soundtrackMediaId = getOrCreateMediaItem(stSrc, "audio", "Soundtrack");
+		const soundtrackTrackId = uuidv4();
+		const soundtrackClipId = uuidv4();
+		const soundtrackClip: ORClip = {
+			id: soundtrackClipId,
+			mediaId: soundtrackMediaId,
+			trackId: soundtrackTrackId,
+			startTime: 0,
+			duration: maxTime || 10,
+			inPoint: 0,
+			outPoint: maxTime || 10,
+			effects: [],
+			audioEffects: [],
+			transform: defaultTransform(),
+			volume: typeof stVol === "number" ? stVol : 1,
+			keyframes: [],
+		};
+		rawClipData[soundtrackClipId] = {
+			_isSoundtrack: true,
+			originalAsset: { type: "audio", src: stSrc, volume: stVol },
+			originalClip: {},
+		};
+		result.timeline.tracks.push({
+			id: soundtrackTrackId,
+			type: "audio",
+			name: "Soundtrack",
+			clips: [soundtrackClip],
+			transitions: [],
+			locked: false,
+			hidden: false,
+			muted: false,
+			solo: false,
+		});
+		result.mediaLibrary.items = mediaItems;
+	}
+
+	return result;
 }
 
 // ─── OpenReel → ShotStack ────────────────────────────────────────────────────
@@ -623,6 +713,20 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 			const raw = rawClipData[orClip.id];
 			const originalAsset = (raw?.originalAsset || {}) as Record<string, unknown>;
 			const originalClipData = (raw?.originalClip || {}) as Record<string, unknown>;
+
+			// Skip soundtrack clips — they round-trip as timeline.soundtrack
+			if (raw?._isSoundtrack) {
+				const mediaItem = project.mediaLibrary.items.find((m) => m.id === orClip.mediaId);
+				const soundtrackSrc = mediaItem?.originalUrl || (originalAsset.src as string) || "";
+				if (soundtrackSrc) {
+					(preserved as Record<string, unknown>)._reconstructedSoundtrack = {
+						src: soundtrackSrc,
+						volume: orClip.volume !== 1 ? orClip.volume : undefined,
+						effect: (originalAsset.effect as string) || undefined,
+					};
+				}
+				continue;
+			}
 
 			const mediaItem = project.mediaLibrary.items.find((m) => m.id === orClip.mediaId);
 			const src = mediaItem?.originalUrl || (originalAsset.src as string) || "";
@@ -779,7 +883,13 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 	};
 	if (preserved.background) timeline.background = preserved.background;
 	if (preserved.fonts) timeline.fonts = preserved.fonts;
-	if (preserved.soundtrack) timeline.soundtrack = preserved.soundtrack;
+	// Use reconstructed soundtrack (from edited audio track) if available, else preserved
+	const reconstructed = (preserved as Record<string, unknown>)._reconstructedSoundtrack as { src: string; volume?: number; effect?: string } | undefined;
+	if (reconstructed) {
+		timeline.soundtrack = reconstructed;
+	} else if (preserved.soundtrack) {
+		timeline.soundtrack = preserved.soundtrack;
+	}
 
 	const edit: ShotstackEdit = {
 		timeline,
@@ -800,7 +910,33 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 	}
 
 	if (preserved.merge) {
-		edit.merge = preserved.merge;
+		edit.merge = preserved.merge as Array<{ find: string; replace: string }>;
+	}
+
+	// Auto-detect {{ MERGE_KEY }} tokens in text assets and add missing merge entries
+	const mergeTokenRegex = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+	const existingKeys = new Set((edit.merge ?? []).map((m) => m.find.toUpperCase()));
+
+	for (const stTrack of stTracks) {
+		for (const stClip of stTrack.clips) {
+			const searchFields = [
+				stClip.asset?.text,
+				stClip.asset?.html,
+				stClip.asset?.src,
+			].filter(Boolean);
+			for (const field of searchFields) {
+				let match: RegExpExecArray | null;
+				mergeTokenRegex.lastIndex = 0;
+				while ((match = mergeTokenRegex.exec(String(field))) !== null) {
+					const key = match[1].toUpperCase();
+					if (!existingKeys.has(key)) {
+						existingKeys.add(key);
+						if (!edit.merge) edit.merge = [];
+						edit.merge.push({ find: key, replace: "" });
+					}
+				}
+			}
+		}
 	}
 
 	return edit;

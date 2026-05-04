@@ -4,6 +4,7 @@ import { useSettingsStore } from "../../../stores/settings-store";
 import { isSessionUnlocked, getSecret } from "../../../services/secure-storage";
 import { apiFetch } from "../../../services/api-proxy";
 import { OPENREEL_TTS_URL } from "../../../config/api-endpoints";
+import { generateTTS as kokoroGenerateTTS } from "@/lib/openreel-service-bridge";
 import type { ElevenLabsVoice, ElevenLabsModel } from "../tts-types";
 import { FALLBACK_MODELS, ENHANCE_SYSTEM_PROMPT } from "../tts-constants";
 
@@ -20,6 +21,7 @@ interface UseElevenLabsApiReturn {
   allModels: ElevenLabsModel[];
   isLoadingVoices: boolean;
   isLoadingModels: boolean;
+  generateWithKokoro: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
   generateWithElevenLabs: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
   generateWithPiper: (text: string, voice: string, speed: number, signal?: AbortSignal) => Promise<Blob>;
   enhanceViaLlm: (text: string, signal?: AbortSignal) => Promise<string>;
@@ -149,6 +151,18 @@ export function useElevenLabsApi(options: UseElevenLabsApiOptions): UseElevenLab
     }
   }, [provider]);
 
+  const generateWithKokoro = useCallback(async (inputText: string, voiceId: string, signal?: AbortSignal): Promise<Blob> => {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const result = await kokoroGenerateTTS(inputText, { voiceId });
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      return result.blob;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      throw new Error(err instanceof Error ? err.message : "Kokoro TTS generation failed");
+    }
+  }, []);
+
   const generateWithPiper = useCallback(async (inputText: string, voice: string, spd: number, signal?: AbortSignal): Promise<Blob> => {
     const response = await fetch(`${OPENREEL_TTS_URL}/tts`, {
       method: "POST",
@@ -274,6 +288,7 @@ export function useElevenLabsApi(options: UseElevenLabsApiOptions): UseElevenLab
     allModels,
     isLoadingVoices,
     isLoadingModels,
+    generateWithKokoro,
     generateWithElevenLabs,
     generateWithPiper,
     enhanceViaLlm,
