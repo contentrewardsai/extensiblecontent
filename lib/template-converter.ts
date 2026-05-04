@@ -177,6 +177,8 @@ export interface ORProject {
 		soundtrack?: { src: string; volume?: number; effect?: string };
 		outputOverrides?: Record<string, unknown>;
 		rawClipData?: Record<string, Record<string, unknown>>;
+		svgClipData?: Record<string, any>;
+		textClipData?: Record<string, any>;
 		/** Full ShotStack clip per OpenReel subtitle id (caption / rich-caption round-trip) */
 		captionSourceBySubtitleId?: Record<string, { originalClip: ShotstackClip }>;
 	};
@@ -574,9 +576,9 @@ export function shotstackToOpenReel(
 					position: positionToXY(stClip.position, stClip.offset),
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
-					fontFamily: asset.font?.family || "Inter",
-					fontSize: asset.font?.size || 48,
-					color: asset.font?.color || "#ffffff",
+					fontFamily: (asset.font as any)?.family || "Inter",
+					fontSize: (asset.font as any)?.size || 48,
+					color: (asset.font as any)?.color || "#ffffff",
 					originalAsset: { ...asset },
 				};
 				hasTextClips = true;

@@ -298,6 +298,7 @@ export interface ProjectState {
       entryAnimation?: import("@openreel/core").GraphicAnimation;
       exitAnimation?: import("@openreel/core").GraphicAnimation;
       colorStyle?: import("@openreel/core").SVGColorStyle;
+      svgContent?: string;
     },
   ) => SVGClip | null;
   deleteSVGClip: (clipId: string) => boolean;
@@ -559,7 +560,8 @@ export const useProjectStore = create<ProjectState>()(
 
       // Update project settings
       updateSettings: async (settings: Partial<ProjectSettings>) => {
-        const { project, actionExecutor, graphicsEngine } = get();
+        const { project, actionExecutor } = get();
+        const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
         
         const oldWidth = project.settings.width;
         const oldHeight = project.settings.height;
@@ -578,8 +580,8 @@ export const useProjectStore = create<ProjectState>()(
           if (newWidth !== oldWidth || newHeight !== oldHeight) {
             import("../utils/responsive-resize").then(({ responsiveResize, rescaleTextClips, rescaleGraphicClips }) => {
               const resizeResult = responsiveResize(oldWidth, oldHeight, newWidth, newHeight, project);
-              project.timeline.tracks = resizeResult.clips;
-              project.timeline.subtitles = resizeResult.subtitles;
+              (project.timeline as any).tracks = resizeResult.clips;
+              (project.timeline as any).subtitles = resizeResult.subtitles;
               
               const scaleX = newWidth / oldWidth;
               const scaleY = newHeight / oldHeight;
