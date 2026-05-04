@@ -229,6 +229,69 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 				(orProject as any).textClips = textClips;
 			}
 
+			// Process HTML assets → render to PNG images with alpha
+			if (orProject._shotstack?.htmlClipData) {
+				for (const [clipId, data] of Object.entries(orProject._shotstack.htmlClipData)) {
+					try {
+						const htmlStr = (data.html as string) || "";
+						const cssStr = (data.css as string) || "";
+						const w = (data.width as number) || 800;
+						const h = (data.height as number) || 200;
+						const bg = (data.background as string) || "transparent";
+						const mediaId = data.mediaId as string;
+
+						// Render HTML+CSS to an off-screen canvas via foreignObject SVG
+						const svgNs = "http://www.w3.org/2000/svg";
+						const foreignHtml = `
+							<div xmlns="http://www.w3.org/1999/xhtml" style="width:${w}px;height:${h}px;background:${bg};overflow:hidden;">
+								<style>${cssStr}</style>
+								${htmlStr}
+							</div>`;
+						const svgMarkup = `<svg xmlns="${svgNs}" width="${w}" height="${h}">
+							<foreignObject width="100%" height="100%">${foreignHtml}</foreignObject>
+						</svg>`;
+
+						const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+						const url = URL.createObjectURL(blob);
+
+						const pngBlob = await new Promise<Blob | null>((resolve) => {
+							const img = new Image();
+							img.onload = () => {
+								const canvas = document.createElement("canvas");
+								canvas.width = w;
+								canvas.height = h;
+								const ctx = canvas.getContext("2d");
+								if (ctx) {
+									ctx.drawImage(img, 0, 0);
+								}
+								URL.revokeObjectURL(url);
+								canvas.toBlob((b) => resolve(b), "image/png");
+							};
+							img.onerror = () => {
+								URL.revokeObjectURL(url);
+								console.warn(`[HTML] Failed to render HTML clip ${clipId} to PNG`);
+								resolve(null);
+							};
+							img.src = url;
+						});
+
+						if (pngBlob && mediaId) {
+							// Replace the placeholder media item with the rendered PNG
+							const idx = orProject.mediaLibrary.items.findIndex((m) => m.id === mediaId);
+							if (idx !== -1) {
+								(orProject.mediaLibrary.items as Array<typeof orProject.mediaLibrary.items[number]>)[idx] = {
+									...orProject.mediaLibrary.items[idx],
+									blob: pngBlob,
+									isPlaceholder: false,
+								};
+							}
+						}
+					} catch (e) {
+						console.error(`[HTML] Failed to render HTML clip ${data.mediaId}:`, e);
+					}
+				}
+			}
+
 			const [{ useProjectStore }] = await Promise.all([
 				import("@/packages/openreel-ui/stores/project-store"),
 			]);
