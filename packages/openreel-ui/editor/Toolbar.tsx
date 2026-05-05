@@ -221,25 +221,22 @@ export const Toolbar: React.FC = () => {
     };
     const mime = mimeMap[ext] || "application/octet-stream";
 
-    const canUseNativePicker = (() => {
+    if ("showSaveFilePicker" in window) {
       try {
-        return "showSaveFilePicker" in window && window.self === window.top;
-      } catch {
-        return false;
+        const handle = await (window as unknown as {
+          showSaveFilePicker: (opts: unknown) => Promise<FileSystemFileHandle>;
+        }).showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: "Media file",
+            accept: { [mime]: [`.${ext}`] },
+          }],
+        });
+        return handle.createWritable();
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") throw e;
+        console.warn("[Export] Native file picker unavailable, using download fallback:", e);
       }
-    })();
-
-    if (canUseNativePicker) {
-      const handle = await (window as unknown as {
-        showSaveFilePicker: (opts: unknown) => Promise<FileSystemFileHandle>;
-      }).showSaveFilePicker({
-        suggestedName: filename,
-        types: [{
-          description: "Media file",
-          accept: { [mime]: [`.${ext}`] },
-        }],
-      });
-      return handle.createWritable();
     }
 
     let buffer = new Uint8Array(16 * 1024 * 1024);
@@ -264,7 +261,7 @@ export const Toolbar: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     };
 
     const writeBytes = (bytes: Uint8Array, position: number) => {
@@ -276,6 +273,7 @@ export const Toolbar: React.FC = () => {
     };
 
     return {
+      __isShim: true,
       seek(position: number) {
         cursor = position;
         return Promise.resolve();
@@ -344,10 +342,8 @@ export const Toolbar: React.FC = () => {
           }
 
           if (finalResult?.success && finalResult.blob) {
-            const isNativePicker = (() => {
-              try { return "showSaveFilePicker" in window && window.self === window.top; } catch { return false; }
-            })();
-            if (isNativePicker) {
+            const isShim = (writable as unknown as { __isShim?: boolean }).__isShim === true;
+            if (!isShim) {
               await finalResult.blob.stream().pipeTo(writable as unknown as WritableStream<Uint8Array>);
             } else {
               const url = URL.createObjectURL(finalResult.blob);
@@ -357,7 +353,7 @@ export const Toolbar: React.FC = () => {
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
-              URL.revokeObjectURL(url);
+              setTimeout(() => URL.revokeObjectURL(url), 60_000);
             }
             setExportState((prev) => ({ ...prev, complete: true, phase: "Saved!" }));
             track(AnalyticsEvents.PROJECT_EXPORTED, {
