@@ -488,14 +488,6 @@ export function shotstackToOpenReel(
 	const captionSourceBySubtitleId: Record<string, { originalClip: ShotstackClip }> = {};
 	let maxTime = 0;
 	
-	const textTrackId = uuidv4();
-	const graphicsTrackId = uuidv4();
-	const htmlImageTrackId = uuidv4();
-	let hasTextClips = false;
-	let hasSvgClips = false;
-	let hasHtmlClips = false;
-	let hasShapeClips = false;
-
 	const stTracks = edit.timeline?.tracks || [];
 	for (let ti = 0; ti < stTracks.length; ti++) {
 		const stTrack = stTracks[ti];
@@ -505,6 +497,15 @@ export function shotstackToOpenReel(
 		// the clips by their resolved track type so each OpenReel track
 		// contains only homogeneous clip types.
 		const clipsByTrackType = new Map<ORTrack["type"], { trackId: string; clips: ORClip[] }>();
+
+		// Per-ShotStack-track IDs for special clip types (text, graphics, HTML).
+		// Each ShotStack track gets its own OpenReel track(s) to preserve z-ordering.
+		let perTrackTextId: string | undefined;
+		let perTrackGraphicsId: string | undefined;
+		let perTrackHtmlId: string | undefined;
+		let hasTextInTrack = false;
+		let hasGraphicsInTrack = false;
+		let hasHtmlInTrack = false;
 
 		for (const stClip of stTrack.clips) {
 			const asset = stClip.asset || { type: "video" };
@@ -564,18 +565,19 @@ export function shotstackToOpenReel(
 			console.log(`[ShotStack→OR] Track ${ti}, clip: type="${assetType}", src="${(asset.src as string || "").slice(0, 80)}", text="${(asset.text as string || "").slice(0, 40)}", html="${(asset.html as string || "").slice(0, 40)}"`);
 
 			if (assetType === "svg") {
+				if (!perTrackGraphicsId) perTrackGraphicsId = uuidv4();
 				svgClipData[clipId] = {
 					svgSrc: asset.src,
 					startTime: start,
 					duration: length,
-					trackId: graphicsTrackId,
+					trackId: perTrackGraphicsId,
 					position: positionToXY(stClip.position, stClip.offset),
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
 					originalAsset: { ...asset },
 					originalTrackIndex: ti,
 				};
-				hasSvgClips = true;
+				hasGraphicsInTrack = true;
 				continue;
 			}
 
@@ -585,6 +587,7 @@ export function shotstackToOpenReel(
 				const strokeColor = (asset.stroke as any)?.color;
 				const strokeWidth = (asset.stroke as any)?.width || 0;
 				const cornerRadius = (asset.rectangle as any)?.cornerRadius ?? (asset.circle as any)?.radius ?? 0;
+				if (!perTrackGraphicsId) perTrackGraphicsId = uuidv4();
 				shapeClipData[clipId] = {
 					shapeType,
 					fillColor,
@@ -595,18 +598,19 @@ export function shotstackToOpenReel(
 					height: resolveNumber(stClip.height as number, asset.height as number || 100),
 					startTime: start,
 					duration: length,
-					trackId: graphicsTrackId,
+					trackId: perTrackGraphicsId,
 					position: positionToXY(stClip.position, stClip.offset),
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
 					originalAsset: { ...asset },
 					originalTrackIndex: ti,
 				};
-				hasShapeClips = true;
+				hasGraphicsInTrack = true;
 				continue;
 			}
 
 			if (assetType === "html") {
+				if (!perTrackHtmlId) perTrackHtmlId = uuidv4();
 				const htmlMediaId = uuidv4();
 				const htmlW = resolveNumber(asset.width as number, 800);
 				const htmlH = resolveNumber(asset.height as number, 200);
@@ -618,7 +622,7 @@ export function shotstackToOpenReel(
 					background: asset.background || "transparent",
 					startTime: start,
 					duration: length,
-					trackId: htmlImageTrackId,
+					trackId: perTrackHtmlId,
 					mediaId: htmlMediaId,
 					position: positionToXY(stClip.position, stClip.offset),
 					scale: stClip.scale || 1,
@@ -626,8 +630,6 @@ export function shotstackToOpenReel(
 					originalAsset: { ...asset },
 					originalTrackIndex: ti,
 				};
-				// Create a placeholder image media item — the editor host
-				// will render HTML→PNG and replace the blob at load time.
 				mediaItems.push({
 					id: htmlMediaId,
 					name: `HTML Clip`,
@@ -639,16 +641,17 @@ export function shotstackToOpenReel(
 					thumbnailUrl: null,
 					waveformData: null,
 				});
-				hasHtmlClips = true;
+				hasHtmlInTrack = true;
 				continue;
 			}
 
 			if (assetType === "title" || assetType === "text" || assetType === "rich-text") {
+				if (!perTrackTextId) perTrackTextId = uuidv4();
 				textClipData[clipId] = {
 					text: asset.text || asset.html || "Text",
 					startTime: start,
 					duration: length,
-					trackId: textTrackId,
+					trackId: perTrackTextId,
 					position: positionToXY(stClip.position, stClip.offset),
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
@@ -658,7 +661,7 @@ export function shotstackToOpenReel(
 					originalAsset: { ...asset },
 					originalTrackIndex: ti,
 				};
-				hasTextClips = true;
+				hasTextInTrack = true;
 				continue;
 			}
 
@@ -714,7 +717,7 @@ export function shotstackToOpenReel(
 			rawClipData[clipId] = {
 				originalAsset: { ...asset },
 				originalClip: { ...stClip, asset: undefined },
-				// Preserve TTS voice fields for round-trip
+				originalTrackIndex: ti,
 				...(assetType === "text-to-speech" ? {
 					voiceId: asset.voice ?? asset.localVoice ?? undefined,
 					ttsText: asset.text ?? undefined,
@@ -739,71 +742,72 @@ export function shotstackToOpenReel(
 				solo: false,
 			});
 		}
-	}
 
-	if (hasTextClips) {
-		orTracks.push({
-			id: textTrackId,
-			type: "text",
-			name: "Text Track",
-			clips: [],
-			transitions: [],
-			locked: false,
-			hidden: false,
-			muted: false,
-			solo: false,
-		});
-	}
-	if (hasSvgClips || hasShapeClips) {
-		orTracks.push({
-			id: graphicsTrackId,
-			type: "graphics",
-			name: "Graphics Track",
-			clips: [],
-			transitions: [],
-			locked: false,
-			hidden: false,
-			muted: false,
-			solo: false,
-		});
-	}
-	if (hasHtmlClips) {
-		// Build real ORClips for the HTML image track so they appear in the
-		// timeline.  The blob is a placeholder until the editor host
-		// renders the HTML to PNG.
-		const htmlImageClips: ORClip[] = [];
-		for (const [cid, hd] of Object.entries(htmlClipData)) {
-			htmlImageClips.push({
-				id: cid,
-				mediaId: hd.mediaId,
-				trackId: htmlImageTrackId,
-				startTime: hd.startTime,
-				duration: hd.duration,
-				inPoint: 0,
-				outPoint: hd.duration,
-				effects: [],
-				audioEffects: [],
-				transform: defaultTransform({
-					position: hd.position,
-					scale: { x: hd.scale, y: hd.scale },
-					opacity: hd.opacity,
-					fitMode: "contain",
-				}),
-				volume: 1,
-				keyframes: [],
+		// Emit per-ShotStack-track special tracks inline to preserve z-ordering.
+		// Each ShotStack track that contains text/graphics/html clips gets its
+		// own dedicated OpenReel track at the correct z-position.
+		if (hasTextInTrack) {
+			orTracks.push({
+				id: perTrackTextId!,
+				type: "text",
+				name: "Text Track",
+				clips: [],
+				transitions: [],
+				locked: false,
+				hidden: false,
+				muted: false,
+				solo: false,
 			});
 		}
-		orTracks.push({
-			id: htmlImageTrackId,
-			type: "image",
-			name: "HTML Track",
-			clips: htmlImageClips,
-			transitions: [],
-			locked: false,
-			hidden: false,
-			muted: false,
-			solo: false,
-		});
+		if (hasGraphicsInTrack) {
+			orTracks.push({
+				id: perTrackGraphicsId!,
+				type: "graphics",
+				name: "Graphics Track",
+				clips: [],
+				transitions: [],
+				locked: false,
+				hidden: false,
+				muted: false,
+				solo: false,
+			});
+		}
+		if (hasHtmlInTrack) {
+			const htmlImageClips: ORClip[] = [];
+			for (const [cid, hd] of Object.entries(htmlClipData)) {
+				if (hd.trackId !== perTrackHtmlId) continue;
+				htmlImageClips.push({
+					id: cid,
+					mediaId: hd.mediaId,
+					trackId: perTrackHtmlId!,
+					startTime: hd.startTime,
+					duration: hd.duration,
+					inPoint: 0,
+					outPoint: hd.duration,
+					effects: [],
+					audioEffects: [],
+					transform: defaultTransform({
+						position: hd.position,
+						scale: { x: hd.scale, y: hd.scale },
+						opacity: hd.opacity,
+						fitMode: "contain",
+					}),
+					volume: 1,
+					keyframes: [],
+				});
+			}
+			orTracks.push({
+				id: perTrackHtmlId!,
+				type: "image",
+				name: "HTML Track",
+				clips: htmlImageClips,
+				transitions: [],
+				locked: false,
+				hidden: false,
+				muted: false,
+				solo: false,
+			});
+		}
 	}
 
 	const result: ORProject = {
@@ -891,15 +895,20 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 
 	const stTracks: ShotstackTrack[] = [];
 
+	const svgClipDataRt = preserved.svgClipData || {};
+	const textClipDataRt = preserved.textClipData || {};
+	const htmlClipDataRt = preserved.htmlClipData || {};
+	const shapeClipDataRt = preserved.shapeClipData || {};
+
 	for (const orTrack of project.timeline.tracks) {
 		const clips: ShotstackClip[] = [];
 
+		// ── Regular clips from the OR track's clips array ──
 		for (const orClip of orTrack.clips) {
 			const raw = rawClipData[orClip.id];
 			const originalAsset = (raw?.originalAsset || {}) as Record<string, unknown>;
 			const originalClipData = (raw?.originalClip || {}) as Record<string, unknown>;
 
-			// Skip soundtrack clips — they round-trip as timeline.soundtrack
 			if (raw?._isSoundtrack) {
 				const mediaItem = project.mediaLibrary.items.find((m) => m.id === orClip.mediaId);
 				const soundtrackSrc = mediaItem?.originalUrl || (originalAsset.src as string) || "";
@@ -957,90 +966,89 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 			clips.push(stClip);
 		}
 
+		// ── Reconstruct side-band clips that belong to this OR track ──
+		// Text, SVG, shape, and HTML clips are stored in engine-side data
+		// structures; match them back to this track by trackId.
+
+		for (const [, data] of Object.entries(svgClipDataRt)) {
+			if (data.trackId !== orTrack.id) continue;
+			const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
+			if (!origAsset) continue;
+			const pos = data.position as { x: number; y: number } | undefined;
+			const { position: stPos, offset: stOff } = pos
+				? xyToPosition(pos.x, pos.y)
+				: { position: undefined, offset: undefined };
+			clips.push({
+				asset: origAsset,
+				start: data.startTime as number,
+				length: data.duration as number,
+				position: stPos,
+				offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
+				scale: data.scale !== 1 ? data.scale : undefined,
+				opacity: data.opacity !== 1 ? data.opacity : undefined,
+			});
+		}
+
+		for (const [, data] of Object.entries(shapeClipDataRt)) {
+			if (data.trackId !== orTrack.id) continue;
+			const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
+			if (!origAsset) continue;
+			const pos = data.position as { x: number; y: number } | undefined;
+			const { position: stPos, offset: stOff } = pos
+				? xyToPosition(pos.x, pos.y)
+				: { position: undefined, offset: undefined };
+			clips.push({
+				asset: origAsset,
+				start: data.startTime as number,
+				length: data.duration as number,
+				position: stPos,
+				offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
+				scale: data.scale !== 1 ? data.scale : undefined,
+				opacity: data.opacity !== 1 ? data.opacity : undefined,
+			});
+		}
+
+		for (const [, data] of Object.entries(textClipDataRt)) {
+			if (data.trackId !== orTrack.id) continue;
+			const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
+			if (!origAsset) continue;
+			const pos = data.position as { x: number; y: number } | undefined;
+			const { position: stPos, offset: stOff } = pos
+				? xyToPosition(pos.x, pos.y)
+				: { position: undefined, offset: undefined };
+			clips.push({
+				asset: { ...origAsset, text: data.text as string },
+				start: data.startTime as number,
+				length: data.duration as number,
+				position: stPos,
+				offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
+				scale: data.scale !== 1 ? data.scale : undefined,
+				opacity: data.opacity !== 1 ? data.opacity : undefined,
+			});
+		}
+
+		for (const [, data] of Object.entries(htmlClipDataRt)) {
+			if (data.trackId !== orTrack.id) continue;
+			const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
+			if (!origAsset) continue;
+			const pos = data.position as { x: number; y: number } | undefined;
+			const { position: stPos, offset: stOff } = pos
+				? xyToPosition(pos.x, pos.y)
+				: { position: undefined, offset: undefined };
+			clips.push({
+				asset: { ...origAsset, html: data.html as string, css: data.css as string },
+				start: data.startTime as number,
+				length: data.duration as number,
+				position: stPos,
+				offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
+				scale: data.scale !== 1 ? data.scale : undefined,
+				opacity: data.opacity !== 1 ? data.opacity : undefined,
+			});
+		}
+
 		if (clips.length > 0) {
 			stTracks.push({ clips });
 		}
-	}
-
-	// ── Reconstruct SVG clips from _shotstack.svgClipData ──
-	const svgClipDataRt = preserved.svgClipData || {};
-	const svgByOrigTrack = new Map<number, ShotstackClip[]>();
-	for (const [, data] of Object.entries(svgClipDataRt)) {
-		const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
-		if (!origAsset) continue;
-		const pos = data.position as { x: number; y: number } | undefined;
-		const { position: stPos, offset: stOff } = pos
-			? xyToPosition(pos.x, pos.y)
-			: { position: undefined, offset: undefined };
-		const stClip: ShotstackClip = {
-			asset: origAsset,
-			start: data.startTime as number,
-			length: data.duration as number,
-			position: stPos,
-			offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
-			scale: data.scale !== 1 ? data.scale : undefined,
-			opacity: data.opacity !== 1 ? data.opacity : undefined,
-		};
-		const ti = typeof data.originalTrackIndex === "number" ? data.originalTrackIndex : -1;
-		if (!svgByOrigTrack.has(ti)) svgByOrigTrack.set(ti, []);
-		svgByOrigTrack.get(ti)!.push(stClip);
-	}
-	for (const [, clips] of svgByOrigTrack) {
-		stTracks.push({ clips });
-	}
-
-	// ── Reconstruct text/html clips from _shotstack.textClipData ──
-	const textClipDataRt = preserved.textClipData || {};
-	const textByOrigTrack = new Map<number, ShotstackClip[]>();
-	for (const [, data] of Object.entries(textClipDataRt)) {
-		const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
-		if (!origAsset) continue;
-		const pos = data.position as { x: number; y: number } | undefined;
-		const { position: stPos, offset: stOff } = pos
-			? xyToPosition(pos.x, pos.y)
-			: { position: undefined, offset: undefined };
-		const stClip: ShotstackClip = {
-			asset: { ...origAsset, text: data.text as string },
-			start: data.startTime as number,
-			length: data.duration as number,
-			position: stPos,
-			offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
-			scale: data.scale !== 1 ? data.scale : undefined,
-			opacity: data.opacity !== 1 ? data.opacity : undefined,
-		};
-		const ti = typeof data.originalTrackIndex === "number" ? data.originalTrackIndex : -1;
-		if (!textByOrigTrack.has(ti)) textByOrigTrack.set(ti, []);
-		textByOrigTrack.get(ti)!.push(stClip);
-	}
-	for (const [, clips] of textByOrigTrack) {
-		stTracks.push({ clips });
-	}
-
-	// ── Reconstruct HTML clips from _shotstack.htmlClipData ──
-	const htmlClipDataRt = preserved.htmlClipData || {};
-	const htmlByOrigTrack = new Map<number, ShotstackClip[]>();
-	for (const [, data] of Object.entries(htmlClipDataRt)) {
-		const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
-		if (!origAsset) continue;
-		const pos = data.position as { x: number; y: number } | undefined;
-		const { position: stPos, offset: stOff } = pos
-			? xyToPosition(pos.x, pos.y)
-			: { position: undefined, offset: undefined };
-		const stClip: ShotstackClip = {
-			asset: { ...origAsset, html: data.html as string, css: data.css as string },
-			start: data.startTime as number,
-			length: data.duration as number,
-			position: stPos,
-			offset: stOff && (stOff.x !== 0 || stOff.y !== 0) ? stOff : undefined,
-			scale: data.scale !== 1 ? data.scale : undefined,
-			opacity: data.opacity !== 1 ? data.opacity : undefined,
-		};
-		const ti = typeof data.originalTrackIndex === "number" ? data.originalTrackIndex : -1;
-		if (!htmlByOrigTrack.has(ti)) htmlByOrigTrack.set(ti, []);
-		htmlByOrigTrack.get(ti)!.push(stClip);
-	}
-	for (const [, clips] of htmlByOrigTrack) {
-		stTracks.push({ clips });
 	}
 
 	const captionMeta = preserved.captionSourceBySubtitleId || {};
