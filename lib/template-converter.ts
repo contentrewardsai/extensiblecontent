@@ -583,7 +583,7 @@ export function shotstackToOpenReel(
 
 			const clipId = uuidv4();
 
-			console.log(`[ShotStack→OR] Track ${ti}, clip: type="${assetType}", src="${(asset.src as string || "").slice(0, 80)}", text="${(asset.text as string || "").slice(0, 40)}", html="${(asset.html as string || "").slice(0, 40)}"`);
+			console.log(`[ShotStack→OR] Track ${ti}, clip: type="${assetType}", src="${(asset.src as string || "").slice(0, 80)}", text="${(asset.text as string || "").slice(0, 40)}", html="${(asset.html as string || "").slice(0, 40)}", position="${stClip.position || ""}", offset=${JSON.stringify(stClip.offset || {})}, w=${stClip.width ?? asset.width ?? "?"}, h=${stClip.height ?? asset.height ?? "?"}, scale=${stClip.scale ?? 1}`);
 
 			if (assetType === "svg") {
 				if (!perTrackGraphicsId) perTrackGraphicsId = uuidv4();
@@ -727,6 +727,7 @@ export function shotstackToOpenReel(
 					}
 				}
 
+				const font = asset.font as Record<string, unknown> | undefined;
 				textClipData[clipId] = {
 					text: asset.text || asset.html || "Text",
 					startTime: start,
@@ -736,9 +737,11 @@ export function shotstackToOpenReel(
 					absolutePosition,
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
-					fontFamily: (asset.font as any)?.family || "Inter",
-					fontSize: (asset.font as any)?.size || 48,
-					color: (asset.font as any)?.color || "#ffffff",
+					fontFamily: (font?.family as string) || "Inter",
+					fontSize: (font?.size as number) || 48,
+					fontWeight: (font?.weight as string | number) || "normal",
+					fontStyle: (font?.style as string) || "normal",
+					color: (font?.color as string) || "#ffffff",
 					textAlign,
 					verticalAlign,
 					lineHeight: typeof stLineHeight === "number" ? stLineHeight : undefined,
