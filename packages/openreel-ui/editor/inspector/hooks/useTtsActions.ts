@@ -274,12 +274,21 @@ export function useTtsActions(options: UseTtsActionsOptions): UseTtsActionsRetur
     const timestamp = Date.now();
     const fileName = `${voiceName}_${timestamp}.wav`;
 
+    const uploadExport = (window as unknown as Record<string, unknown>).__mediaEditorUploadExport;
+    if (typeof uploadExport === "function") {
+      (uploadExport as (blob: Blob, format: string) => void)(generatedAudio, "wav");
+      return;
+    }
+
     const url = URL.createObjectURL(generatedAudio);
     const a = document.createElement("a");
     a.href = url;
     a.download = fileName;
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }, [generatedAudio, getSelectedVoiceName, storeMarkSaved]);
 
   return {
