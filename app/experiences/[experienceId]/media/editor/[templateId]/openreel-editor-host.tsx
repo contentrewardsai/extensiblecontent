@@ -5,7 +5,7 @@ import type { MediaEditorContext } from "../../media-editor-context";
 import type { ShotstackEdit, ORProject } from "@/lib/template-converter";
 import { shotstackToOpenReel, openReelToShotstack } from "@/lib/template-converter";
 import { ensureAllServicesLoaded, generateTTS } from "@/lib/openreel-service-bridge";
-import { exportAndUpload, type ExportProgress } from "@/lib/openreel-export-bridge";
+import { exportAndUpload, uploadMediaBlob, type ExportProgress } from "@/lib/openreel-export-bridge";
 import { useShotstackMetadataStore } from "@/packages/openreel-ui/stores/shotstack-metadata-store";
 
 interface Props {
@@ -69,6 +69,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			// Raw clip data preserves the original ShotStack asset fields.
 			const rawClips = orProject._shotstack?.rawClipData ?? {};
 			await ensureAllServicesLoaded();
+			const ttsUploadPromises: Array<Promise<void>> = [];
 			for (const [clipId, raw] of Object.entries(rawClips)) {
 				const origAsset = (raw as Record<string, unknown>).originalAsset as Record<string, unknown> | undefined;
 				if (!origAsset || String(origAsset.type).toLowerCase() !== "text-to-speech") continue;
@@ -92,15 +93,13 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 					(orProject.mediaLibrary.items as Array<typeof orProject.mediaLibrary.items[number]>)[idx] = {
 						...orProject.mediaLibrary.items[idx],
 						blob: result.blob,
+						originalUrl: orProject.mediaLibrary.items[idx].originalUrl || undefined,
 						isPlaceholder: false,
 						metadata: {
 							...orProject.mediaLibrary.items[idx].metadata,
 							duration: result.duration,
 						},
 					};
-					// Also update the clip's duration/outPoint to match
-					// the actual generated audio length so the timeline
-					// doesn't show a 3-minute bar for a 10-second TTS clip.
 					const actualDuration = result.duration;
 					if (actualDuration > 0) {
 						const clipRef = orProject.timeline.tracks
@@ -111,9 +110,71 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							(clipRef as { duration: number; outPoint: number }).outPoint = clipRef.inPoint + actualDuration;
 						}
 					}
+
+					// Upload the TTS blob to persistent storage (GHL / Supabase)
+					// so the template doesn't need to regenerate audio on next open.
+					const capturedIdx = idx;
+					const capturedClipId = clipId;
+					ttsUploadPromises.push(
+						uploadMediaBlob({
+							blob: result.blob,
+							filename: `tts_${clipId.slice(0, 8)}.wav`,
+							contentType: "audio/wav",
+							templateId,
+							context,
+						}).then((url) => {
+							// Persist the URL so round-trip save embeds it as asset.src
+							origAsset.src = url;
+							const item = orProject.mediaLibrary.items[capturedIdx];
+							if (item) {
+								(orProject.mediaLibrary.items as Array<typeof orProject.mediaLibrary.items[number]>)[capturedIdx] = {
+									...item,
+									originalUrl: url,
+								};
+							}
+							console.log(`[OpenReelEditorHost] TTS audio for clip ${capturedClipId} uploaded to ${url}`);
+						}).catch((err) => {
+							console.warn(`[OpenReelEditorHost] TTS upload failed for clip ${capturedClipId} (audio still works in-session):`, err);
+						}),
+					);
 				} catch (err) {
 					console.warn(`[OpenReelEditorHost] TTS generation failed for clip ${clipId}:`, err);
 				}
+			}
+
+			// Fire uploads in the background — don't block editor load.
+			// When uploads finish, patch the live Zustand stores so Save picks up the URLs.
+			if (ttsUploadPromises.length > 0) {
+				Promise.allSettled(ttsUploadPromises).then(async (results) => {
+					const uploaded = results.filter((r) => r.status === "fulfilled").length;
+					if (uploaded > 0) {
+						console.log(`[OpenReelEditorHost] ${uploaded}/${results.length} TTS audio files persisted to storage`);
+						try {
+							const { useProjectStore } = await import("@/packages/openreel-ui/stores/project-store");
+							const currentProject = useProjectStore.getState().project;
+							const updatedItems = currentProject.mediaLibrary.items.map((item) => {
+								const orItem = orProject.mediaLibrary.items.find((m) => m.id === item.id);
+								if (orItem?.originalUrl && !item.originalUrl) {
+									return { ...item, originalUrl: orItem.originalUrl };
+								}
+								return item;
+							});
+							useProjectStore.setState({
+								project: {
+									...currentProject,
+									mediaLibrary: { ...currentProject.mediaLibrary, items: updatedItems },
+								},
+							});
+
+							const meta = useShotstackMetadataStore.getState().getMetadata();
+							if (meta.rawClipData) {
+								useShotstackMetadataStore.getState().setMetadata({ ...meta });
+							}
+						} catch (err) {
+							console.warn("[OpenReelEditorHost] Failed to patch stores after TTS upload:", err);
+						}
+					}
+				});
 			}
 
 			projectRef.current = orProject;

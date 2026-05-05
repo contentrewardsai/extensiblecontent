@@ -295,3 +295,68 @@ export async function exportAndUpload(opts: {
 		storageType: result.storageType,
 	});
 }
+
+// ── Lightweight blob upload (for TTS audio, etc.) ────────────────────────────
+
+/**
+ * Upload a media blob (audio, image, etc.) and return its public URL.
+ * Uses the same GHL-direct / Supabase-presigned infrastructure as video
+ * export but without progress UI or render-row creation.
+ */
+export async function uploadMediaBlob(opts: {
+	blob: Blob;
+	filename: string;
+	contentType: string;
+	templateId: string;
+	context: MediaEditorContext;
+}): Promise<string> {
+	const { blob, filename, contentType, templateId, context } = opts;
+	const noop: ProgressCallback = () => {};
+
+	if (context.resolveUploadTargetUrl) {
+		const qs = context.templatesApiQuery ? `?${context.templatesApiQuery}` : "";
+		try {
+			const resolveRes = await fetch(`${context.resolveUploadTargetUrl}${qs}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				credentials: "include",
+				body: JSON.stringify({
+					filename,
+					content_type: contentType,
+					size_bytes: blob.size,
+					template_id: templateId,
+					...context.browserRenderFields,
+				}),
+			});
+			const resolved = (await resolveRes.json().catch(() => ({}))) as ResolveResult;
+
+			if (resolveRes.ok && resolved.target === "ghl") {
+				try {
+					const r = await uploadDirectToGhl(
+						blob, filename, resolved as ResolveGhlResult,
+						templateId, context, noop,
+					);
+					return r.fileUrl;
+				} catch {
+					// fall through to Supabase
+				}
+			}
+			if (resolveRes.ok && resolved.target === "supabase") {
+				const r = await uploadViaPresigned(
+					blob, filename, contentType, templateId, context, noop,
+					resolved as ResolveSupabaseResult,
+				);
+				return r.fileUrl;
+			}
+		} catch {
+			// fall through
+		}
+	}
+
+	if (context.presignedUploadUrl) {
+		const r = await uploadViaPresigned(blob, filename, contentType, templateId, context, noop);
+		return r.fileUrl;
+	}
+
+	throw new Error("No upload endpoint configured");
+}
