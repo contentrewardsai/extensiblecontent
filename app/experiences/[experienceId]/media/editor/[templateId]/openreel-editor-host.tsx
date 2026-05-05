@@ -276,12 +276,26 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 					const cw = (data.canvasWidth as number) || 1080;
 					const ch = (data.canvasHeight as number) || 1080;
 
+					// ShotStack positions the clip's corner at the named anchor,
+					// but OpenReel shapes render centered at their transform position.
 					let anchorOffsetX = 0;
 					let anchorOffsetY = 0;
 					if (anchor.includes("left")) anchorOffsetX = (w / 2) / cw;
 					if (anchor.includes("right")) anchorOffsetX = -(w / 2) / cw;
 					if (anchor.includes("top")) anchorOffsetY = (h / 2) / ch;
 					if (anchor.includes("bottom")) anchorOffsetY = -(h / 2) / ch;
+
+					// The base shape rendered by OpenReel is a square with
+					// side = min(canvasWidth, canvasHeight) * 0.15.
+					// Use uniform scale so corner radii aren't distorted by
+					// non-uniform stretching. Pass width/height fractions so the
+					// renderer draws the correct aspect-ratio rectangle.
+					const baseSize = Math.min(cw, ch) * 0.15;
+					const maxDim = Math.max(w, h);
+					const uniformScale = (data.scale as number || 1) * (maxDim / baseSize);
+					const normalizedRadius = cornerRadius > 0
+						? cornerRadius / uniformScale
+						: 0;
 
 					shapeClips.push({
 						id: clipId,
@@ -298,7 +312,9 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 								opacity: strokeColor ? 1 : 0,
 								dashArray: [],
 							},
-							cornerRadius,
+							cornerRadius: normalizedRadius,
+							_widthFrac: w / maxDim,
+							_heightFrac: h / maxDim,
 						},
 						transform: {
 							position: {
@@ -306,8 +322,8 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 								y: (shapePos?.y || 0) + 0.5 + anchorOffsetY,
 							},
 							scale: {
-								x: (data.scale as number || 1) * (w / (cw * 0.15)),
-								y: (data.scale as number || 1) * (h / (ch * 0.15)),
+								x: uniformScale,
+								y: uniformScale,
 							},
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },
