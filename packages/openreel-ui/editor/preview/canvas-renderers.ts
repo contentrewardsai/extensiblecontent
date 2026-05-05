@@ -721,6 +721,7 @@ export const renderTextClipToCanvas = (
     startY = -totalHeight;
   }
 
+
   if (characterStates && characterStates.length > 0) {
     // Render text with per-character animations (rotation, scale, opacity, offset)
     // Each character is transformed around its center before drawing
@@ -1334,17 +1335,6 @@ const renderShapeOnly = (
   const shapeSize = baseSize * 0.15;
   const halfSize = shapeSize / 2;
 
-  // Support non-square shapes via _widthFrac / _heightFrac set by the
-  // ShotStack converter. When present the scale is uniform and the actual
-  // aspect ratio is baked into these fractions, so corner radii stay round.
-  const anyStyle = style as unknown as Record<string, unknown>;
-  const wFrac = (typeof anyStyle._widthFrac === "number" ? anyStyle._widthFrac : 1) as number;
-  const hFrac = (typeof anyStyle._heightFrac === "number" ? anyStyle._heightFrac : 1) as number;
-  const shapeW = shapeSize * wFrac;
-  const shapeH = shapeSize * hFrac;
-  const halfW = shapeW / 2;
-  const halfH = shapeH / 2;
-
   const strokeScale = baseSize / 1080;
   ctx.fillStyle = style.fill?.color || "#3b82f6";
   ctx.strokeStyle = style.stroke?.color || "#1d4ed8";
@@ -1360,27 +1350,35 @@ const renderShapeOnly = (
     case "rectangle": {
       const radius = style.cornerRadius || 0;
       if (radius > 0) {
+        const sx = transform.scale.x;
+        const sy = transform.scale.y;
+        // Compensate for non-uniform scale so corners stay circular.
+        // DOMPointInit radii {x, y} are pre-divided by each axis scale so
+        // the visual result is a uniform radius after ctx.scale() applies.
+        const compensated = (sx !== 0 && sy !== 0 && Math.abs(sx - sy) > 0.001)
+          ? [{ x: radius / sx, y: radius / sy }]
+          : [Math.min(radius, halfSize)];
         ctx.roundRect(
-          -halfW,
-          -halfH,
-          shapeW,
-          shapeH,
-          Math.min(radius, Math.min(halfW, halfH)),
+          -halfSize,
+          -halfSize,
+          shapeSize,
+          shapeSize,
+          compensated,
         );
       } else {
-        ctx.rect(-halfW, -halfH, shapeW, shapeH);
+        ctx.rect(-halfSize, -halfSize, shapeSize, shapeSize);
       }
       break;
     }
     case "circle":
     case "ellipse": {
-      ctx.ellipse(0, 0, halfW, halfH, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, halfSize, halfSize, 0, 0, Math.PI * 2);
       break;
     }
     case "triangle": {
-      ctx.moveTo(0, -halfH);
-      ctx.lineTo(halfW, halfH);
-      ctx.lineTo(-halfW, halfH);
+      ctx.moveTo(0, -halfSize);
+      ctx.lineTo(halfSize, halfSize);
+      ctx.lineTo(-halfSize, halfSize);
       ctx.closePath();
       break;
     }
@@ -1399,22 +1397,22 @@ const renderShapeOnly = (
       break;
     }
     case "arrow": {
-      ctx.moveTo(-halfW, 0);
-      ctx.lineTo(halfW * 0.3, 0);
-      ctx.lineTo(halfW * 0.3, -halfH * 0.4);
-      ctx.lineTo(halfW, 0);
-      ctx.lineTo(halfW * 0.3, halfH * 0.4);
-      ctx.lineTo(halfW * 0.3, 0);
+      ctx.moveTo(-halfSize, 0);
+      ctx.lineTo(halfSize * 0.3, 0);
+      ctx.lineTo(halfSize * 0.3, -halfSize * 0.4);
+      ctx.lineTo(halfSize, 0);
+      ctx.lineTo(halfSize * 0.3, halfSize * 0.4);
+      ctx.lineTo(halfSize * 0.3, 0);
       ctx.closePath();
       break;
     }
     case "line": {
-      ctx.moveTo(-halfW, 0);
-      ctx.lineTo(halfW, 0);
+      ctx.moveTo(-halfSize, 0);
+      ctx.lineTo(halfSize, 0);
       break;
     }
     default: {
-      ctx.rect(-halfW, -halfH, shapeW, shapeH);
+      ctx.rect(-halfSize, -halfSize, shapeSize, shapeSize);
     }
   }
 

@@ -285,17 +285,11 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 					if (anchor.includes("top")) anchorOffsetY = (h / 2) / ch;
 					if (anchor.includes("bottom")) anchorOffsetY = -(h / 2) / ch;
 
-					// The base shape rendered by OpenReel is a square with
-					// side = min(canvasWidth, canvasHeight) * 0.15.
-					// Use uniform scale so corner radii aren't distorted by
-					// non-uniform stretching. Pass width/height fractions so the
-					// renderer draws the correct aspect-ratio rectangle.
+					// The base shape is a square of side = min(cw, ch) * 0.15.
+					// Non-uniform scale stretches it to the actual w × h.
+					// Corner radii are compensated in the renderer so they
+					// stay circular despite non-uniform scaling.
 					const baseSize = Math.min(cw, ch) * 0.15;
-					const maxDim = Math.max(w, h);
-					const uniformScale = (data.scale as number || 1) * (maxDim / baseSize);
-					const normalizedRadius = cornerRadius > 0
-						? cornerRadius / uniformScale
-						: 0;
 
 					shapeClips.push({
 						id: clipId,
@@ -312,9 +306,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 								opacity: strokeColor ? 1 : 0,
 								dashArray: [],
 							},
-							cornerRadius: normalizedRadius,
-							_widthFrac: w / maxDim,
-							_heightFrac: h / maxDim,
+							cornerRadius,
 						},
 						transform: {
 							position: {
@@ -322,8 +314,8 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 								y: (shapePos?.y || 0) + 0.5 + anchorOffsetY,
 							},
 							scale: {
-								x: uniformScale,
-								y: uniformScale,
+								x: (data.scale as number || 1) * (w / baseSize),
+								y: (data.scale as number || 1) * (h / baseSize),
 							},
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },
@@ -343,9 +335,28 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 				for (const [clipId, data] of Object.entries(orProject._shotstack.textClipData)) {
 					const textPos = data.position as { x: number; y: number } | undefined;
 					const isAbsolute = data.absolutePosition as boolean;
-					const resolvedPos = isAbsolute
-						? { x: textPos?.x || 0, y: textPos?.y || 0 }
-						: { x: (textPos?.x || 0) + 0.5, y: (textPos?.y || 0) + 0.5 };
+					const cw = orProject.settings.width || 1080;
+					const ch = orProject.settings.height || 1080;
+					const mw = data.maxWidth as number | undefined;
+					const tAlign = (data.textAlign as string) || "center";
+
+					let resolvedX: number;
+					let resolvedY: number;
+					if (isAbsolute) {
+						resolvedX = textPos?.x || 0;
+						resolvedY = textPos?.y || 0;
+					} else {
+						resolvedX = (textPos?.x || 0) + 0.5;
+						resolvedY = (textPos?.y || 0) + 0.5;
+
+						// Center-based position: adjust so left/right-aligned
+						// text renders from the correct edge of its bounding box.
+						if (mw) {
+							if (tAlign === "left") resolvedX -= mw / (2 * cw);
+							else if (tAlign === "right") resolvedX += mw / (2 * cw);
+						}
+					}
+
 					textClips.push({
 						id: clipId,
 						trackId: data.trackId || `track-text`,
@@ -358,14 +369,14 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							color: data.color,
 							fontWeight: data.fontWeight || "normal",
 							fontStyle: (data.fontStyle as string) || "normal",
-							textAlign: (data.textAlign as string) || "center",
+							textAlign: tAlign,
 							verticalAlign: (data.verticalAlign as string) || "middle",
 							lineHeight: (data.lineHeight as number) || 1.2,
 							letterSpacing: 0,
-							maxWidth: data.maxWidth as number | undefined,
+							maxWidth: mw,
 						},
 						transform: {
-							position: resolvedPos,
+							position: { x: resolvedX, y: resolvedY },
 							scale: { x: data.scale, y: data.scale },
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },

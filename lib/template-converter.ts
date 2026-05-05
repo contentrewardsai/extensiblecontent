@@ -920,14 +920,27 @@ export function shotstackToOpenReel(
 					else if (correctedPosition === "bottom") correctedPosition = "bottomRight";
 				}
 
+				const rectMeta = asset.rectangle as Record<string, any> | undefined;
+				const circleMeta = asset.circle as Record<string, any> | undefined;
+				const shapeW = resolveNumber(
+					stClip.width as number,
+					resolveNumber(asset.width as number,
+						resolveNumber(rectMeta?.width, resolveNumber(circleMeta?.radius, 100)))
+				);
+				const shapeH = resolveNumber(
+					stClip.height as number,
+					resolveNumber(asset.height as number,
+						resolveNumber(rectMeta?.height, resolveNumber(circleMeta?.radius, 100)))
+				);
+
 				shapeClipData[clipId] = {
 					shapeType,
 					fillColor,
 					strokeColor,
 					strokeWidth,
 					cornerRadius,
-					width: resolveNumber(stClip.width as number, asset.width as number || 100),
-					height: resolveNumber(stClip.height as number, asset.height as number || 100),
+					width: shapeW,
+					height: shapeH,
 					startTime: start,
 					duration: length,
 					trackId: perTrackGraphicsId,
