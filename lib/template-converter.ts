@@ -298,7 +298,7 @@ function positionToXY(
 	}
 	if (offset) {
 		x += offset.x || 0;
-		y += offset.y || 0;
+		y -= offset.y || 0;
 	}
 	return { x, y };
 }
@@ -329,7 +329,7 @@ function xyToPosition(x: number, y: number): { position: string; offset: { x: nu
 	}
 
 	const residualX = x - anchorX;
-	const residualY = y - anchorY;
+	const residualY = -(y - anchorY);
 	return {
 		position: pos,
 		offset: {
