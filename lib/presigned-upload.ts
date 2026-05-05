@@ -120,15 +120,23 @@ export async function handlePresignedUpload(
 		return Response.json({ error: error?.message ?? "Failed to create upload URL" }, { status: 500 });
 	}
 
-	// Build the public read URL (for non-private buckets)
+	// Build the public read URL (for non-private buckets).
+	// Include ?download=<filename> so browsers get a Content-Disposition header
+	// with the correct filename and extension, even when accessed directly.
 	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-	const fileUrl = isPrivate ? "" : `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}`;
+	const downloadName = encodeURIComponent(filename || `render.${ext}`);
+	const fileUrl = isPrivate
+		? ""
+		: `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}?download=${downloadName}`;
+	// Also keep a raw URL without Content-Disposition for GHL import (some APIs choke on query params)
+	const fileUrlRaw = isPrivate ? "" : `${supabaseUrl}/storage/v1/object/public/${bucket}/${filePath}`;
 
 	return Response.json({
 		ok: true,
 		upload_url: data.signedUrl,
 		upload_token: data.token,
 		file_url: fileUrl,
+		file_url_raw: fileUrlRaw,
 		file_path: filePath,
 		bucket,
 		render_id: renderId,
@@ -162,6 +170,12 @@ export interface ConfirmInput {
 	source?: string;
 	/** Whop experience context. */
 	experienceId?: string | null;
+	/** When true, the client already uploaded directly to GHL — skip re-upload. */
+	ghl_direct?: boolean;
+	ghl_url?: string;
+	ghl_media_id?: string;
+	ghl_location_id?: string;
+	ghl_company_id?: string;
 }
 
 export async function handleConfirmUpload(
@@ -199,7 +213,7 @@ export async function handleConfirmUpload(
 		throw err;
 	}
 
-	// Attempt GHL import-by-URL if location context exists
+	// Determine storage type and metadata
 	let storageType: "supabase" | "ghl" = "supabase";
 	let storageMeta: Record<string, unknown> = {
 		supabase_bucket: body.private ? POST_MEDIA_BUCKET_PRIVATE : POST_MEDIA_BUCKET_PUBLIC,
@@ -209,8 +223,18 @@ export async function handleConfirmUpload(
 	let fallbackDetail: string | null = null;
 	let finalFileUrl = file_url;
 
-	if (locationId) {
-		// Try GHL import
+	if (body.ghl_direct && body.ghl_url) {
+		// Client already uploaded directly to GHL — just record the result.
+		storageType = "ghl";
+		finalFileUrl = body.ghl_url;
+		storageMeta = {
+			ghl_location_id: body.ghl_location_id || locationId,
+			ghl_company_id: body.ghl_company_id || companyId,
+			ghl_media_id: body.ghl_media_id || "",
+			ghl_direct_upload: true,
+		};
+	} else if (locationId) {
+		// Legacy path: try GHL import-by-URL from the Supabase copy
 		const resolveInput: ResolveStorageInput = {
 			internalUserId,
 			projectId: project_id,

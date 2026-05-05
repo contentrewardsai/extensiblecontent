@@ -29,4 +29,6 @@ export interface MediaEditorContext {
 	videoUploadUrl?: string;
 	presignedUploadUrl?: string;
 	confirmUploadUrl?: string;
+	/** When set, the export bridge resolves GHL-direct vs Supabase before uploading. */
+	resolveUploadTargetUrl?: string;
 }

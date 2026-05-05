@@ -144,6 +144,7 @@ function buildGhlEditorContext({
 		videoUploadUrl: "/api/ghl/shotstack-templates/upload-video",
 		presignedUploadUrl: "/api/ghl/shotstack/presigned-upload",
 		confirmUploadUrl: "/api/ghl/shotstack/confirm-upload",
+		resolveUploadTargetUrl: "/api/ghl/shotstack/resolve-upload-target",
 	};
 }
 

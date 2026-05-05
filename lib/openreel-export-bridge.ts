@@ -1,7 +1,15 @@
 /**
- * openreel-export-bridge.ts — Wraps OpenReel's ExportEngine output to upload
- * the rendered video/audio via our presigned upload pipeline to Supabase
- * Storage, then optionally post to HighLevel or UploadPost.
+ * openreel-export-bridge.ts — Uploads rendered video/audio to HighLevel
+ * (direct client upload) or Supabase Storage (presigned fallback).
+ *
+ * When a GHL location context is available the client uploads the blob
+ * straight to HighLevel's medias API using a short-lived OAuth token
+ * provided by our resolve-upload-target endpoint. This avoids the Vercel
+ * body-size limit and ensures HighLevel hosts the file natively.
+ *
+ * When GHL is unavailable the previous two-step presigned flow is used:
+ *   1. PUT blob to Supabase via signed URL
+ *   2. POST confirm-upload to register the render row
  */
 
 import type { MediaEditorContext } from "@/app/experiences/[experienceId]/media/media-editor-context";
@@ -17,9 +25,108 @@ export interface ExportProgress {
 
 type ProgressCallback = (state: ExportProgress) => void;
 
-/**
- * Upload a blob via presigned URL, then confirm. Returns the public URL.
- */
+// ── GHL direct upload ────────────────────────────────────────────────────────
+
+interface ResolveGhlResult {
+	target: "ghl";
+	upload_url: string;
+	token: string;
+	location_id: string;
+	company_id: string | null;
+	api_version: string;
+}
+
+interface ResolveSupabaseResult {
+	target: "supabase";
+	upload_url: string;
+	file_url: string;
+	file_path: string;
+	render_id: string;
+	[key: string]: unknown;
+}
+
+type ResolveResult = ResolveGhlResult | ResolveSupabaseResult;
+
+async function uploadDirectToGhl(
+	blob: Blob,
+	filename: string,
+	resolved: ResolveGhlResult,
+	templateId: string,
+	context: MediaEditorContext,
+	onProgress: ProgressCallback,
+): Promise<{ fileUrl: string; storageType: string; fallbackMessage?: string }> {
+	const mb = (blob.size / 1e6).toFixed(1);
+	onProgress({ phase: `Uploading ${filename} to HighLevel (${mb} MB)...`, progress: 92, complete: false, error: null });
+
+	const form = new FormData();
+	form.append("hosted", "false");
+	form.append("file", blob, filename);
+	form.append("name", filename);
+
+	const res = await fetch(resolved.upload_url, {
+		method: "POST",
+		headers: {
+			Accept: "application/json",
+			Version: resolved.api_version,
+			Authorization: `Bearer ${resolved.token}`,
+		},
+		body: form,
+	});
+
+	if (!res.ok) {
+		const text = await res.text().catch(() => "");
+		throw new Error(`GHL media upload failed (${res.status}): ${text || res.statusText}`);
+	}
+
+	const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+	const mediaId =
+		(typeof json.fileId === "string" && json.fileId) ||
+		(typeof json._id === "string" && json._id) ||
+		(typeof json.id === "string" && json.id) ||
+		"";
+	const ghlUrl =
+		(typeof json.url === "string" && json.url) ||
+		(typeof json.fileUrl === "string" && json.fileUrl) ||
+		"";
+
+	if (!ghlUrl) {
+		throw new Error("GHL upload succeeded but response did not include a URL");
+	}
+
+	onProgress({ phase: "Registering render...", progress: 98, complete: false, error: null });
+
+	const qs = context.templatesApiQuery ? `?${context.templatesApiQuery}` : "";
+	const confirmRes = await fetch(`${context.confirmUploadUrl}${qs}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		body: JSON.stringify({
+			file_url: ghlUrl,
+			file_path: "",
+			render_id: crypto.randomUUID(),
+			template_id: templateId,
+			content_type: blob.type || "video/mp4",
+			size_bytes: blob.size,
+			source: "openreel",
+			ghl_direct: true,
+			ghl_url: ghlUrl,
+			ghl_media_id: mediaId,
+			ghl_location_id: resolved.location_id,
+			ghl_company_id: resolved.company_id,
+			...context.browserRenderFields,
+		}),
+	});
+
+	if (!confirmRes.ok) {
+		const confirmJson = (await confirmRes.json().catch(() => ({}))) as { error?: string };
+		console.warn("[export-bridge] confirm after GHL upload failed:", confirmJson.error);
+	}
+
+	return { fileUrl: ghlUrl, storageType: "ghl" };
+}
+
+// ── Supabase presigned upload (fallback) ─────────────────────────────────────
+
 async function uploadViaPresigned(
 	blob: Blob,
 	filename: string,
@@ -27,6 +134,7 @@ async function uploadViaPresigned(
 	templateId: string,
 	context: MediaEditorContext,
 	onProgress: ProgressCallback,
+	preResolved?: ResolveSupabaseResult,
 ): Promise<{ fileUrl: string; storageType: string; fallbackMessage?: string }> {
 	if (!context.presignedUploadUrl || !context.confirmUploadUrl) {
 		throw new Error("Presigned upload endpoints not configured");
@@ -34,31 +142,31 @@ async function uploadViaPresigned(
 
 	const qs = context.templatesApiQuery ? `?${context.templatesApiQuery}` : "";
 
-	onProgress({ phase: "Preparing upload...", progress: 90, complete: false, error: null });
+	let presignJson: ResolveSupabaseResult;
 
-	const presignRes = await fetch(`${context.presignedUploadUrl}${qs}`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		credentials: "include",
-		body: JSON.stringify({
-			filename,
-			content_type: contentType,
-			size_bytes: blob.size,
-			template_id: templateId,
-			...context.browserRenderFields,
-		}),
-	});
+	if (preResolved) {
+		presignJson = preResolved;
+	} else {
+		onProgress({ phase: "Preparing upload...", progress: 90, complete: false, error: null });
 
-	const presignJson = (await presignRes.json().catch(() => ({}))) as {
-		upload_url?: string;
-		file_url?: string;
-		file_path?: string;
-		render_id?: string;
-		error?: string;
-	};
+		const presignRes = await fetch(`${context.presignedUploadUrl}${qs}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			credentials: "include",
+			body: JSON.stringify({
+				filename,
+				content_type: contentType,
+				size_bytes: blob.size,
+				template_id: templateId,
+				...context.browserRenderFields,
+			}),
+		});
 
-	if (!presignRes.ok || !presignJson.upload_url) {
-		throw new Error(presignJson.error || `Presign failed (${presignRes.status})`);
+		presignJson = (await presignRes.json().catch(() => ({}))) as ResolveSupabaseResult;
+
+		if (!presignRes.ok || !presignJson.upload_url) {
+			throw new Error((presignJson as Record<string, unknown>).error as string || `Presign failed (${presignRes.status})`);
+		}
 	}
 
 	const mb = (blob.size / 1e6).toFixed(1);
@@ -110,10 +218,8 @@ async function uploadViaPresigned(
 	};
 }
 
-/**
- * Run the OpenReel ExportEngine and upload the result via presigned URL.
- * Designed to be called from the editor toolbar's export handler.
- */
+// ── Public entry point ───────────────────────────────────────────────────────
+
 export async function exportAndUpload(opts: {
 	exportBlob: Blob;
 	format: string;
@@ -127,14 +233,54 @@ export async function exportAndUpload(opts: {
 	const contentType = exportBlob.type || `video/${ext}`;
 	const filename = `render.${ext}`;
 
-	const result = await uploadViaPresigned(
-		exportBlob,
-		filename,
-		contentType,
-		templateId,
-		context,
-		onProgress,
-	);
+	let result: { fileUrl: string; storageType: string; fallbackMessage?: string };
+
+	if (context.resolveUploadTargetUrl) {
+		onProgress({ phase: "Resolving upload destination...", progress: 88, complete: false, error: null });
+
+		const qs = context.templatesApiQuery ? `?${context.templatesApiQuery}` : "";
+
+		try {
+			const resolveRes = await fetch(`${context.resolveUploadTargetUrl}${qs}`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				credentials: "include",
+				body: JSON.stringify({
+					filename,
+					content_type: contentType,
+					size_bytes: exportBlob.size,
+					template_id: templateId,
+					...context.browserRenderFields,
+				}),
+			});
+
+			const resolved = (await resolveRes.json().catch(() => ({}))) as ResolveResult;
+
+			if (resolveRes.ok && resolved.target === "ghl") {
+				try {
+					result = await uploadDirectToGhl(
+						exportBlob, filename, resolved as ResolveGhlResult,
+						templateId, context, onProgress,
+					);
+				} catch (ghlErr) {
+					console.warn("[export-bridge] GHL direct upload failed, falling back to Supabase:", ghlErr);
+					result = await uploadViaPresigned(exportBlob, filename, contentType, templateId, context, onProgress);
+				}
+			} else if (resolveRes.ok && resolved.target === "supabase") {
+				result = await uploadViaPresigned(
+					exportBlob, filename, contentType, templateId, context, onProgress,
+					resolved as ResolveSupabaseResult,
+				);
+			} else {
+				result = await uploadViaPresigned(exportBlob, filename, contentType, templateId, context, onProgress);
+			}
+		} catch (resolveErr) {
+			console.warn("[export-bridge] resolve-upload-target failed, falling back to presigned:", resolveErr);
+			result = await uploadViaPresigned(exportBlob, filename, contentType, templateId, context, onProgress);
+		}
+	} else {
+		result = await uploadViaPresigned(exportBlob, filename, contentType, templateId, context, onProgress);
+	}
 
 	const dest = result.storageType === "ghl"
 		? "Uploaded to HighLevel Media Library."
