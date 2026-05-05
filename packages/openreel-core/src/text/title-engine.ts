@@ -36,6 +36,7 @@ export interface UpdateTextClipOptions {
 
 export class TitleEngine {
   private textClips: Map<string, TextClip> = new Map();
+  private mergeFields: Map<string, string> = new Map();
   private canvas: HTMLCanvasElement | OffscreenCanvas | null = null;
   private ctx:
     | CanvasRenderingContext2D
@@ -88,8 +89,30 @@ export class TitleEngine {
     return this.textClips.get(id);
   }
 
+  setMergeFields(fields: Array<{ find: string; replace: string }> | undefined): void {
+    this.mergeFields.clear();
+    if (fields) {
+      for (const f of fields) {
+        if (f.find && f.replace) this.mergeFields.set(f.find.toUpperCase(), f.replace);
+      }
+    }
+  }
+
+  private applyMerge(text: string): string {
+    if (this.mergeFields.size === 0 || !text.includes("{{")) return text;
+    return text.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => {
+      const val = this.mergeFields.get(key.toUpperCase());
+      return val !== undefined ? val : match;
+    });
+  }
+
   getAllTextClips(): TextClip[] {
-    return Array.from(this.textClips.values());
+    const clips = Array.from(this.textClips.values());
+    if (this.mergeFields.size === 0) return clips;
+    return clips.map((clip) => {
+      const resolved = this.applyMerge(clip.text);
+      return resolved === clip.text ? clip : { ...clip, text: resolved };
+    });
   }
 
   getTextClipsForTrack(trackId: string): TextClip[] {
@@ -200,6 +223,9 @@ export class TitleEngine {
     height: number,
     time: number = 0,
   ): TextRenderResult {
+    const mergedText = this.applyMerge(clip.text);
+    const renderClip = mergedText !== clip.text ? { ...clip, text: mergedText } : clip;
+
     let canvas: HTMLCanvasElement | OffscreenCanvas;
     let ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -216,7 +242,7 @@ export class TitleEngine {
 
     ctx.clearRect(0, 0, width, height);
 
-    const animatedState = textAnimationEngine.getAnimatedState(clip, time);
+    const animatedState = textAnimationEngine.getAnimatedState(renderClip, time);
     let { opacity, transform, style, visibleText, characterStates } =
       animatedState;
 

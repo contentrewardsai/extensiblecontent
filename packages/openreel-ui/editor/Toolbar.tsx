@@ -727,15 +727,15 @@ export const Toolbar: React.FC = () => {
             }`}
           />
           <span
-            className={`flex-1 text-sm transition-colors ${
+            className={`flex-1 text-xs truncate transition-colors ${
               hasSelectedClip
                 ? "text-text-secondary"
                 : "text-text-muted group-hover:text-text-secondary"
             }`}
           >
             {hasSelectedClip
-              ? "Search effects for selected clip..."
-              : "Search tools, effects, or ask AI..."}
+              ? "effects,"
+              : "tools, effects, or ask"}
           </span>
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-border bg-background-tertiary">
             <Command size={10} className="text-text-muted" />

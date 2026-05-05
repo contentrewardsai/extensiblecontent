@@ -273,7 +273,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[85vh] p-0 gap-0 bg-background-secondary border-border overflow-hidden flex flex-col">
+      <DialogContent className="max-w-4xl max-h-[90vh] p-0 gap-0 bg-background-secondary border-border overflow-hidden flex flex-col">
         <DialogHeader className="p-4 border-b border-border bg-background-tertiary space-y-0">
           <div className="flex items-center gap-3">
             <Download size={20} className="text-primary" />
@@ -305,7 +305,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="presets" className="flex-1 overflow-hidden flex mt-0">
+          <TabsContent value="presets" className="flex-1 overflow-hidden flex mt-0 min-h-[300px]">
               <div className="w-48 border-r border-border overflow-y-auto">
                 <button
                   onClick={() => setSelectedPlatform("recommended")}
@@ -394,7 +394,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               </div>
             </TabsContent>
 
-          <TabsContent value="custom" className="flex-1 overflow-y-auto p-4 mt-0">
+          <TabsContent value="custom" className="flex-1 overflow-y-auto p-4 mt-0 min-h-[300px]">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-2">

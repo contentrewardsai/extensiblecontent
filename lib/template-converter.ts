@@ -460,6 +460,247 @@ function inferMergeTypes(
 	}));
 }
 
+/**
+ * Apply programmatic style overrides from merge entries to ShotStack assets.
+ *
+ * ShotStack templates embed a __CFS_INPUT_SCHEMA in their merge array that
+ * defines UI inputs (font family, size, color, background, inset, etc.).
+ * Each input has an `id` (e.g. "nameFontFamily") whose value is stored in the
+ * merge array, and a `mergeField` (e.g. "AD_APPLE_NOTES_TITLE_FONT_FAMILY")
+ * that names the template variable.
+ *
+ * Unlike text content (which uses {{ KEY }} tokens), style fields are applied
+ * programmatically: the generator reads the merge values and patches asset
+ * properties by matching clip aliases.  We replicate that logic here so the
+ * OpenReel editor sees the correct styles at conversion time.
+ */
+function applyStyleMergeOverrides(
+	edit: ShotstackEdit,
+	mergeMap: Map<string, string>,
+): void {
+	if (!edit.merge || !edit.timeline?.tracks) return;
+
+	// Build a case-insensitive values map from all merge entries
+	const vals = new Map<string, string>();
+	for (const m of edit.merge) {
+		if (m.find && m.replace != null) {
+			vals.set(m.find, m.replace);
+			vals.set(m.find.toUpperCase(), m.replace);
+		}
+	}
+
+	// Helper: look up a value by multiple key variants
+	function v(primary: string, ...fallbacks: string[]): string | undefined {
+		const keys = [primary, ...fallbacks];
+		for (const k of keys) {
+			const val = vals.get(k) ?? vals.get(k.toUpperCase());
+			if (val !== undefined && val !== "") return val;
+		}
+		return undefined;
+	}
+
+	function numV(primary: string, ...fallbacks: string[]): number | undefined {
+		const raw = v(primary, ...fallbacks);
+		if (raw === undefined) return undefined;
+		const n = Number(raw);
+		return Number.isFinite(n) ? n : undefined;
+	}
+
+	// Parse __CFS_INPUT_SCHEMA for field→property mappings
+	interface InputField {
+		id: string;
+		type: string;
+		mergeField?: string;
+		default?: unknown;
+	}
+	let inputSchema: InputField[] = [];
+	for (const m of edit.merge) {
+		if (m.find === "__CFS_INPUT_SCHEMA" && m.replace) {
+			try {
+				inputSchema = JSON.parse(m.replace);
+			} catch {
+				/* ignore parse failures */
+			}
+			break;
+		}
+	}
+
+	// Build alias→clip lookup from all tracks
+	const clipsByAlias = new Map<string, ShotstackClip[]>();
+	for (const track of edit.timeline.tracks) {
+		for (const clip of track.clips) {
+			const a = (clip as Record<string, unknown>).alias as string | undefined;
+			if (a) {
+				const arr = clipsByAlias.get(a) || [];
+				arr.push(clip);
+				clipsByAlias.set(a, arr);
+			}
+		}
+	}
+
+	// Build a map: mergeField → { property, inputId, value }
+	// Property is inferred from the input field's id suffix.
+	interface StyleOverride {
+		property: "fontFamily" | "fontSize" | "fontColor" | "fontWeight" | "fontStyle" | "insetX" | "background";
+		value: string;
+		mergeField?: string;
+	}
+
+	const overridesByMergePrefix = new Map<string, StyleOverride[]>();
+
+	for (const field of inputSchema) {
+		const value = v(field.id, field.mergeField || "");
+		if (value === undefined) continue;
+
+		const idLower = field.id.toLowerCase();
+		let property: StyleOverride["property"] | undefined;
+
+		if (idLower.endsWith("fontfamily")) property = "fontFamily";
+		else if (idLower.endsWith("fontsize")) property = "fontSize";
+		else if (idLower === "namecolor" || idLower === "textcolor" || idLower.endsWith("fontcolor")) property = "fontColor";
+		else if (idLower.endsWith("fontstyle")) property = "fontStyle";
+		else if (idLower.endsWith("fontweight")) property = "fontWeight";
+		else if (idLower.endsWith("insetx")) property = "insetX";
+		else if (idLower === "backgroundcolor" || idLower === "background") property = "background";
+
+		if (!property) continue;
+
+		// If the field has a mergeField, use its prefix to find the target clip alias.
+		// Convention: mergeField like "AD_APPLE_NOTES_TITLE_FONT_FAMILY" → strip the
+		// suffix to get a prefix, then find clips whose alias shares that base.
+		if (field.mergeField) {
+			const mf = field.mergeField.toUpperCase();
+			const arr = overridesByMergePrefix.get(mf) || [];
+			arr.push({ property, value, mergeField: mf });
+			overridesByMergePrefix.set(mf, arr);
+		}
+
+		// Also store by input id prefix (e.g. "name" from "nameFontFamily")
+		const prefixMatch = field.id.match(/^([a-z]+?)(?:FontFamily|FontSize|FontWeight|FontStyle|Color|InsetX)$/i);
+		if (prefixMatch) {
+			const prefix = prefixMatch[1].toLowerCase();
+			const key = `__prefix:${prefix}`;
+			const arr = overridesByMergePrefix.get(key) || [];
+			arr.push({ property, value });
+			overridesByMergePrefix.set(key, arr);
+		}
+	}
+
+	// Apply background color to timeline
+	const bg = v("backgroundColor", "background");
+	if (bg && edit.timeline.background) {
+		edit.timeline.background = bg;
+	} else if (bg && !edit.timeline.background) {
+		edit.timeline.background = bg;
+	}
+
+	// For each clip, determine which overrides apply based on alias matching.
+	// The input schema links input IDs to merge fields via naming conventions.
+	// We use two strategies to match clips to overrides:
+	// 1. The clip alias itself appears as a text content mergeField in the schema
+	//    (e.g. "nameInput" has mergeField "AD_APPLE_NOTES_NAME_1" → this links
+	//    "name*" prefix overrides to clips with alias "AD_APPLE_NOTES_NAME_1")
+	// 2. Direct matching by merge field prefix similarity to alias
+
+	// Build prefix→alias mapping from text/textarea input fields
+	const prefixToAliases = new Map<string, string[]>();
+	for (const field of inputSchema) {
+		if ((field.type === "text" || field.type === "textarea") && field.mergeField) {
+			const prefixMatch = field.id.match(/^([a-z]+?)(?:Input|Text)$/i);
+			if (prefixMatch) {
+				const prefix = prefixMatch[1].toLowerCase();
+				const aliases = prefixToAliases.get(prefix) || [];
+				aliases.push(field.mergeField.toUpperCase());
+				prefixToAliases.set(prefix, aliases);
+			}
+		}
+	}
+
+	// Apply overrides to matching clips
+	for (const [prefix, aliases] of prefixToAliases) {
+		const overrides = overridesByMergePrefix.get(`__prefix:${prefix}`);
+		if (!overrides || overrides.length === 0) continue;
+
+		for (const alias of aliases) {
+			const clips = clipsByAlias.get(alias);
+			if (!clips) continue;
+
+			for (const clip of clips) {
+				const asset = clip.asset;
+				if (!asset) continue;
+				const font = (asset.font || {}) as Record<string, unknown>;
+				let fontModified = false;
+
+				for (const ov of overrides) {
+					switch (ov.property) {
+						case "fontFamily":
+							font.family = ov.value;
+							fontModified = true;
+							break;
+						case "fontSize": {
+							const n = Number(ov.value);
+							if (Number.isFinite(n) && n > 0) {
+								font.size = n;
+								fontModified = true;
+							}
+							break;
+						}
+						case "fontColor":
+							font.color = ov.value;
+							fontModified = true;
+							break;
+						case "fontWeight":
+							font.weight = ov.value;
+							fontModified = true;
+							break;
+						case "fontStyle":
+							font.style = ov.value;
+							fontModified = true;
+							break;
+						case "insetX": {
+							const n = Number(ov.value);
+							if (Number.isFinite(n) && n >= 0) {
+								const pad = (asset.padding || {}) as Record<string, unknown>;
+								pad.left = n;
+								pad.right = n;
+								asset.padding = pad;
+								(asset as Record<string, unknown>).left = n;
+								(asset as Record<string, unknown>).right = n;
+							}
+							break;
+						}
+					}
+				}
+
+				if (fontModified) {
+					asset.font = font;
+				}
+			}
+		}
+	}
+
+	// Also apply inset to all rich-text clips if a global inset is defined
+	const globalInset = numV("textInsetX", "AD_APPLE_NOTES_TEXT_INSET_X");
+	if (globalInset !== undefined && globalInset >= 0) {
+		for (const track of edit.timeline.tracks) {
+			for (const clip of track.clips) {
+				const asset = clip.asset;
+				if (!asset) continue;
+				const type = (asset.type as string || "").toLowerCase();
+				if (type === "rich-text" || type === "text") {
+					const a = (clip as Record<string, unknown>).alias as string | undefined;
+					if (a) {
+						const pad = (asset.padding || {}) as Record<string, unknown>;
+						if (pad.left === undefined) pad.left = globalInset;
+						if (pad.right === undefined) pad.right = globalInset;
+						asset.padding = pad;
+					}
+				}
+			}
+		}
+	}
+}
+
 // ─── ShotStack → OpenReel ────────────────────────────────────────────────────
 
 export function shotstackToOpenReel(
@@ -473,6 +714,39 @@ export function shotstackToOpenReel(
 	const width = size?.width || 1920;
 	const height = size?.height || 1080;
 	const fps = (output as Record<string, unknown>).fps as number | undefined || 25;
+
+	const mergeMap = new Map<string, string>();
+	if (edit.merge) {
+		for (const m of edit.merge) {
+			if (m.find && m.replace != null) mergeMap.set(m.find.toUpperCase(), m.replace);
+		}
+	}
+	function resolveMerge(val: unknown): string {
+		if (typeof val !== "string") return String(val ?? "");
+		if (!val.includes("{{")) return val;
+		return val.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => {
+			const resolved = mergeMap.get(key.toUpperCase());
+			return resolved !== undefined ? resolved : match;
+		});
+	}
+	function parseMergeNumber(val: unknown, fallback: number): number {
+		if (typeof val === "number" && Number.isFinite(val)) return val;
+		if (typeof val === "string") {
+			const resolved = resolveMerge(val);
+			const n = Number(resolved);
+			if (Number.isFinite(n)) return n;
+		}
+		return fallback;
+	}
+
+	// ── Pre-process: apply style merge overrides to ShotStack assets ──
+	// The generator has two mechanisms:
+	// 1. {{ KEY }} token substitution (handled above by resolveMerge)
+	// 2. Programmatic style overrides: merge entries like nameFontFamily,
+	//    nameFontSize, textColor etc. override hardcoded asset properties.
+	//    These are NOT {{ }} tokens; the generator applies them by matching
+	//    clip aliases to input schema fields.
+	applyStyleMergeOverrides(edit, mergeMap);
 
 	const mediaItems: ORMediaItem[] = [];
 	const mediaUrlMap = new Map<string, string>();
@@ -605,8 +879,8 @@ export function shotstackToOpenReel(
 
 			if (assetType === "shape") {
 				const shapeType = (asset.shape as string) || "rectangle";
-				const fillColor = (asset.fill as any)?.color || "#cccccc";
-				const strokeColor = (asset.stroke as any)?.color;
+				const fillColor = resolveMerge((asset.fill as any)?.color) || "#cccccc";
+				const strokeColor = (asset.stroke as any)?.color ? resolveMerge((asset.stroke as any).color) : undefined;
 				const strokeWidth = (asset.stroke as any)?.width || 0;
 				const cornerRadius = (asset.rectangle as any)?.cornerRadius ?? (asset.circle as any)?.radius ?? 0;
 				if (!perTrackGraphicsId) perTrackGraphicsId = uuidv4();
@@ -640,11 +914,11 @@ export function shotstackToOpenReel(
 				const htmlW = resolveNumber(asset.width as number, 800);
 				const htmlH = resolveNumber(asset.height as number, 200);
 				htmlClipData[clipId] = {
-					html: asset.html || "",
-					css: asset.css || "",
+					html: resolveMerge(asset.html) || "",
+					css: resolveMerge(asset.css) || "",
 					width: htmlW,
 					height: htmlH,
-					background: asset.background || "transparent",
+					background: resolveMerge(asset.background) || "transparent",
 					startTime: start,
 					duration: length,
 					trackId: perTrackHtmlId,
@@ -741,11 +1015,11 @@ export function shotstackToOpenReel(
 					absolutePosition,
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
-					fontFamily: (font?.family as string) || "Inter",
-					fontSize: (font?.size as number) || 48,
-					fontWeight: (font?.weight as string | number) || "normal",
-					fontStyle: (font?.style as string) || "normal",
-					color: (font?.color as string) || "#ffffff",
+					fontFamily: resolveMerge(font?.family) || "Inter",
+					fontSize: parseMergeNumber(font?.size, 48),
+					fontWeight: resolveMerge(font?.weight) || "normal",
+					fontStyle: resolveMerge(font?.style) || "normal",
+					color: resolveMerge(font?.color) || "#ffffff",
 					textAlign,
 					verticalAlign,
 					lineHeight: typeof stLineHeight === "number" ? stLineHeight : undefined,
@@ -764,7 +1038,8 @@ export function shotstackToOpenReel(
 			}
 			const bucket = clipsByTrackType.get(resolvedTrackType)!;
 
-			const src = asset.src as string | undefined;
+			const rawSrc = asset.src as string | undefined;
+			const src = rawSrc ? resolveMerge(rawSrc) : undefined;
 			const mediaId = src
 				? getOrCreateMediaItem(src, assetType)
 				: uuidv4();
@@ -923,7 +1198,7 @@ export function shotstackToOpenReel(
 		},
 		_shotstack: {
 			merge: inferMergeTypes(edit.merge, stTracks),
-			background: edit.timeline?.background,
+			background: edit.timeline?.background ? resolveMerge(edit.timeline.background) : undefined,
 			fonts: edit.timeline?.fonts,
 			soundtrack: edit.timeline?.soundtrack,
 			outputOverrides: edit.output as Record<string, unknown>,

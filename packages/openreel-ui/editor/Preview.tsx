@@ -24,6 +24,7 @@ import { useProjectStore } from "../stores/project-store";
 import { useTimelineStore } from "../stores/timeline-store";
 import { useUIStore } from "../stores/ui-store";
 import { useThemeStore } from "../stores/theme-store";
+import { useShotstackMetadataStore } from "../stores/shotstack-metadata-store";
 import { getRenderBridge } from "../bridges/render-bridge";
 import {
   RendererFactory,
@@ -217,15 +218,33 @@ export const Preview: React.FC = () => {
   const [rendererType, setRendererType] = useState<string>("none");
   const [isMaximized, setIsMaximized] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const [zoomLevel, setZoomLevel] = useState(0);
   const [showZoomMenu, setShowZoomMenu] = useState(false);
+  const videoAreaRef = useRef<HTMLDivElement>(null);
+  const [videoAreaSize, setVideoAreaSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = videoAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setVideoAreaSize({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const ZOOM_OPTIONS = [
+    { label: "Fit", value: 0 },
+    { label: "25%", value: 0.25 },
+    { label: "50%", value: 0.5 },
+    { label: "75%", value: 0.75 },
     { label: "100%", value: 1 },
     { label: "125%", value: 1.25 },
     { label: "150%", value: 1.5 },
     { label: "200%", value: 2 },
   ];
+
 
   const isDark = useThemeStore((state) => state.isDark);
 
@@ -314,10 +333,37 @@ export const Preview: React.FC = () => {
 
   // Get text clips from TitleEngine
   const getTitleEngine = useEngineStore((state) => state.getTitleEngine);
-  const allTextClips = useMemo(() => {
+  const rawTextClips = useMemo(() => {
     const titleEngine = getTitleEngine();
     return titleEngine?.getAllTextClips() || [];
   }, [getTitleEngine, project.modifiedAt]);
+
+  const mergeEntries = useShotstackMetadataStore((s) => s.metadata.merge);
+
+  useEffect(() => {
+    const engine = getTitleEngine();
+    engine?.setMergeFields(mergeEntries);
+  }, [getTitleEngine, mergeEntries]);
+
+  const allTextClips = useMemo(() => {
+    if (!mergeEntries || mergeEntries.length === 0) return rawTextClips;
+    const mergeMap = new Map(
+      mergeEntries.map((m) => [m.find.toUpperCase(), m.replace ?? ""]),
+    );
+    if (mergeMap.size === 0) return rawTextClips;
+    return rawTextClips.map((clip) => {
+      const original = clip.text;
+      if (!original || !original.includes("{{")) return clip;
+      const resolved = original.replace(
+        /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g,
+        (match, key) => {
+          const val = mergeMap.get(key.toUpperCase());
+          return val !== undefined && val !== "" ? val : match;
+        },
+      );
+      return resolved === original ? clip : { ...clip, text: resolved };
+    });
+  }, [rawTextClips, mergeEntries]);
 
   const getGraphicsEngine = useEngineStore((state) => state.getGraphicsEngine);
   const allShapeClips = useMemo(() => {
@@ -344,6 +390,19 @@ export const Preview: React.FC = () => {
   );
   const timelineTracks = project.timeline.tracks;
   const settings = project.settings;
+
+  const effectiveZoom = (() => {
+    if (zoomLevel !== 0) return zoomLevel;
+    const { width: areaW, height: areaH } = videoAreaSize;
+    if (areaW === 0 || areaH === 0) return 0.5;
+    const padding = 32;
+    const availW = areaW - padding * 2;
+    const availH = areaH - padding * 2;
+    const aspect = settings.width / settings.height;
+    const fitByHeight = availH / 450;
+    const fitByWidth = availW / (450 * aspect);
+    return Math.min(fitByHeight, fitByWidth, 2);
+  })();
 
   // Keep a ref to timelineTracks for use in playback effect without causing re-runs
   const timelineTracksRef = useRef(timelineTracks);
@@ -4672,9 +4731,10 @@ export const Preview: React.FC = () => {
 
       {/* Video Area */}
       <div
+        ref={videoAreaRef}
         className={`flex-1 relative flex items-center justify-center bg-background-secondary/30 transition-all duration-300 ${
           isMaximized || isFullscreen ? "p-0" : "p-4"
-        } ${zoomLevel > 1 ? "overflow-auto" : ""}`}
+        } ${effectiveZoom > 1 ? "overflow-auto" : ""}`}
         onMouseMove={interactionMode !== "none" ? handleMouseMove : undefined}
         onMouseUp={handleMouseUp}
       >
@@ -4693,9 +4753,9 @@ export const Preview: React.FC = () => {
                   maxWidth: "none",
                 }
               : {
-                  height: `${450 * zoomLevel}px`,
-                  width: `calc(${450 * zoomLevel}px * ${settings.width} / ${settings.height})`,
-                  maxWidth: `${800 * zoomLevel}px`,
+                  height: `${450 * effectiveZoom}px`,
+                  width: `calc(${450 * effectiveZoom}px * ${settings.width} / ${settings.height})`,
+                  maxWidth: `${800 * effectiveZoom}px`,
                 }
           }
         >
@@ -5122,7 +5182,7 @@ export const Preview: React.FC = () => {
             >
               <div className="flex items-center gap-1">
                 <ZoomIn size={14} />
-                <span>{Math.round(zoomLevel * 100)}%</span>
+                <span>{zoomLevel === 0 ? "Fit" : `${Math.round(zoomLevel * 100)}%`}</span>
               </div>
             </button>
             {showZoomMenu && (
