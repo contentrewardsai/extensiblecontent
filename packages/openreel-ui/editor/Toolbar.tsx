@@ -254,6 +254,13 @@ export const Toolbar: React.FC = () => {
 
     const triggerDownload = () => {
       const blob = new Blob([buffer.slice(0, length)], { type: mime });
+
+      const uploadExport = (window as unknown as Record<string, unknown>).__mediaEditorUploadExport;
+      if (typeof uploadExport === "function") {
+        (uploadExport as (blob: Blob, format: string) => void)(blob, ext);
+        return;
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -346,14 +353,19 @@ export const Toolbar: React.FC = () => {
             if (!isShim) {
               await finalResult.blob.stream().pipeTo(writable as unknown as WritableStream<Uint8Array>);
             } else {
-              const url = URL.createObjectURL(finalResult.blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `${project.name || "export"}.wav`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              setTimeout(() => URL.revokeObjectURL(url), 60_000);
+              const uploadExport = (window as unknown as Record<string, unknown>).__mediaEditorUploadExport;
+              if (typeof uploadExport === "function") {
+                (uploadExport as (blob: Blob, format: string) => void)(finalResult.blob, "wav");
+              } else {
+                const url = URL.createObjectURL(finalResult.blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${project.name || "export"}.wav`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 60_000);
+              }
             }
             setExportState((prev) => ({ ...prev, complete: true, phase: "Saved!" }));
             track(AnalyticsEvents.PROJECT_EXPORTED, {
