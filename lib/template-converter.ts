@@ -303,6 +303,26 @@ function positionToXY(
 	return { x, y };
 }
 
+/**
+ * Given a normalized {x, y} position and a known ShotStack position anchor
+ * name, compute the ShotStack offset that reproduces the same position.
+ * This is the inverse of positionToXY for a specific anchor.
+ */
+function xyToOffset(x: number, y: number, anchor: string): { x: number; y: number } {
+	let anchorX = 0;
+	let anchorY = 0;
+	if (anchor.includes("left")) anchorX = -0.5;
+	if (anchor.includes("right")) anchorX = 0.5;
+	if (anchor.includes("top")) anchorY = -0.5;
+	if (anchor.includes("bottom")) anchorY = 0.5;
+	const offX = x - anchorX;
+	const offY = -(y - anchorY);
+	return {
+		x: Math.abs(offX) < 0.001 ? 0 : offX,
+		y: Math.abs(offY) < 0.001 ? 0 : offY,
+	};
+}
+
 function xyToPosition(x: number, y: number): { position: string; offset: { x: number; y: number } } {
 	if (Math.abs(x) < 0.01 && Math.abs(y) < 0.01) {
 		return { position: "center", offset: { x: 0, y: 0 } };
@@ -884,6 +904,22 @@ export function shotstackToOpenReel(
 				const strokeWidth = (asset.stroke as any)?.width || 0;
 				const cornerRadius = (asset.rectangle as any)?.cornerRadius ?? (asset.circle as any)?.radius ?? 0;
 				if (!perTrackGraphicsId) perTrackGraphicsId = uuidv4();
+
+				// Auto-correct corrupted position data: if position is a
+				// vertical-only anchor ("top"/"bottom") with a small positive
+				// offset.x, the position was likely "topLeft"/"bottomLeft"
+				// before a bad round-trip stripped the horizontal component.
+				let correctedPosition = (stClip.position as string) || "center";
+				const rawOff = stClip.offset as { x?: number; y?: number } | undefined;
+				if (rawOff && typeof rawOff.x === "number" && rawOff.x > 0 && rawOff.x < 0.3) {
+					if (correctedPosition === "top") correctedPosition = "topLeft";
+					else if (correctedPosition === "bottom") correctedPosition = "bottomLeft";
+				}
+				if (rawOff && typeof rawOff.x === "number" && rawOff.x < 0 && rawOff.x > -0.3) {
+					if (correctedPosition === "top") correctedPosition = "topRight";
+					else if (correctedPosition === "bottom") correctedPosition = "bottomRight";
+				}
+
 				shapeClipData[clipId] = {
 					shapeType,
 					fillColor,
@@ -895,8 +931,10 @@ export function shotstackToOpenReel(
 					startTime: start,
 					duration: length,
 					trackId: perTrackGraphicsId,
-					position: positionToXY(stClip.position, stClip.offset),
-					positionAnchor: (stClip.position as string) || "center",
+					position: positionToXY(correctedPosition, stClip.offset),
+					positionAnchor: correctedPosition,
+					originalShotStackPosition: (stClip.position as string) || "center",
+					originalShotStackOffset: stClip.offset ? { ...stClip.offset as Record<string, number> } : undefined,
 					canvasWidth: width,
 					canvasHeight: height,
 					scale: stClip.scale || 1,
@@ -1362,10 +1400,21 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 			if (data.trackId !== orTrack.id) continue;
 			const origAsset = (data as Record<string, unknown>).originalAsset as ShotstackAsset | undefined;
 			if (!origAsset) continue;
+			// Prefer the corrected position anchor + recomputed offset to
+			// preserve any auto-correction applied during load, while
+			// falling back to xyToPosition for user-moved shapes.
+			const correctedAnchor = data.positionAnchor as string | undefined;
 			const pos = data.position as { x: number; y: number } | undefined;
-			const { position: stPos, offset: stOff } = pos
-				? xyToPosition(pos.x, pos.y)
-				: { position: undefined, offset: undefined };
+			let stPos: string | undefined;
+			let stOff: { x: number; y: number } | undefined;
+			if (correctedAnchor && pos) {
+				stPos = correctedAnchor;
+				stOff = xyToOffset(pos.x, pos.y, correctedAnchor);
+			} else if (pos) {
+				const result = xyToPosition(pos.x, pos.y);
+				stPos = result.position;
+				stOff = result.offset;
+			}
 			clips.push({
 				asset: origAsset,
 				start: data.startTime as number,
