@@ -291,10 +291,10 @@ function positionToXY(
 	let x = 0;
 	let y = 0;
 	if (position) {
-		if (position.includes("left")) x = -0.25;
-		if (position.includes("right")) x = 0.25;
-		if (position.includes("top")) y = -0.25;
-		if (position.includes("bottom")) y = 0.25;
+		if (position.includes("left")) x = -0.5;
+		if (position.includes("right")) x = 0.5;
+		if (position.includes("top")) y = -0.5;
+		if (position.includes("bottom")) y = 0.5;
 	}
 	if (offset) {
 		x += offset.x || 0;
@@ -304,18 +304,39 @@ function positionToXY(
 }
 
 function xyToPosition(x: number, y: number): { position: string; offset: { x: number; y: number } } {
-	let pos = "center";
-	const ox = x;
-	const oy = y;
-
 	if (Math.abs(x) < 0.01 && Math.abs(y) < 0.01) {
 		return { position: "center", offset: { x: 0, y: 0 } };
 	}
-	if (y < -0.1) pos = x < -0.1 ? "topLeft" : x > 0.1 ? "topRight" : "top";
-	else if (y > 0.1) pos = x < -0.1 ? "bottomLeft" : x > 0.1 ? "bottomRight" : "bottom";
-	else pos = x < -0.1 ? "left" : x > 0.1 ? "right" : "center";
 
-	return { position: pos, offset: { x: ox, y: oy } };
+	let pos = "center";
+	let anchorX = 0;
+	let anchorY = 0;
+
+	if (y < -0.25) {
+		anchorY = -0.5;
+		if (x < -0.25) { pos = "topLeft"; anchorX = -0.5; }
+		else if (x > 0.25) { pos = "topRight"; anchorX = 0.5; }
+		else { pos = "top"; }
+	} else if (y > 0.25) {
+		anchorY = 0.5;
+		if (x < -0.25) { pos = "bottomLeft"; anchorX = -0.5; }
+		else if (x > 0.25) { pos = "bottomRight"; anchorX = 0.5; }
+		else { pos = "bottom"; }
+	} else {
+		if (x < -0.25) { pos = "left"; anchorX = -0.5; }
+		else if (x > 0.25) { pos = "right"; anchorX = 0.5; }
+		else { pos = "center"; }
+	}
+
+	const residualX = x - anchorX;
+	const residualY = y - anchorY;
+	return {
+		position: pos,
+		offset: {
+			x: Math.abs(residualX) < 0.001 ? 0 : residualX,
+			y: Math.abs(residualY) < 0.001 ? 0 : residualY,
+		},
+	};
 }
 
 const OPENREEL_CAPTION_ANIMATIONS = new Set([
@@ -647,17 +668,81 @@ export function shotstackToOpenReel(
 
 			if (assetType === "title" || assetType === "text" || assetType === "rich-text") {
 				if (!perTrackTextId) perTrackTextId = uuidv4();
+
+				let textPosition = positionToXY(stClip.position, stClip.offset);
+				let textMaxWidth: number | undefined;
+				let textAlign: string = "center";
+				let verticalAlign: string = "middle";
+				let absolutePosition = false;
+				const stLineHeight = (asset.style as any)?.lineHeight;
+
+				if (assetType === "rich-text") {
+					const padding = asset.padding as { left?: number; top?: number; right?: number } | number | undefined;
+					const assetLeft = asset.left as number | undefined;
+					const assetTop = asset.top as number | undefined;
+					const assetRight = asset.right as number | undefined;
+					const clipW = resolveNumber(stClip.width as number, asset.width as number || 0);
+					const clipH = resolveNumber(stClip.height as number, asset.height as number || 0);
+
+					let pixelLeft: number | undefined;
+					let pixelTop: number | undefined;
+
+					if (typeof padding === "number") {
+						pixelLeft = padding;
+						pixelTop = padding;
+						textMaxWidth = Math.max(50, width - padding * 2);
+					} else if (padding && typeof padding === "object") {
+						pixelLeft = padding.left ?? 0;
+						pixelTop = padding.top ?? 0;
+						const padRight = padding.right ?? padding.left ?? 0;
+						textMaxWidth = Math.max(50, width - (pixelLeft ?? 0) - padRight);
+					} else if (assetLeft != null && assetTop != null) {
+						pixelLeft = assetLeft;
+						pixelTop = assetTop;
+						if (assetRight != null) {
+							textMaxWidth = Math.max(50, width - assetLeft - assetRight);
+						} else if (clipW > 0) {
+							textMaxWidth = clipW;
+						}
+					}
+
+					if (pixelLeft != null && pixelTop != null) {
+						textPosition = { x: pixelLeft / width, y: pixelTop / height };
+						absolutePosition = true;
+					}
+
+					if (!textMaxWidth && clipW > 0) {
+						textMaxWidth = clipW;
+					}
+
+					textAlign = "left";
+					verticalAlign = "top";
+
+					const align = asset.align as string | { horizontal?: string; vertical?: string } | undefined;
+					if (typeof align === "string") {
+						textAlign = align;
+					} else if (align && typeof align === "object") {
+						if (align.horizontal) textAlign = align.horizontal;
+						if (align.vertical) verticalAlign = align.vertical;
+					}
+				}
+
 				textClipData[clipId] = {
 					text: asset.text || asset.html || "Text",
 					startTime: start,
 					duration: length,
 					trackId: perTrackTextId,
-					position: positionToXY(stClip.position, stClip.offset),
+					position: textPosition,
+					absolutePosition,
 					scale: stClip.scale || 1,
 					opacity: stClip.opacity ?? 1,
 					fontFamily: (asset.font as any)?.family || "Inter",
 					fontSize: (asset.font as any)?.size || 48,
 					color: (asset.font as any)?.color || "#ffffff",
+					textAlign,
+					verticalAlign,
+					lineHeight: typeof stLineHeight === "number" ? stLineHeight : undefined,
+					maxWidth: textMaxWidth,
 					originalAsset: { ...asset },
 					originalTrackIndex: ti,
 				};
@@ -704,7 +789,7 @@ export function shotstackToOpenReel(
 				effects: [],
 				audioEffects: [],
 				transform: defaultTransform({
-					position: pos,
+					position: { x: pos.x * width, y: pos.y * height },
 					scale: { x: stClip.scale || 1, y: stClip.scale || 1 },
 					opacity: stClip.opacity ?? 1,
 					fitMode: (stClip.fit as ORTransform["fitMode"]) || "cover",
@@ -787,7 +872,7 @@ export function shotstackToOpenReel(
 					effects: [],
 					audioEffects: [],
 					transform: defaultTransform({
-						position: hd.position,
+						position: { x: hd.position.x * width, y: hd.position.y * height },
 						scale: { x: hd.scale, y: hd.scale },
 						opacity: hd.opacity,
 						fitMode: "contain",
@@ -899,6 +984,8 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 	const textClipDataRt = preserved.textClipData || {};
 	const htmlClipDataRt = preserved.htmlClipData || {};
 	const shapeClipDataRt = preserved.shapeClipData || {};
+	const canvasW = project.settings.width || 1920;
+	const canvasH = project.settings.height || 1080;
 
 	for (const orTrack of project.timeline.tracks) {
 		const clips: ShotstackClip[] = [];
@@ -947,8 +1034,8 @@ export function openReelToShotstack(project: ORProject): ShotstackEdit {
 			}
 
 			const { position, offset } = xyToPosition(
-				orClip.transform.position.x,
-				orClip.transform.position.y,
+				orClip.transform.position.x / canvasW,
+				orClip.transform.position.y / canvasH,
 			);
 
 			const stClip: ShotstackClip = {

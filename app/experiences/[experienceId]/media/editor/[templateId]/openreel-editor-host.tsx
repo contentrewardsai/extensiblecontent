@@ -251,6 +251,10 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			if (orProject._shotstack?.textClipData) {
 				for (const [clipId, data] of Object.entries(orProject._shotstack.textClipData)) {
 					const textPos = data.position as { x: number; y: number } | undefined;
+					const isAbsolute = data.absolutePosition as boolean;
+					const resolvedPos = isAbsolute
+						? { x: textPos?.x || 0, y: textPos?.y || 0 }
+						: { x: (textPos?.x || 0) + 0.5, y: (textPos?.y || 0) + 0.5 };
 					textClips.push({
 						id: clipId,
 						trackId: data.trackId || `track-text`,
@@ -261,11 +265,16 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							fontFamily: data.fontFamily,
 							fontSize: data.fontSize,
 							color: data.color,
-							fontWeight: "bold",
-							textAlign: "center",
+							fontWeight: (data.fontWeight as string) || "bold",
+							fontStyle: "normal",
+							textAlign: (data.textAlign as string) || "center",
+							verticalAlign: (data.verticalAlign as string) || "middle",
+							lineHeight: (data.lineHeight as number) || 1.2,
+							letterSpacing: 0,
+							maxWidth: data.maxWidth as number | undefined,
 						},
 						transform: {
-							position: { x: (textPos?.x || 0) + 0.5, y: (textPos?.y || 0) + 0.5 },
+							position: resolvedPos,
 							scale: { x: data.scale, y: data.scale },
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },

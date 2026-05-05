@@ -34,6 +34,7 @@ export interface TextStyle {
   readonly lineHeight: number;
   readonly letterSpacing: number;
   readonly textDecoration?: TextDecoration;
+  readonly maxWidth?: number;
 }
 
 export type FontWeight =
