@@ -169,6 +169,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							}
 						}
 
+						const svgPos = data.position as { x: number; y: number } | undefined;
 						svgClips.push({
 							id: clipId,
 							type: "svg",
@@ -180,7 +181,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							preserveAspectRatio: "xMidYMid",
 							colorStyle: { colorMode: "none" },
 							transform: {
-								position: data.position,
+								position: { x: (svgPos?.x || 0) + 0.5, y: (svgPos?.y || 0) + 0.5 },
 								scale: { x: data.scale, y: data.scale },
 								rotation: 0,
 								anchor: { x: 0.5, y: 0.5 },
@@ -209,6 +210,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 					const w = (data.width as number) || 100;
 					const h = (data.height as number) || 100;
 
+					const shapePos = data.position as { x: number; y: number } | undefined;
 					shapeClips.push({
 						id: clipId,
 						type: "shape",
@@ -227,10 +229,10 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							cornerRadius,
 						},
 						transform: {
-							position: data.position,
+							position: { x: (shapePos?.x || 0) + 0.5, y: (shapePos?.y || 0) + 0.5 },
 							scale: {
-								x: (data.scale as number || 1) * (w / 1080),
-								y: (data.scale as number || 1) * (h / 1080),
+								x: (data.scale as number || 1) * (w / (1080 * 0.15)),
+								y: (data.scale as number || 1) * (h / (1080 * 0.15)),
 							},
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },
@@ -248,6 +250,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			const textClips: any[] = [];
 			if (orProject._shotstack?.textClipData) {
 				for (const [clipId, data] of Object.entries(orProject._shotstack.textClipData)) {
+					const textPos = data.position as { x: number; y: number } | undefined;
 					textClips.push({
 						id: clipId,
 						trackId: data.trackId || `track-text`,
@@ -262,7 +265,7 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 							textAlign: "center",
 						},
 						transform: {
-							position: data.position,
+							position: { x: (textPos?.x || 0) + 0.5, y: (textPos?.y || 0) + 0.5 },
 							scale: { x: data.scale, y: data.scale },
 							rotation: 0,
 							anchor: { x: 0.5, y: 0.5 },
