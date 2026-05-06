@@ -143,7 +143,7 @@ export const AutoCaptionPanel: React.FC = () => {
 
   const selectedClip = useMemo(() => {
     const clipSel = selectedItems.find(
-      (s) => s.type === "clip" || s.type === "videoClip" || s.type === "audioClip",
+      (s) => s.type === "clip",
     );
     if (!clipSel) return null;
     for (const track of project.timeline.tracks) {
