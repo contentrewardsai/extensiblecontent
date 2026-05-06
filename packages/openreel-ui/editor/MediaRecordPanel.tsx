@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Loader2,
   Check,
+  RotateCcw,
 } from "lucide-react";
 import { useProjectStore } from "../stores/project-store";
 import { toast } from "../stores/notification-store";
@@ -26,20 +27,32 @@ const MODES: ModeConfig[] = [
   { mode: "webcam", icon: Camera, label: "Webcam" },
 ];
 
-function openRecorderPopup(modes: RecordingMode[]): { channelId: string; channel: BroadcastChannel } {
-  const channelId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const MODE_ICONS: Record<RecordingMode, string> = {
+  mic: "🎙️",
+  system: "🔊",
+  screen: "🖥️",
+  webcam: "📷",
+};
+
+interface StreamInfo {
+  mode: RecordingMode;
+  filename: string;
+  mimeType: string;
+  bytesReceived: number;
+  chunks: ArrayBuffer[];
+}
+
+function openRecorderPopup(modes: RecordingMode[], channelId: string): Window | null {
   const url = `/recorder?channel=${channelId}&modes=${modes.join(",")}`;
   const w = 700;
   const h = 550;
   const left = Math.round((screen.availWidth - w) / 2);
   const top = Math.round((screen.availHeight - h) / 2);
-  window.open(
+  return window.open(
     url,
     "media-recorder",
     `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,scrollbars=no`,
   );
-  const channel = new BroadcastChannel(`recorder-${channelId}`);
-  return { channelId, channel };
 }
 
 interface MediaRecordPanelProps {
@@ -51,7 +64,14 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
   const [enabledModes, setEnabledModes] = useState<Set<RecordingMode>>(new Set(["mic"]));
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isReceiving, setIsReceiving] = useState(false);
+
   const channelRef = useRef<BroadcastChannel | null>(null);
+  const popupWinRef = useRef<Window | null>(null);
+  const pollRef = useRef<number | null>(null);
+  const channelIdRef = useRef<string>("");
+  const streamsRef = useRef<StreamInfo[]>([]);
+  const [streamProgress, setStreamProgress] = useState<Array<{ mode: RecordingMode; bytes: number }>>([]);
 
   const toggleMode = useCallback((mode: RecordingMode) => {
     setEnabledModes((prev) => {
@@ -62,71 +82,150 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
     });
   }, []);
 
+  // Assemble received chunks into files and import them
+  const assembleAndImport = useCallback(async () => {
+    const streams = streamsRef.current;
+    const validStreams = streams.filter((s) => s.bytesReceived > 100);
+    if (validStreams.length === 0) return;
+
+    setIsImporting(true);
+
+    const uploadFn = (window as unknown as Record<string, unknown>).__mediaEditorUploadBlob as
+      | ((blob: Blob, filename: string, contentType: string) => Promise<string>)
+      | undefined;
+
+    for (const stream of validStreams) {
+      try {
+        const blob = new Blob(stream.chunks, { type: stream.mimeType });
+        const mediaFile = new File([blob], stream.filename, { type: stream.mimeType });
+        const result = await importMedia(mediaFile);
+
+        if (uploadFn) {
+          uploadFn(blob, stream.filename, stream.mimeType)
+            .then((url) => {
+              console.log(`[MediaRecordPanel] Recording uploaded: ${url}`);
+              if (result.actionId) {
+                const { project } = useProjectStore.getState();
+                const item = project.mediaLibrary.items.find((m) => m.id === result.actionId);
+                if (item) {
+                  const items = project.mediaLibrary.items as Array<typeof item>;
+                  const idx = items.indexOf(item);
+                  if (idx >= 0) items[idx] = { ...item, originalUrl: url } as typeof item;
+                }
+              }
+            })
+            .catch((err) => {
+              console.warn("[MediaRecordPanel] Background upload failed:", err);
+            });
+        }
+
+        toast.success("Recording Imported", stream.filename);
+      } catch (err) {
+        console.error("[MediaRecordPanel] Failed to import recording:", err);
+        toast.error("Import Failed", `Could not import ${stream.filename}`);
+      }
+    }
+
+    setIsImporting(false);
+  }, [importMedia]);
+
+  const cleanupChannel = useCallback(() => {
+    channelRef.current?.close();
+    channelRef.current = null;
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    popupWinRef.current = null;
+    streamsRef.current = [];
+    setStreamProgress([]);
+    setIsReceiving(false);
+  }, []);
+
+  // Handle premature close: import whatever we received
+  const handlePrematureClose = useCallback(async () => {
+    const hadData = streamsRef.current.some((s) => s.bytesReceived > 100);
+    if (hadData) {
+      await assembleAndImport();
+      toast.success("Partial Recording", "Recorder closed early — imported available data");
+    }
+    cleanupChannel();
+    setIsPopupOpen(false);
+  }, [assembleAndImport, cleanupChannel]);
+
   const handleOpenRecorder = useCallback(() => {
     if (enabledModes.size === 0) return;
 
-    channelRef.current?.close();
+    // If popup is still open, just focus it
+    if (isPopupOpen && popupWinRef.current && !popupWinRef.current.closed) {
+      popupWinRef.current.focus();
+      return;
+    }
 
-    const { channel } = openRecorderPopup(Array.from(enabledModes));
+    // Clean up any previous channel
+    cleanupChannel();
+
+    const channelId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    channelIdRef.current = channelId;
+    const channel = new BroadcastChannel(`recorder-${channelId}`);
     channelRef.current = channel;
+
+    const win = openRecorderPopup(Array.from(enabledModes), channelId);
+    popupWinRef.current = win;
     setIsPopupOpen(true);
+
+    // Poll for window close — the only reliable cross-window detection method
+    pollRef.current = window.setInterval(() => {
+      if (popupWinRef.current && popupWinRef.current.closed) {
+        handlePrematureClose();
+      }
+    }, 500);
 
     channel.onmessage = async (event) => {
       const data = event.data;
 
-      if (data.type === "recording-complete") {
-        setIsImporting(true);
-        const files: Array<{ buffer: ArrayBuffer; filename: string; mimeType: string }> = data.files;
-
-        const uploadFn = (window as unknown as Record<string, unknown>).__mediaEditorUploadBlob as
-          | ((blob: Blob, filename: string, contentType: string) => Promise<string>)
-          | undefined;
-
-        for (const file of files) {
-          try {
-            const blob = new Blob([file.buffer], { type: file.mimeType });
-            const mediaFile = new File([blob], file.filename, { type: file.mimeType });
-            const result = await importMedia(mediaFile);
-
-            if (uploadFn) {
-              uploadFn(blob, file.filename, file.mimeType)
-                .then((url) => {
-                  console.log(`[MediaRecordPanel] Recording uploaded: ${url}`);
-                  if (result.actionId) {
-                    const { project } = useProjectStore.getState();
-                    const item = project.mediaLibrary.items.find((m) => m.id === result.actionId);
-                    if (item) {
-                      const items = project.mediaLibrary.items as Array<typeof item>;
-                      const idx = items.indexOf(item);
-                      if (idx >= 0) items[idx] = { ...item, originalUrl: url } as typeof item;
-                    }
-                  }
-                })
-                .catch((err) => {
-                  console.warn("[MediaRecordPanel] Background upload failed:", err);
-                });
+      if (data.type === "stream-init") {
+        // Recording started — initialize receive buffers
+        const infos: StreamInfo[] = data.streams.map((s: { mode: RecordingMode; filename: string; mimeType: string }) => ({
+          mode: s.mode,
+          filename: s.filename,
+          mimeType: s.mimeType,
+          bytesReceived: 0,
+          chunks: [],
+        }));
+        streamsRef.current = infos;
+        setIsReceiving(true);
+        setStreamProgress(infos.map((s) => ({ mode: s.mode, bytes: 0 })));
+      } else if (data.type === "stream-chunk") {
+        const idx: number = data.streamIndex;
+        const buf: ArrayBuffer = data.data;
+        const stream = streamsRef.current[idx];
+        if (stream) {
+          stream.chunks.push(buf);
+          stream.bytesReceived += buf.byteLength;
+          setStreamProgress((prev) => {
+            const next = [...prev];
+            if (next[idx]) {
+              next[idx] = { ...next[idx], bytes: stream.bytesReceived };
             }
-
-            toast.success("Recording Imported", file.filename);
-          } catch (err) {
-            console.error("[MediaRecordPanel] Failed to import recording:", err);
-            toast.error("Import Failed", `Could not import ${file.filename}`);
-          }
+            return next;
+          });
         }
-
-        setIsImporting(false);
-        setIsPopupOpen(false);
-      } else if (data.type === "recorder-closed") {
+      } else if (data.type === "stream-done") {
+        // All data streamed — assemble and import
+        setIsReceiving(false);
+        await assembleAndImport();
+        cleanupChannel();
         setIsPopupOpen(false);
       }
     };
-  }, [enabledModes, importMedia]);
+  }, [enabledModes, isPopupOpen, cleanupChannel, handlePrematureClose, assembleAndImport]);
 
   useEffect(() => {
     return () => {
-      channelRef.current?.close();
+      cleanupChannel();
     };
-  }, []);
+  }, [cleanupChannel]);
 
   return (
     <div className="space-y-2">
@@ -161,11 +260,38 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
         })}
       </div>
 
+      {/* Per-stream receive progress */}
+      {isReceiving && streamProgress.length > 0 && (
+        <div className="space-y-1 px-1">
+          <p className="text-[9px] text-green-400 font-medium flex items-center gap-1">
+            <Loader2 size={10} className="animate-spin" />
+            Receiving live data...
+          </p>
+          {streamProgress.map((sp, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-[9px] text-text-muted">
+              <span>{MODE_ICONS[sp.mode]}</span>
+              <span className="flex-1 truncate">{sp.mode}</span>
+              <span className="font-mono text-text-secondary">
+                {sp.bytes > 1048576
+                  ? `${(sp.bytes / 1048576).toFixed(1)} MB`
+                  : `${(sp.bytes / 1024).toFixed(0)} KB`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Open Recorder button */}
       <button
         onClick={handleOpenRecorder}
-        disabled={enabledModes.size === 0 || isPopupOpen}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-background-tertiary disabled:text-text-muted text-white rounded-lg transition-colors text-[11px] font-medium"
+        disabled={enabledModes.size === 0 || isImporting}
+        className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg transition-colors text-[11px] font-medium ${
+          isImporting
+            ? "bg-background-tertiary text-text-muted cursor-not-allowed"
+            : isPopupOpen
+              ? "bg-amber-600 hover:bg-amber-700 text-white"
+              : "bg-red-600 hover:bg-red-700 disabled:bg-background-tertiary disabled:text-text-muted text-white"
+        }`}
       >
         {isImporting ? (
           <>
@@ -174,8 +300,8 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
           </>
         ) : isPopupOpen ? (
           <>
-            <Loader2 size={14} className="animate-spin" />
-            Recorder open...
+            <RotateCcw size={13} />
+            Focus Recorder Window
           </>
         ) : (
           <>

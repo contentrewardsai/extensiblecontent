@@ -3,13 +3,13 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 
 type RecordingMode = "mic" | "system" | "screen" | "webcam";
-type Phase = "setup" | "requesting" | "recording" | "processing" | "done" | "error";
+type Phase = "setup" | "requesting" | "recording" | "sending" | "done" | "error";
 
-interface RecordedFile {
+interface StreamMeta {
 	mode: RecordingMode;
-	buffer: ArrayBuffer;
 	filename: string;
 	mimeType: string;
+	bytesSent: number;
 }
 
 interface RecorderState {
@@ -63,6 +63,7 @@ export default function RecorderPage() {
 	const [elapsed, setElapsed] = useState(0);
 	const [error, setError] = useState<string | null>(null);
 	const [sentCount, setSentCount] = useState(0);
+	const [streamMetas, setStreamMetas] = useState<StreamMeta[]>([]);
 
 	const recordersRef = useRef<RecorderState[]>([]);
 	const displayStreamRef = useRef<MediaStream | null>(null);
@@ -171,6 +172,24 @@ export default function RecorderPage() {
 		draw();
 	}, []);
 
+	const sendChunkToEditor = useCallback(async (streamIndex: number, blob: Blob) => {
+		const bc = channelRef.current;
+		if (!bc) return;
+		try {
+			const buffer = await blob.arrayBuffer();
+			bc.postMessage({ type: "stream-chunk", streamIndex, data: buffer });
+			setStreamMetas((prev) => {
+				const next = [...prev];
+				if (next[streamIndex]) {
+					next[streamIndex] = { ...next[streamIndex], bytesSent: next[streamIndex].bytesSent + buffer.byteLength };
+				}
+				return next;
+			});
+		} catch (err) {
+			console.warn("[Recorder] Failed to send chunk:", err);
+		}
+	}, []);
+
 	const startRecording = useCallback(async () => {
 		if (enabledModes.size === 0) return;
 		setError(null);
@@ -198,7 +217,13 @@ export default function RecorderPage() {
 				const screenMime = getBestVideoMime();
 				const rec = new MediaRecorder(displayStream, { mimeType: screenMime });
 				const chunks: Blob[] = [];
-				rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+				const screenIdx = recorders.length;
+				rec.ondataavailable = (e) => {
+					if (e.data.size > 0) {
+						chunks.push(e.data);
+						sendChunkToEditor(screenIdx, e.data);
+					}
+				};
 				recorders.push({ recorder: rec, chunks, stream: displayStream, mode: "screen" });
 				if (screenVideoRef.current) screenVideoRef.current.srcObject = displayStream;
 			}
@@ -212,7 +237,13 @@ export default function RecorderPage() {
 				const sysMime = getBestAudioMime();
 				const rec = new MediaRecorder(audioOnly, { mimeType: sysMime });
 				const chunks: Blob[] = [];
-				rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+				const sysIdx = recorders.length;
+				rec.ondataavailable = (e) => {
+					if (e.data.size > 0) {
+						chunks.push(e.data);
+						sendChunkToEditor(sysIdx, e.data);
+					}
+				};
 				recorders.push({ recorder: rec, chunks, stream: audioOnly, mode: "system" });
 				startWaveform(audioOnly, systemCanvasRef.current);
 			}
@@ -224,7 +255,13 @@ export default function RecorderPage() {
 				const micMime = getBestAudioMime();
 				const rec = new MediaRecorder(micStream, { mimeType: micMime });
 				const chunks: Blob[] = [];
-				rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+				const micIdx = recorders.length;
+				rec.ondataavailable = (e) => {
+					if (e.data.size > 0) {
+						chunks.push(e.data);
+						sendChunkToEditor(micIdx, e.data);
+					}
+				};
 				recorders.push({ recorder: rec, chunks, stream: micStream, mode: "mic" });
 				startWaveform(micStream, micCanvasRef.current);
 			}
@@ -237,7 +274,13 @@ export default function RecorderPage() {
 				const wcMime = getBestVideoMime();
 				const rec = new MediaRecorder(webcamStream, { mimeType: wcMime });
 				const chunks: Blob[] = [];
-				rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+				const wcIdx = recorders.length;
+				rec.ondataavailable = (e) => {
+					if (e.data.size > 0) {
+						chunks.push(e.data);
+						sendChunkToEditor(wcIdx, e.data);
+					}
+				};
 				recorders.push({ recorder: rec, chunks, stream: webcamStream, mode: "webcam" });
 				if (webcamVideoRef.current) webcamVideoRef.current.srcObject = webcamStream;
 			}
@@ -255,6 +298,16 @@ export default function RecorderPage() {
 				}
 			}
 
+			// Send stream-init to the editor before starting
+			const ts = Date.now();
+			const initMetas: StreamMeta[] = recorders.map((rs) => {
+				const mimeType = rs.mode === "mic" || rs.mode === "system" ? getBestAudioMime() : getBestVideoMime();
+				const ext = getExtFromMime(mimeType);
+				return { mode: rs.mode, filename: `${MODE_META[rs.mode].filePrefix}-${ts}.${ext}`, mimeType, bytesSent: 0 };
+			});
+			setStreamMetas(initMetas);
+			channelRef.current?.postMessage({ type: "stream-init", streams: initMetas.map((m) => ({ mode: m.mode, filename: m.filename, mimeType: m.mimeType })) });
+
 			for (const rs of recorders) rs.recorder.start(1000);
 
 			startTimeRef.current = Date.now();
@@ -269,11 +322,11 @@ export default function RecorderPage() {
 			cleanupAll();
 		}
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [enabledModes, cleanupAll, startWaveform]);
+	}, [enabledModes, cleanupAll, startWaveform, sendChunkToEditor]);
 
 	const stopRecording = useCallback(async () => {
 		if (phase !== "recording") return;
-		setPhase("processing");
+		setPhase("sending");
 
 		const stopPromises = recordersRef.current.map(
 			(rs) =>
@@ -294,52 +347,30 @@ export default function RecorderPage() {
 			timerRef.current = null;
 		}
 
-		const ts = Date.now();
-		const files: RecordedFile[] = [];
-
+		// Cleanup streams
 		for (const rs of recordersRef.current) {
-			const mimeType = rs.recorder.mimeType || (rs.mode === "mic" || rs.mode === "system" ? "audio/webm" : "video/webm");
-			const blob = new Blob(rs.chunks, { type: mimeType });
-			if (blob.size < 100) continue;
-			const ext = getExtFromMime(mimeType);
-			const filename = `${MODE_META[rs.mode].filePrefix}-${ts}.${ext}`;
-			const buffer = await blob.arrayBuffer();
-			files.push({ mode: rs.mode, buffer, filename, mimeType });
-		}
-
-		for (const rs of recordersRef.current) {
-			if (rs.mode !== "screen") {
-				rs.stream.getTracks().forEach((t) => t.stop());
-			}
+			rs.stream.getTracks().forEach((t) => t.stop());
 		}
 		displayStreamRef.current?.getTracks().forEach((t) => t.stop());
 		displayStreamRef.current = null;
 		recordersRef.current = [];
-
 		for (const id of animFramesRef.current) cancelAnimationFrame(id);
 		animFramesRef.current = [];
 		for (const ctx of audioCtxsRef.current) ctx.close().catch(() => {});
 		audioCtxsRef.current = [];
 
-		if (channelRef.current && files.length > 0) {
-			const transferable = files.map((f) => ({
-				buffer: f.buffer,
-				filename: f.filename,
-				mimeType: f.mimeType,
-			}));
-			channelRef.current.postMessage({ type: "recording-complete", files: transferable });
-			setSentCount(files.length);
+		// Tell the editor all data has been streamed
+		if (channelRef.current) {
+			channelRef.current.postMessage({ type: "stream-done" });
+			setSentCount(streamMetas.length);
 			setPhase("done");
-		} else if (files.length === 0) {
-			setError("All recordings were too short or empty.");
-			setPhase("error");
 		} else {
 			setError("No connection to editor. Close this window and try again.");
 			setPhase("error");
 		}
 
 		setElapsed(0);
-	}, [phase]);
+	}, [phase, streamMetas]);
 
 	const cancelRecording = useCallback(() => {
 		cleanupAll();
@@ -487,12 +518,25 @@ export default function RecorderPage() {
 				</div>
 			)}
 
-			{/* Processing */}
-			{phase === "processing" && (
+			{/* Sending / Finalizing */}
+			{phase === "sending" && (
 				<div className="flex-1 flex items-center justify-center p-4">
-					<div className="text-center space-y-3">
+					<div className="text-center space-y-4 max-w-xs">
 						<div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
-						<p className="text-xs text-white/50">Processing recordings...</p>
+						<p className="text-sm font-medium text-white">Finalizing recordings...</p>
+						<div className="space-y-2">
+							{streamMetas.map((m, i) => (
+								<div key={i} className="flex items-center gap-2 text-xs text-white/60">
+									<span>{MODE_META[m.mode].icon}</span>
+									<span className="flex-1 text-left">{MODE_META[m.mode].label}</span>
+									<span className="font-mono text-white/40">{(m.bytesSent / 1024).toFixed(0)} KB</span>
+								</div>
+							))}
+						</div>
+						<div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+							<span className="text-yellow-400 text-sm">⚠️</span>
+							<p className="text-[10px] text-yellow-300">Do not close this window — sending data to editor</p>
+						</div>
 					</div>
 				</div>
 			)}
