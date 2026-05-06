@@ -9,6 +9,7 @@ import {
   Circle,
   Settings,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import { useRecorderStore } from "../stores/recorder-store";
 import {
@@ -179,6 +180,33 @@ export const ScreenRecorder: React.FC<ScreenRecorderProps> = ({
                   Recording Error
                 </p>
                 <p className="text-xs text-text-muted mt-1">{error}</p>
+              </div>
+            </div>
+          )}
+
+          {error && /permission|disallowed/i.test(error) && (() => { try { return window.self !== window.top; } catch { return true; } })() && (
+            <div className="flex items-start gap-3 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+              <ExternalLink size={20} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-yellow-300">
+                  Permissions blocked by embedding
+                </p>
+                <p className="text-xs text-text-muted mt-1">
+                  Recording permissions are restricted because the editor is embedded. Open in a new window to use recording features.
+                </p>
+                <button
+                  onClick={() => {
+                    const w = Math.min(1400, screen.availWidth - 100);
+                    const h = Math.min(900, screen.availHeight - 100);
+                    const left = Math.round((screen.availWidth - w) / 2);
+                    const top = Math.round((screen.availHeight - h) / 2);
+                    window.open(window.location.href, "_blank", `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no`);
+                  }}
+                  className="mt-2 flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  <ExternalLink size={14} />
+                  Open Editor in New Window
+                </button>
               </div>
             </div>
           )}

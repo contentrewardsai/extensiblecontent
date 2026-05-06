@@ -22,6 +22,21 @@ const nextConfig: NextConfig = {
 	// the Blob-URL fallback in ffmpeg-local.js still works as a safety net.
 	headers: async () => [
 		{
+			// Allow camera/microphone/display-capture on editor pages so
+			// recording works when the page is opened directly (not iframed).
+			// When embedded in a Whop/GHL iframe the parent must also set
+			// allow="camera; microphone; display-capture" on its <iframe>;
+			// if it doesn't, the MediaRecordPanel falls back to opening a
+			// pop-out window.
+			source: "/:path(ext/media/editor|experiences/:id/media/editor)/:rest*",
+			headers: [
+				{
+					key: "Permissions-Policy",
+					value: "camera=(*), microphone=(*), display-capture=(*)",
+				},
+			],
+		},
+		{
 			source: "/lib/ffmpeg/:file*",
 			headers: [
 				{ key: "Cache-Control", value: "public, max-age=31536000, immutable" },

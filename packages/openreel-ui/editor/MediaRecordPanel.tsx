@@ -7,6 +7,7 @@ import {
   Square,
   X,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 import { useProjectStore } from "../stores/project-store";
 import { formatDuration } from "../services/screen-recorder";
@@ -27,6 +28,34 @@ const MODES: ModeConfig[] = [
   { mode: "screen", icon: Monitor, label: "Screen", description: "Record screen capture" },
   { mode: "webcam", icon: Camera, label: "Webcam", description: "Record webcam video" },
 ];
+
+function isInsideIframe(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+function isPermissionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("permission") ||
+    msg.includes("not allowed") ||
+    msg.includes("denied") ||
+    msg.includes("disallowed by permissions policy")
+  );
+}
+
+function openPopoutWindow(): void {
+  const url = window.location.href;
+  const w = Math.min(1400, screen.availWidth - 100);
+  const h = Math.min(900, screen.availHeight - 100);
+  const left = Math.round((screen.availWidth - w) / 2);
+  const top = Math.round((screen.availHeight - h) / 2);
+  window.open(url, "_blank", `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no`);
+}
 
 function getBestAudioMimeType(): string {
   const types = [
@@ -56,9 +85,10 @@ function getBestVideoMimeType(): string {
 interface RecordingSessionProps {
   mode: RecordingMode;
   onDone: () => void;
+  onPermissionBlocked: () => void;
 }
 
-const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone }) => {
+const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPermissionBlocked }) => {
   const importMedia = useProjectStore((s) => s.importMedia);
   const [phase, setPhase] = useState<RecordPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -211,11 +241,14 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone }) => 
       }, 100);
     } catch (err) {
       console.error("[MediaRecordPanel] Failed to start recording:", err);
+      if (isPermissionError(err)) {
+        onPermissionBlocked();
+      }
       setError(err instanceof Error ? err.message : "Failed to start recording");
       setPhase("idle");
       stopAllStreams();
     }
-  }, [mode, drawWaveform, stopAllStreams]);
+  }, [mode, drawWaveform, stopAllStreams, onPermissionBlocked]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -360,6 +393,7 @@ interface MediaRecordPanelProps {
 
 export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = ({ onOpenScreenRecorder }) => {
   const [activeMode, setActiveMode] = useState<RecordingMode | null>(null);
+  const [showPopoutHint, setShowPopoutHint] = useState(false);
 
   const handleSelectMode = useCallback((mode: RecordingMode) => {
     if (mode === "screen" && onOpenScreenRecorder) {
@@ -367,10 +401,17 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = ({ onOpenScreen
       return;
     }
     setActiveMode((prev) => (prev === mode ? null : mode));
+    setShowPopoutHint(false);
   }, [onOpenScreenRecorder]);
 
   const handleDone = useCallback(() => {
     setActiveMode(null);
+  }, []);
+
+  const handlePermissionBlocked = useCallback(() => {
+    if (isInsideIframe()) {
+      setShowPopoutHint(true);
+    }
   }, []);
 
   return (
@@ -395,8 +436,27 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = ({ onOpenScreen
         ))}
       </div>
 
+      {showPopoutHint && (
+        <div className="p-2.5 bg-yellow-500/10 border border-yellow-500/30 rounded-lg space-y-2">
+          <p className="text-[10px] text-yellow-300">
+            Recording permissions are blocked because the editor is embedded. Open in a new window to use recording.
+          </p>
+          <button
+            onClick={openPopoutWindow}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors text-[11px] font-medium"
+          >
+            <ExternalLink size={14} />
+            Open Editor in New Window
+          </button>
+        </div>
+      )}
+
       {activeMode && activeMode !== "screen" && (
-        <RecordingSession mode={activeMode} onDone={handleDone} />
+        <RecordingSession
+          mode={activeMode}
+          onDone={handleDone}
+          onPermissionBlocked={handlePermissionBlocked}
+        />
       )}
     </div>
   );
