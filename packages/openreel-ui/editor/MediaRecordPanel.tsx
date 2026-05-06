@@ -183,11 +183,13 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
           });
         }
       } else if (data.type === "stream-done") {
-        // All data streamed — assemble and import
+        // All data streamed — assemble and import, but keep tracking the popup
+        // (it may still be open showing the "done" screen)
         setIsReceiving(false);
         await assembleAndImport();
-        cleanupPopup();
-        setIsPopupOpen(false);
+        // Clear stream buffers but keep poll + popupWinRef alive
+        streamsRef.current = [];
+        setStreamProgress([]);
       }
     };
 
