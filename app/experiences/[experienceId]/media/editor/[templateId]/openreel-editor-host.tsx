@@ -564,10 +564,19 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 		}
 	}, [templateId, context]);
 
+	const handleUploadBlob = useCallback(async (blob: Blob, filename: string, contentType: string): Promise<string> => {
+		return uploadMediaBlob({ blob, filename, contentType, templateId, context });
+	}, [templateId, context]);
+
 	useEffect(() => {
-		(window as unknown as Record<string, unknown>).__mediaEditorUploadExport = handleUploadExport;
-		return () => { delete (window as unknown as Record<string, unknown>).__mediaEditorUploadExport; };
-	}, [handleUploadExport]);
+		const w = window as unknown as Record<string, unknown>;
+		w.__mediaEditorUploadExport = handleUploadExport;
+		w.__mediaEditorUploadBlob = handleUploadBlob;
+		return () => {
+			delete w.__mediaEditorUploadExport;
+			delete w.__mediaEditorUploadBlob;
+		};
+	}, [handleUploadExport, handleUploadBlob]);
 
 	if (loadError) {
 		return (

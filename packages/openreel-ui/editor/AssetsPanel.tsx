@@ -895,11 +895,52 @@ export const AssetsPanel: React.FC = () => {
 
   const handleScreenRecordingComplete = useCallback(async (screenBlob: Blob, webcamBlob?: Blob) => {
     const ext = screenBlob.type.includes("mp4") ? "mp4" : "webm";
-    const screenFile = new File([screenBlob], `screen-recording-${Date.now()}.${ext}`, { type: screenBlob.type || "video/webm" });
-    await importMedia(screenFile);
+    const ts = Date.now();
+    const screenFilename = `screen-recording-${ts}.${ext}`;
+    const screenFile = new File([screenBlob], screenFilename, { type: screenBlob.type || "video/webm" });
+    const screenResult = await importMedia(screenFile);
+
+    const uploadFn = (window as unknown as Record<string, unknown>).__mediaEditorUploadBlob as
+      ((blob: Blob, filename: string, contentType: string) => Promise<string>) | undefined;
+
+    if (uploadFn) {
+      uploadFn(screenBlob, screenFilename, screenBlob.type || "video/webm")
+        .then((url) => {
+          console.log(`[AssetsPanel] Screen recording uploaded to ${url}`);
+          if (screenResult.actionId) {
+            const { project: p } = useProjectStore.getState();
+            const item = p.mediaLibrary.items.find((m) => m.id === screenResult.actionId);
+            if (item) {
+              const items = p.mediaLibrary.items as Array<typeof item>;
+              const idx = items.indexOf(item);
+              if (idx >= 0) items[idx] = { ...item, originalUrl: url } as typeof item;
+            }
+          }
+        })
+        .catch((err) => console.warn("[AssetsPanel] Screen recording upload failed:", err));
+    }
+
     if (webcamBlob) {
-      const webcamFile = new File([webcamBlob], `webcam-recording-${Date.now()}.${ext}`, { type: webcamBlob.type || "video/webm" });
-      await importMedia(webcamFile);
+      const webcamFilename = `webcam-recording-${ts}.${ext}`;
+      const webcamFile = new File([webcamBlob], webcamFilename, { type: webcamBlob.type || "video/webm" });
+      const webcamResult = await importMedia(webcamFile);
+
+      if (uploadFn) {
+        uploadFn(webcamBlob, webcamFilename, webcamBlob.type || "video/webm")
+          .then((url) => {
+            console.log(`[AssetsPanel] Webcam recording uploaded to ${url}`);
+            if (webcamResult.actionId) {
+              const { project: p } = useProjectStore.getState();
+              const item = p.mediaLibrary.items.find((m) => m.id === webcamResult.actionId);
+              if (item) {
+                const items = p.mediaLibrary.items as Array<typeof item>;
+                const idx = items.indexOf(item);
+                if (idx >= 0) items[idx] = { ...item, originalUrl: url } as typeof item;
+              }
+            }
+          })
+          .catch((err) => console.warn("[AssetsPanel] Webcam recording upload failed:", err));
+      }
     }
   }, [importMedia]);
 

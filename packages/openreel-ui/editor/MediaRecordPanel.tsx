@@ -13,7 +13,7 @@ import { useProjectStore } from "../stores/project-store";
 import { formatDuration } from "../services/screen-recorder";
 
 type RecordingMode = "mic" | "system" | "screen" | "webcam";
-type RecordPhase = "idle" | "requesting" | "recording" | "processing";
+type RecordPhase = "idle" | "requesting" | "recording" | "processing" | "done";
 
 interface ModeConfig {
   mode: RecordingMode;
@@ -97,6 +97,7 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef(0);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
@@ -104,10 +105,15 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
   const animFrameRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const stoppingRef = useRef(false);
+  const startedRef = useRef(false);
 
   const stopAllStreams = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    // For system audio: the display stream has the video track we kept alive
+    displayStreamRef.current?.getTracks().forEach((t) => t.stop());
+    displayStreamRef.current = null;
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -156,10 +162,98 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
     draw();
   }, []);
 
+  const stopRecording = useCallback(async () => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
+
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      stoppingRef.current = false;
+      return;
+    }
+
+    setPhase("processing");
+
+    await new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+      recorder.stop();
+    });
+
+    stopAllStreams();
+
+    const isAudioOnly = mode === "mic" || mode === "system";
+    const mimeType = recorder.mimeType || (isAudioOnly ? "audio/webm" : "video/webm");
+    const blob = new Blob(chunksRef.current, { type: mimeType });
+
+    if (blob.size < 100) {
+      setError("Recording too short or empty.");
+      setPhase("idle");
+      stoppingRef.current = false;
+      return;
+    }
+
+    const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+    const prefix = mode === "mic" ? "mic-recording" :
+                   mode === "system" ? "system-audio" :
+                   mode === "screen" ? "screen-recording" :
+                   "webcam-recording";
+    const filename = `${prefix}-${Date.now()}.${ext}`;
+    const file = new File([blob], filename, { type: mimeType });
+
+    try {
+      const result = await importMedia(file);
+
+      const uploadFn = (window as unknown as Record<string, unknown>).__mediaEditorUploadBlob as
+        ((blob: Blob, filename: string, contentType: string) => Promise<string>) | undefined;
+
+      if (uploadFn) {
+        uploadFn(blob, filename, mimeType)
+          .then((url) => {
+            console.log(`[MediaRecordPanel] Recording uploaded to ${url}`);
+            if (result.actionId) {
+              const { project } = useProjectStore.getState();
+              const item = project.mediaLibrary.items.find((m) => m.id === result.actionId);
+              if (item) {
+                const items = project.mediaLibrary.items as Array<typeof item>;
+                const idx = items.indexOf(item);
+                if (idx >= 0) {
+                  items[idx] = { ...item, originalUrl: url } as typeof item;
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            console.warn("[MediaRecordPanel] Background upload failed (recording still works in-session):", err);
+          });
+      }
+    } catch (err) {
+      console.error("[MediaRecordPanel] Import failed:", err);
+      setError("Failed to import recording.");
+    }
+
+    setPhase("done");
+    setElapsed(0);
+    stoppingRef.current = false;
+  }, [mode, importMedia, stopAllStreams]);
+
+  const cancelRecording = useCallback(() => {
+    stoppingRef.current = true;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    stopAllStreams();
+    setPhase("idle");
+    setElapsed(0);
+    stoppingRef.current = false;
+    onDone();
+  }, [stopAllStreams, onDone]);
+
   const startRecording = useCallback(async () => {
     setError(null);
     setPhase("requesting");
     chunksRef.current = [];
+    stoppingRef.current = false;
 
     try {
       let stream: MediaStream;
@@ -169,15 +263,21 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
       } else if (mode === "system") {
-        stream = await navigator.mediaDevices.getDisplayMedia({
+        // getDisplayMedia requires video; we keep the full stream alive so
+        // Chrome doesn't kill the audio when the video track is stopped.
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
           audio: true,
           video: true,
         });
-        stream.getVideoTracks().forEach((t) => t.stop());
-        const audioTracks = stream.getAudioTracks();
+        displayStreamRef.current = displayStream;
+
+        const audioTracks = displayStream.getAudioTracks();
         if (audioTracks.length === 0) {
-          throw new Error("No system audio captured. Make sure to select 'Share audio' in the browser dialog.");
+          displayStream.getTracks().forEach((t) => t.stop());
+          throw new Error("No system audio captured. Make sure to check 'Share audio' in the browser dialog.");
         }
+        // Feed only audio tracks to the recorder; video track stays alive
+        // on displayStreamRef but isn't recorded.
         stream = new MediaStream(audioTracks);
       } else if (mode === "screen") {
         stream = await navigator.mediaDevices.getDisplayMedia({
@@ -224,13 +324,16 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
         stopAllStreams();
       };
 
-      stream.getTracks().forEach((t) => {
-        t.onended = () => {
+      // Only stop when the user-facing track actually ends (e.g. Chrome
+      // "Stop sharing" button) — NOT when we programmatically stop tracks.
+      const primaryTrack = isAudioOnly ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+      if (primaryTrack) {
+        primaryTrack.onended = () => {
           if (mediaRecorderRef.current?.state === "recording") {
             stopRecording();
           }
         };
-      });
+      }
 
       recorder.start(1000);
       startTimeRef.current = Date.now();
@@ -248,61 +351,15 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
       setPhase("idle");
       stopAllStreams();
     }
-  }, [mode, drawWaveform, stopAllStreams, onPermissionBlocked]);
+  }, [mode, drawWaveform, stopAllStreams, onPermissionBlocked, stopRecording]);
 
-  const stopRecording = useCallback(async () => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") return;
-
-    setPhase("processing");
-
-    await new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-      recorder.stop();
-    });
-
-    stopAllStreams();
-
-    const isAudioOnly = mode === "mic" || mode === "system";
-    const mimeType = recorder.mimeType || (isAudioOnly ? "audio/webm" : "video/webm");
-    const blob = new Blob(chunksRef.current, { type: mimeType });
-
-    if (blob.size < 100) {
-      setError("Recording too short or empty.");
-      setPhase("idle");
-      return;
+  // Auto-start recording on mount
+  useEffect(() => {
+    if (!startedRef.current) {
+      startedRef.current = true;
+      startRecording();
     }
-
-    const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-    const prefix = mode === "mic" ? "mic-recording" :
-                   mode === "system" ? "system-audio" :
-                   mode === "screen" ? "screen-recording" :
-                   "webcam-recording";
-    const filename = `${prefix}-${Date.now()}.${ext}`;
-    const file = new File([blob], filename, { type: mimeType });
-
-    try {
-      await importMedia(file);
-    } catch (err) {
-      console.error("[MediaRecordPanel] Import failed:", err);
-      setError("Failed to import recording.");
-    }
-
-    setPhase("idle");
-    setElapsed(0);
-    onDone();
-  }, [mode, importMedia, stopAllStreams, onDone]);
-
-  const cancelRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
-    }
-    stopAllStreams();
-    setPhase("idle");
-    setElapsed(0);
-    onDone();
-  }, [stopAllStreams, onDone]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasVideo = mode === "webcam" || mode === "screen";
   const hasAudioViz = mode === "mic" || mode === "system";
@@ -366,11 +423,12 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
               className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-[11px] font-medium"
             >
               <Square size={12} className="fill-current" />
-              Stop
+              Stop Recording
             </button>
             <button
               onClick={cancelRecording}
               className="px-3 py-2 bg-background-tertiary hover:bg-background-elevated text-text-secondary rounded-lg transition-colors text-[11px]"
+              title="Cancel"
             >
               <X size={14} />
             </button>
@@ -379,7 +437,25 @@ const RecordingSession: React.FC<RecordingSessionProps> = ({ mode, onDone, onPer
         {phase === "processing" && (
           <div className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-background-tertiary text-text-muted rounded-lg text-[11px]">
             <Loader2 size={14} className="animate-spin" />
-            Saving...
+            Saving recording...
+          </div>
+        )}
+        {phase === "done" && (
+          <div className="flex gap-2 w-full">
+            <button
+              onClick={startRecording}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-[11px] font-medium"
+            >
+              <div className="w-3 h-3 bg-white rounded-full" />
+              Record Again
+            </button>
+            <button
+              onClick={onDone}
+              className="px-3 py-2 bg-background-tertiary hover:bg-background-elevated text-text-secondary rounded-lg transition-colors text-[11px]"
+              title="Close"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
       </div>
@@ -453,6 +529,7 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = ({ onOpenScreen
 
       {activeMode && activeMode !== "screen" && (
         <RecordingSession
+          key={activeMode}
           mode={activeMode}
           onDone={handleDone}
           onPermissionBlocked={handlePermissionBlocked}
