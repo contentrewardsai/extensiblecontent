@@ -515,8 +515,10 @@ export const Toolbar: React.FC = () => {
       let importCount = 0;
       const errors: string[] = [];
 
-      const screenFile = new File([screenBlob], `Screen_${timestamp}.webm`, {
-        type: screenBlob.type || "video/webm",
+      const screenMime = screenBlob.type || "video/webm";
+      const screenExt = screenMime.includes("mp4") ? "mp4" : screenMime.includes("ogg") ? "ogg" : "webm";
+      const screenFile = new File([screenBlob], `Screen_${timestamp}.${screenExt}`, {
+        type: screenMime,
       });
       const screenResult = await importMedia(screenFile);
       if (screenResult.success) {
@@ -528,8 +530,10 @@ export const Toolbar: React.FC = () => {
       }
 
       if (webcamBlob && webcamBlob.size > 0) {
-        const webcamFile = new File([webcamBlob], `Webcam_${timestamp}.webm`, {
-          type: webcamBlob.type || "video/webm",
+        const webcamMime = webcamBlob.type || "video/webm";
+        const webcamExt = webcamMime.includes("mp4") ? "mp4" : webcamMime.includes("ogg") ? "ogg" : "webm";
+        const webcamFile = new File([webcamBlob], `Webcam_${timestamp}.${webcamExt}`, {
+          type: webcamMime,
         });
         const webcamResult = await importMedia(webcamFile);
         if (webcamResult.success) {

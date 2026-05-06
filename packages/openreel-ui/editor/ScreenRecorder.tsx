@@ -192,20 +192,36 @@ export const ScreenRecorder: React.FC<ScreenRecorderProps> = ({
                   Permissions blocked by embedding
                 </p>
                 <p className="text-xs text-text-muted mt-1">
-                  Recording permissions are restricted because the editor is embedded. Open in a new window to use recording features.
+                  Recording permissions are restricted because the editor is embedded. Open the standalone recorder to bypass this.
                 </p>
                 <button
                   onClick={() => {
-                    const w = Math.min(1400, screen.availWidth - 100);
-                    const h = Math.min(900, screen.availHeight - 100);
+                    const channelId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                    const url = `/recorder?channel=${channelId}&modes=screen`;
+                    const w = 700, h = 550;
                     const left = Math.round((screen.availWidth - w) / 2);
                     const top = Math.round((screen.availHeight - h) / 2);
-                    window.open(window.location.href, "_blank", `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no`);
+                    window.open(url, "media-recorder", `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no`);
+
+                    const bc = new BroadcastChannel(`recorder-${channelId}`);
+                    bc.onmessage = (evt) => {
+                      if (evt.data.type === "recording-complete") {
+                        const files: Array<{ buffer: ArrayBuffer; filename: string; mimeType: string }> = evt.data.files;
+                        for (const f of files) {
+                          const blob = new Blob([f.buffer], { type: f.mimeType });
+                          onRecordingComplete(blob);
+                        }
+                        bc.close();
+                        onClose();
+                      } else if (evt.data.type === "recorder-closed") {
+                        bc.close();
+                      }
+                    };
                   }}
                   className="mt-2 flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium rounded-lg transition-colors"
                 >
                   <ExternalLink size={14} />
-                  Open Editor in New Window
+                  Open Recorder
                 </button>
               </div>
             </div>

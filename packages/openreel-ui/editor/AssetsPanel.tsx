@@ -894,17 +894,23 @@ export const AssetsPanel: React.FC = () => {
   }, [retryTask, setKieAIItemState]);
 
   const handleScreenRecordingComplete = useCallback(async (screenBlob: Blob, webcamBlob?: Blob) => {
-    const ext = screenBlob.type.includes("mp4") ? "mp4" : "webm";
+    const getExtFromMime = (mime: string): string => {
+      if (mime.includes("mp4")) return "mp4";
+      if (mime.includes("ogg")) return "ogg";
+      return "webm";
+    };
+    const screenMime = screenBlob.type || "video/webm";
+    const ext = getExtFromMime(screenMime);
     const ts = Date.now();
     const screenFilename = `screen-recording-${ts}.${ext}`;
-    const screenFile = new File([screenBlob], screenFilename, { type: screenBlob.type || "video/webm" });
+    const screenFile = new File([screenBlob], screenFilename, { type: screenMime });
     const screenResult = await importMedia(screenFile);
 
     const uploadFn = (window as unknown as Record<string, unknown>).__mediaEditorUploadBlob as
       ((blob: Blob, filename: string, contentType: string) => Promise<string>) | undefined;
 
     if (uploadFn) {
-      uploadFn(screenBlob, screenFilename, screenBlob.type || "video/webm")
+      uploadFn(screenBlob, screenFilename, screenMime)
         .then((url) => {
           console.log(`[AssetsPanel] Screen recording uploaded to ${url}`);
           if (screenResult.actionId) {
@@ -921,12 +927,14 @@ export const AssetsPanel: React.FC = () => {
     }
 
     if (webcamBlob) {
-      const webcamFilename = `webcam-recording-${ts}.${ext}`;
-      const webcamFile = new File([webcamBlob], webcamFilename, { type: webcamBlob.type || "video/webm" });
+      const webcamMime = webcamBlob.type || "video/webm";
+      const webcamExt = getExtFromMime(webcamMime);
+      const webcamFilename = `webcam-recording-${ts}.${webcamExt}`;
+      const webcamFile = new File([webcamBlob], webcamFilename, { type: webcamMime });
       const webcamResult = await importMedia(webcamFile);
 
       if (uploadFn) {
-        uploadFn(webcamBlob, webcamFilename, webcamBlob.type || "video/webm")
+        uploadFn(webcamBlob, webcamFilename, webcamMime)
           .then((url) => {
             console.log(`[AssetsPanel] Webcam recording uploaded to ${url}`);
             if (webcamResult.actionId) {
