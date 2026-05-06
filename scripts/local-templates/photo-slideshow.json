@@ -1,0 +1,75 @@
+{
+  "merge": [
+    { "find": "CAPTION", "replace": "My Photo Album" },
+    { "find": "BG_COLOR", "replace": "#1a1a1a" },
+    { "find": "TEXT_COLOR", "replace": "#ffffff" },
+    { "find": "caption", "replace": "My Photo Album" },
+    { "find": "bgColor", "replace": "#1a1a1a" },
+    { "find": "textColor", "replace": "#ffffff" },
+    { "find": "__CFS_TEMPLATE_ID", "replace": "photo-slideshow" },
+    { "find": "__CFS_TEMPLATE_NAME", "replace": "Photo Slideshow" },
+    { "find": "__CFS_DESCRIPTION", "replace": "30-second slideshow with 4 image placeholders and a caption overlay. HD 16:9 format, each photo shown for 6 seconds." },
+    { "find": "__CFS_OUTPUT_TYPE", "replace": "video" },
+    { "find": "__CFS_PRESET_ID", "replace": "hd" },
+    { "find": "__CFS_INPUT_SCHEMA", "replace": "[{\"id\":\"caption\",\"label\":\"Caption\",\"type\":\"text\",\"default\":\"My Photo Album\",\"mergeField\":\"CAPTION\"},{\"id\":\"bgColor\",\"label\":\"Background Color\",\"type\":\"color\",\"default\":\"#1a1a1a\",\"mergeField\":\"BG_COLOR\"},{\"id\":\"textColor\",\"label\":\"Text Color\",\"type\":\"color\",\"default\":\"#ffffff\",\"mergeField\":\"TEXT_COLOR\"}]" }
+  ],
+  "output": {
+    "aspectRatio": "16:9",
+    "format": "mp4",
+    "fps": 25,
+    "resolution": "hd",
+    "size": { "width": 1920, "height": 1080 }
+  },
+  "timeline": {
+    "background": "{{ BG_COLOR }}",
+    "tracks": [
+      {
+        "clips": [{
+          "alias": "CAPTION_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ CAPTION }}",
+            "font": { "family": "Arial", "size": 36, "color": "{{ TEXT_COLOR }}", "weight": 600 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 30,
+          "width": 1600, "height": 60,
+          "position": "bottom",
+          "offset": { "x": 0, "y": 0.04 }
+        }]
+      },
+      {
+        "clips": [
+          {
+            "alias": "IMAGE_1",
+            "asset": { "type": "image", "src": "" },
+            "start": 0, "length": 7.5,
+            "fit": "cover",
+            "position": "center"
+          },
+          {
+            "alias": "IMAGE_2",
+            "asset": { "type": "image", "src": "" },
+            "start": 7.5, "length": 7.5,
+            "fit": "cover",
+            "position": "center"
+          },
+          {
+            "alias": "IMAGE_3",
+            "asset": { "type": "image", "src": "" },
+            "start": 15, "length": 7.5,
+            "fit": "cover",
+            "position": "center"
+          },
+          {
+            "alias": "IMAGE_4",
+            "asset": { "type": "image", "src": "" },
+            "start": 22.5, "length": 7.5,
+            "fit": "cover",
+            "position": "center"
+          }
+        ]
+      }
+    ]
+  }
+}

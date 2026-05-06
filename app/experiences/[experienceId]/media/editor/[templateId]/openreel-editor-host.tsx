@@ -522,6 +522,22 @@ export function OpenReelEditorHost({ templateId, templateName, isBuiltin, initia
 			if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
 			setSaveState("saved");
 			setTimeout(() => setSaveState("idle"), 2000);
+
+			// Fire-and-forget: capture a canvas thumbnail after save
+			if (context.thumbnailUploadUrl) {
+				const thumbUrl = context.thumbnailUploadUrl.replace(":id", targetId);
+				try {
+					const canvas = document.querySelector<HTMLCanvasElement>(".openreel-editor canvas");
+					if (canvas) {
+						canvas.toBlob(async (blob) => {
+							if (!blob) return;
+							const fd = new FormData();
+							fd.append("file", blob, "thumbnail.png");
+							try { await fetch(thumbUrl, { method: "PUT", body: fd }); } catch { /* best-effort */ }
+						}, "image/png");
+					}
+				} catch { /* ignore thumbnail errors */ }
+			}
 		} catch (err) {
 			console.error("[OpenReelEditorHost] Save failed:", err);
 			setSaveState("error");

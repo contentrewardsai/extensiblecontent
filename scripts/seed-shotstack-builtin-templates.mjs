@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 /**
- * Seed the 7 built-in generator templates into `shotstack_templates`.
+ * Seed built-in generator templates into `shotstack_templates`.
  *
- * Fetches `generator/templates/<slug>/template.json` from the
- * `contentrewardsai/ExtensibleContentExtension` repo (at a pinned commit) and
- * upserts a row per slug with `is_builtin = true, user_id = null` so every
+ * Sources:
+ *   1. Remote: `generator/templates/<slug>/template.json` from the
+ *      `contentrewardsai/ExtensibleContentExtension` repo (at a pinned commit).
+ *   2. Local: JSON files in `scripts/local-templates/<slug>.json` that ship
+ *      with this repo (new templates not yet pushed to the extension repo).
+ *
+ * Upserts rows with `is_builtin = true, user_id = null` so every
  * authenticated extension user sees the same starter library.
  *
  * Safe to re-run; upsert is keyed on `source_path`.
@@ -22,6 +26,9 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { readdir, readFile } from "node:fs/promises";
+import { join, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Pinned so reseeds are reproducible. Bump when the extension ships new
 // built-ins; the upsert is idempotent on `source_path`.
@@ -69,22 +76,102 @@ function slugToName(slug) {
 		.join(" ");
 }
 
+/** Upsert a single built-in template into the DB. */
+async function upsertTemplate(supabase, slug, edit) {
+	const name = readMerge(edit, "__CFS_TEMPLATE_NAME") || slugToName(slug);
+	const now = new Date().toISOString();
+
+	const { data: existing, error: findErr } = await supabase
+		.from("shotstack_templates")
+		.select("id")
+		.eq("source_path", slug)
+		.eq("is_builtin", true)
+		.maybeSingle();
+
+	if (findErr) {
+		console.error(`[seed] Lookup failed for ${slug}: ${findErr.message}`);
+		return false;
+	}
+
+	if (existing?.id) {
+		const { error } = await supabase
+			.from("shotstack_templates")
+			.update({ name, edit, default_env: "v1", updated_at: now })
+			.eq("id", existing.id);
+		if (error) {
+			console.error(`[seed] Update failed for ${slug}: ${error.message}`);
+			return false;
+		}
+		console.log(`[seed] ↻ ${slug} → "${name}" (updated)`);
+	} else {
+		const { error } = await supabase.from("shotstack_templates").insert({
+			is_builtin: true,
+			user_id: null,
+			project_id: null,
+			source_path: slug,
+			name,
+			edit,
+			default_env: "v1",
+			updated_at: now,
+		});
+		if (error) {
+			console.error(`[seed] Insert failed for ${slug}: ${error.message}`);
+			return false;
+		}
+		console.log(`[seed] ✔ ${slug} → "${name}" (inserted)`);
+	}
+	return true;
+}
+
+/** Load local template JSON files from scripts/local-templates/. */
+async function loadLocalTemplates() {
+	const __dirname = fileURLToPath(new URL(".", import.meta.url));
+	const dir = join(__dirname, "local-templates");
+	let files;
+	try {
+		files = await readdir(dir);
+	} catch {
+		return [];
+	}
+	const results = [];
+	for (const f of files.filter((f) => f.endsWith(".json"))) {
+		try {
+			const raw = await readFile(join(dir, f), "utf-8");
+			const edit = JSON.parse(raw);
+			const slug = basename(f, ".json");
+			results.push({ slug, edit });
+		} catch (err) {
+			console.error(`[seed] Skipping local ${f}: ${err.message}`);
+		}
+	}
+	return results;
+}
+
 async function main() {
 	console.log(`[seed] Using ${REPO}@${REF}`);
 
 	const manifest = await fetchJson(`${RAW_BASE}/manifest.json`);
-	const slugs = Array.isArray(manifest?.templates) ? manifest.templates : [];
-	if (slugs.length === 0) {
-		throw new Error("manifest.json has no templates");
+	const remoteSlugs = Array.isArray(manifest?.templates) ? manifest.templates : [];
+	console.log(`[seed] Remote manifest lists ${remoteSlugs.length} templates: ${remoteSlugs.join(", ")}`);
+
+	const localTemplates = await loadLocalTemplates();
+	if (localTemplates.length > 0) {
+		console.log(`[seed] Found ${localTemplates.length} local templates: ${localTemplates.map((t) => t.slug).join(", ")}`);
 	}
-	console.log(`[seed] Manifest lists ${slugs.length} templates: ${slugs.join(", ")}`);
+
+	const totalExpected = remoteSlugs.length + localTemplates.length;
+	if (totalExpected === 0) {
+		throw new Error("No templates found (remote manifest empty and no local files)");
+	}
 
 	const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 		auth: { persistSession: false, autoRefreshToken: false },
 	});
 
 	let upserted = 0;
-	for (const slug of slugs) {
+
+	// Remote templates from GitHub
+	for (const slug of remoteSlugs) {
 		const url = `${RAW_BASE}/${slug}/template.json`;
 		let edit;
 		try {
@@ -93,57 +180,16 @@ async function main() {
 			console.error(`[seed] Skipping ${slug}: ${err.message}`);
 			continue;
 		}
-
-		const name = readMerge(edit, "__CFS_TEMPLATE_NAME") || slugToName(slug);
-		const now = new Date().toISOString();
-
-		// The unique index on source_path is partial (WHERE is_builtin = true),
-		// which a plain ON CONFLICT clause can't target. Do an explicit
-		// find-then-update-or-insert keyed on (source_path, is_builtin=true).
-		const { data: existing, error: findErr } = await supabase
-			.from("shotstack_templates")
-			.select("id")
-			.eq("source_path", slug)
-			.eq("is_builtin", true)
-			.maybeSingle();
-
-		if (findErr) {
-			console.error(`[seed] Lookup failed for ${slug}: ${findErr.message}`);
-			continue;
-		}
-
-		if (existing?.id) {
-			const { error } = await supabase
-				.from("shotstack_templates")
-				.update({ name, edit, default_env: "v1", updated_at: now })
-				.eq("id", existing.id);
-			if (error) {
-				console.error(`[seed] Update failed for ${slug}: ${error.message}`);
-				continue;
-			}
-			console.log(`[seed] ↻ ${slug} → "${name}" (updated)`);
-		} else {
-			const { error } = await supabase.from("shotstack_templates").insert({
-				is_builtin: true,
-				user_id: null,
-				project_id: null,
-				source_path: slug,
-				name,
-				edit,
-				default_env: "v1",
-				updated_at: now,
-			});
-			if (error) {
-				console.error(`[seed] Insert failed for ${slug}: ${error.message}`);
-				continue;
-			}
-			console.log(`[seed] ✔ ${slug} → "${name}" (inserted)`);
-		}
-		upserted += 1;
+		if (await upsertTemplate(supabase, slug, edit)) upserted += 1;
 	}
 
-	console.log(`[seed] Done. Upserted ${upserted}/${slugs.length} built-in templates.`);
-	if (upserted !== slugs.length) {
+	// Local templates from scripts/local-templates/
+	for (const { slug, edit } of localTemplates) {
+		if (await upsertTemplate(supabase, slug, edit)) upserted += 1;
+	}
+
+	console.log(`[seed] Done. Upserted ${upserted}/${totalExpected} built-in templates.`);
+	if (upserted !== totalExpected) {
 		process.exit(1);
 	}
 }

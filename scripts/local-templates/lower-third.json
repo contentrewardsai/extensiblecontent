@@ -1,0 +1,87 @@
+{
+  "merge": [
+    { "find": "NAME", "replace": "John Smith" },
+    { "find": "TITLE", "replace": "CEO, Company Inc." },
+    { "find": "BAR_COLOR", "replace": "#0066ff" },
+    { "find": "BG_OPACITY_COLOR", "replace": "#000000cc" },
+    { "find": "name", "replace": "John Smith" },
+    { "find": "title", "replace": "CEO, Company Inc." },
+    { "find": "barColor", "replace": "#0066ff" },
+    { "find": "__CFS_TEMPLATE_ID", "replace": "lower-third" },
+    { "find": "__CFS_TEMPLATE_NAME", "replace": "Lower Third — Name & Title" },
+    { "find": "__CFS_DESCRIPTION", "replace": "Professional lower-third overlay with name and title. HD 16:9 format ideal for interviews, presentations, and video content." },
+    { "find": "__CFS_OUTPUT_TYPE", "replace": "image" },
+    { "find": "__CFS_PRESET_ID", "replace": "hd" },
+    { "find": "__CFS_INPUT_SCHEMA", "replace": "[{\"id\":\"name\",\"label\":\"Name\",\"type\":\"text\",\"default\":\"John Smith\",\"mergeField\":\"NAME\"},{\"id\":\"title\",\"label\":\"Title / Position\",\"type\":\"text\",\"default\":\"CEO, Company Inc.\",\"mergeField\":\"TITLE\"},{\"id\":\"barColor\",\"label\":\"Accent Color\",\"type\":\"color\",\"default\":\"#0066ff\",\"mergeField\":\"BAR_COLOR\"}]" }
+  ],
+  "output": {
+    "aspectRatio": "16:9",
+    "format": "png",
+    "fps": 25,
+    "resolution": "hd",
+    "size": { "width": 1920, "height": 1080 }
+  },
+  "timeline": {
+    "background": "#00000000",
+    "tracks": [
+      {
+        "clips": [{
+          "alias": "NAME_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ NAME }}",
+            "font": { "family": "Arial", "size": 42, "color": "#ffffff", "weight": 700 },
+            "align": { "horizontal": "left" }
+          },
+          "start": 0, "length": 7,
+          "width": 600, "height": 60,
+          "position": "bottomLeft",
+          "offset": { "x": 0.04, "y": 0.14 }
+        }]
+      },
+      {
+        "clips": [{
+          "alias": "TITLE_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ TITLE }}",
+            "font": { "family": "Arial", "size": 28, "color": "#cccccc", "weight": 400 },
+            "align": { "horizontal": "left" }
+          },
+          "start": 0, "length": 7,
+          "width": 600, "height": 44,
+          "position": "bottomLeft",
+          "offset": { "x": 0.04, "y": 0.08 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ BAR_COLOR }}" },
+            "rectangle": { "width": 6, "height": 100 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "bottomLeft",
+          "offset": { "x": 0.02, "y": 0.08 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ BG_OPACITY_COLOR }}" },
+            "rectangle": { "width": 700, "height": 130 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "bottomLeft",
+          "offset": { "x": 0.01, "y": 0.06 }
+        }]
+      }
+    ]
+  }
+}

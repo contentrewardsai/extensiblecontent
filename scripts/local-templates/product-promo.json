@@ -1,0 +1,104 @@
+{
+  "merge": [
+    { "find": "HEADLINE", "replace": "NEW ARRIVAL" },
+    { "find": "PRICE", "replace": "$29.99" },
+    { "find": "CTA", "replace": "Shop Now — Link in Bio!" },
+    { "find": "BG_COLOR", "replace": "#111111" },
+    { "find": "ACCENT_COLOR", "replace": "#ff4d4d" },
+    { "find": "headline", "replace": "NEW ARRIVAL" },
+    { "find": "price", "replace": "$29.99" },
+    { "find": "cta", "replace": "Shop Now — Link in Bio!" },
+    { "find": "bgColor", "replace": "#111111" },
+    { "find": "accentColor", "replace": "#ff4d4d" },
+    { "find": "__CFS_TEMPLATE_ID", "replace": "product-promo" },
+    { "find": "__CFS_TEMPLATE_NAME", "replace": "Product Promo — TikTok Style" },
+    { "find": "__CFS_DESCRIPTION", "replace": "Vertical product showcase with bold headline, price tag, and call-to-action. 9:16 format for TikTok and Instagram Reels." },
+    { "find": "__CFS_OUTPUT_TYPE", "replace": "image" },
+    { "find": "__CFS_PRESET_ID", "replace": "mobile" },
+    { "find": "__CFS_INPUT_SCHEMA", "replace": "[{\"id\":\"headline\",\"label\":\"Headline\",\"type\":\"text\",\"default\":\"NEW ARRIVAL\",\"mergeField\":\"HEADLINE\"},{\"id\":\"price\",\"label\":\"Price\",\"type\":\"text\",\"default\":\"$29.99\",\"mergeField\":\"PRICE\"},{\"id\":\"cta\",\"label\":\"Call to Action\",\"type\":\"text\",\"default\":\"Shop Now — Link in Bio!\",\"mergeField\":\"CTA\"},{\"id\":\"bgColor\",\"label\":\"Background Color\",\"type\":\"color\",\"default\":\"#111111\",\"mergeField\":\"BG_COLOR\"},{\"id\":\"accentColor\",\"label\":\"Accent Color\",\"type\":\"color\",\"default\":\"#ff4d4d\",\"mergeField\":\"ACCENT_COLOR\"}]" }
+  ],
+  "output": {
+    "aspectRatio": "9:16",
+    "format": "png",
+    "fps": 25,
+    "resolution": "hd",
+    "size": { "width": 1080, "height": 1920 }
+  },
+  "timeline": {
+    "background": "{{ BG_COLOR }}",
+    "tracks": [
+      {
+        "clips": [{
+          "alias": "HEADLINE_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ HEADLINE }}",
+            "font": { "family": "Arial Black", "size": 64, "color": "#ffffff", "weight": 800 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 180,
+          "position": "center",
+          "offset": { "x": 0, "y": 0.32 }
+        }]
+      },
+      {
+        "clips": [{
+          "alias": "PRICE_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ PRICE }}",
+            "font": { "family": "Arial Black", "size": 80, "color": "{{ ACCENT_COLOR }}", "weight": 800 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 120,
+          "position": "center",
+          "offset": { "x": 0, "y": -0.12 }
+        }]
+      },
+      {
+        "clips": [{
+          "alias": "CTA_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ CTA }}",
+            "font": { "family": "Arial", "size": 36, "color": "#ffffff", "weight": 600 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 80,
+          "position": "center",
+          "offset": { "x": 0, "y": -0.36 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ ACCENT_COLOR }}" },
+            "rectangle": { "width": 600, "height": 6 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "center",
+          "offset": { "x": 0, "y": -0.24 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ BG_COLOR }}" },
+            "rectangle": { "width": 1080, "height": 1920 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "center"
+        }]
+      }
+    ]
+  }
+}

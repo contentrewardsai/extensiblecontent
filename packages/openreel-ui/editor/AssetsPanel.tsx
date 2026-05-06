@@ -50,6 +50,8 @@ import {
 import { KieAIImageDialog } from "./kieai/KieAIImageDialog";
 import { loadMediaBlob } from "../services/media-storage";
 import { useKieAIStore } from "../stores/kieai-store";
+import { MediaRecordPanel } from "./MediaRecordPanel";
+import { ScreenRecorder } from "./ScreenRecorder";
 
 const formatDuration = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
@@ -551,6 +553,9 @@ export const AssetsPanel: React.FC = () => {
     "all" | "solid" | "gradient" | "pattern" | "mesh"
   >("all");
 
+  // Screen recorder modal (triggered from MediaRecordPanel)
+  const [isScreenRecorderOpen, setIsScreenRecorderOpen] = useState(false);
+
   // KieAI image generation dialog
   const [kieaiDialog, setKieaiDialog] = useState<{ file: File; previewUrl: string | null } | null>(null);
 
@@ -888,6 +893,16 @@ export const AssetsPanel: React.FC = () => {
     retryTask(item.kieaiTaskId);
   }, [retryTask, setKieAIItemState]);
 
+  const handleScreenRecordingComplete = useCallback(async (screenBlob: Blob, webcamBlob?: Blob) => {
+    const ext = screenBlob.type.includes("mp4") ? "mp4" : "webm";
+    const screenFile = new File([screenBlob], `screen-recording-${Date.now()}.${ext}`, { type: screenBlob.type || "video/webm" });
+    await importMedia(screenFile);
+    if (webcamBlob) {
+      const webcamFile = new File([webcamBlob], `webcam-recording-${Date.now()}.${ext}`, { type: webcamBlob.type || "video/webm" });
+      await importMedia(webcamFile);
+    }
+  }, [importMedia]);
+
   return (
     <div
       data-tour="assets"
@@ -1104,6 +1119,11 @@ export const AssetsPanel: React.FC = () => {
                 )}
               </div>
             )}
+
+            {/* Record section */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <MediaRecordPanel onOpenScreenRecorder={() => setIsScreenRecorderOpen(true)} />
+            </div>
 
             {/* Drop zone indicator */}
             {isDragOver && (
@@ -1467,6 +1487,12 @@ export const AssetsPanel: React.FC = () => {
           previewUrl={kieaiDialog.previewUrl}
         />
       )}
+
+      <ScreenRecorder
+        isOpen={isScreenRecorderOpen}
+        onClose={() => setIsScreenRecorderOpen(false)}
+        onRecordingComplete={handleScreenRecordingComplete}
+      />
     </div>
   );
 };

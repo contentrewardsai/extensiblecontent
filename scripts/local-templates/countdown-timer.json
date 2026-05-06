@@ -1,0 +1,104 @@
+{
+  "merge": [
+    { "find": "EVENT_NAME", "replace": "LAUNCH DAY" },
+    { "find": "EVENT_DATE", "replace": "January 20th" },
+    { "find": "CTA", "replace": "Swipe Up for Details" },
+    { "find": "BG_COLOR", "replace": "#0f0c29" },
+    { "find": "ACCENT_COLOR", "replace": "#e73c7e" },
+    { "find": "eventName", "replace": "LAUNCH DAY" },
+    { "find": "eventDate", "replace": "January 20th" },
+    { "find": "cta", "replace": "Swipe Up for Details" },
+    { "find": "bgColor", "replace": "#0f0c29" },
+    { "find": "accentColor", "replace": "#e73c7e" },
+    { "find": "__CFS_TEMPLATE_ID", "replace": "countdown-timer" },
+    { "find": "__CFS_TEMPLATE_NAME", "replace": "Countdown Timer — Event Promo" },
+    { "find": "__CFS_DESCRIPTION", "replace": "Bold vertical event countdown with event name, date, and swipe-up CTA. 9:16 format for Instagram Stories or TikTok." },
+    { "find": "__CFS_OUTPUT_TYPE", "replace": "image" },
+    { "find": "__CFS_PRESET_ID", "replace": "mobile" },
+    { "find": "__CFS_INPUT_SCHEMA", "replace": "[{\"id\":\"eventName\",\"label\":\"Event Name\",\"type\":\"text\",\"default\":\"LAUNCH DAY\",\"mergeField\":\"EVENT_NAME\"},{\"id\":\"eventDate\",\"label\":\"Date\",\"type\":\"text\",\"default\":\"January 20th\",\"mergeField\":\"EVENT_DATE\"},{\"id\":\"cta\",\"label\":\"Call to Action\",\"type\":\"text\",\"default\":\"Swipe Up for Details\",\"mergeField\":\"CTA\"},{\"id\":\"bgColor\",\"label\":\"Background Color\",\"type\":\"color\",\"default\":\"#0f0c29\",\"mergeField\":\"BG_COLOR\"},{\"id\":\"accentColor\",\"label\":\"Accent Color\",\"type\":\"color\",\"default\":\"#e73c7e\",\"mergeField\":\"ACCENT_COLOR\"}]" }
+  ],
+  "output": {
+    "aspectRatio": "9:16",
+    "format": "png",
+    "fps": 25,
+    "resolution": "hd",
+    "size": { "width": 1080, "height": 1920 }
+  },
+  "timeline": {
+    "background": "{{ BG_COLOR }}",
+    "tracks": [
+      {
+        "clips": [{
+          "alias": "EVENT_NAME_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ EVENT_NAME }}",
+            "font": { "family": "Arial Black", "size": 72, "color": "#ffffff", "weight": 800 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 200,
+          "position": "center",
+          "offset": { "x": 0, "y": 0.18 }
+        }]
+      },
+      {
+        "clips": [{
+          "alias": "EVENT_DATE_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ EVENT_DATE }}",
+            "font": { "family": "Arial", "size": 48, "color": "{{ ACCENT_COLOR }}", "weight": 600 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 100,
+          "position": "center",
+          "offset": { "x": 0, "y": 0.02 }
+        }]
+      },
+      {
+        "clips": [{
+          "alias": "CTA_TEXT",
+          "asset": {
+            "type": "rich-text",
+            "text": "{{ CTA }}",
+            "font": { "family": "Arial", "size": 32, "color": "#aaaaaa", "weight": 400 },
+            "align": { "horizontal": "center" }
+          },
+          "start": 0, "length": 7,
+          "width": 920, "height": 60,
+          "position": "center",
+          "offset": { "x": 0, "y": -0.32 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ ACCENT_COLOR }}" },
+            "rectangle": { "width": 200, "height": 4 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "center",
+          "offset": { "x": 0, "y": -0.06 }
+        }]
+      },
+      {
+        "clips": [{
+          "asset": {
+            "type": "shape",
+            "shape": "rectangle",
+            "fill": { "color": "{{ BG_COLOR }}" },
+            "rectangle": { "width": 1080, "height": 1920 }
+          },
+          "start": 0, "length": 7,
+          "fit": "none",
+          "position": "center"
+        }]
+      }
+    ]
+  }
+}
