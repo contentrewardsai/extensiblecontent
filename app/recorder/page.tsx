@@ -67,6 +67,7 @@ export default function RecorderPage() {
 
 	const recordersRef = useRef<RecorderState[]>([]);
 	const displayStreamRef = useRef<MediaStream | null>(null);
+	const webcamStreamRef = useRef<MediaStream | null>(null);
 	const timerRef = useRef<number | null>(null);
 	const startTimeRef = useRef(0);
 
@@ -125,6 +126,7 @@ export default function RecorderPage() {
 		recordersRef.current = [];
 		displayStreamRef.current?.getTracks().forEach((t) => t.stop());
 		displayStreamRef.current = null;
+		webcamStreamRef.current = null;
 		if (timerRef.current) {
 			clearInterval(timerRef.current);
 			timerRef.current = null;
@@ -136,6 +138,18 @@ export default function RecorderPage() {
 	}, []);
 
 	useEffect(() => () => cleanupAll(), [cleanupAll]);
+
+	// Assign srcObject to video previews after they mount (phase === "recording")
+	useEffect(() => {
+		if (phase === "recording") {
+			if (screenVideoRef.current && displayStreamRef.current) {
+				screenVideoRef.current.srcObject = displayStreamRef.current;
+			}
+			if (webcamVideoRef.current && webcamStreamRef.current) {
+				webcamVideoRef.current.srcObject = webcamStreamRef.current;
+			}
+		}
+	}, [phase]);
 
 	const startWaveform = useCallback((stream: MediaStream, canvas: HTMLCanvasElement | null) => {
 		if (!canvas) return;
@@ -231,7 +245,6 @@ export default function RecorderPage() {
 					}
 				};
 				recorders.push({ recorder: rec, chunks, stream: displayStream, mode: "screen" });
-				if (screenVideoRef.current) screenVideoRef.current.srcObject = displayStream;
 			}
 
 			if (modes.includes("system") && displayStream) {
@@ -288,7 +301,7 @@ export default function RecorderPage() {
 					}
 				};
 				recorders.push({ recorder: rec, chunks, stream: webcamStream, mode: "webcam" });
-				if (webcamVideoRef.current) webcamVideoRef.current.srcObject = webcamStream;
+				webcamStreamRef.current = webcamStream;
 			}
 
 			if (recorders.length === 0) {
