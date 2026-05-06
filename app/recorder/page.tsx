@@ -492,13 +492,13 @@ export default function RecorderPage() {
 						}`}>
 							{enabledModes.has("screen") && (
 								<div className="relative rounded-lg overflow-hidden bg-black border border-white/10">
-									<video ref={screenVideoRef} autoPlay muted playsInline className="w-full h-32 object-contain" />
+									<video ref={screenVideoRef} autoPlay muted playsInline className="w-full aspect-video object-contain" />
 									<div className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/70 rounded text-[9px] text-white/70">Screen</div>
 								</div>
 							)}
 							{enabledModes.has("webcam") && (
 								<div className="relative rounded-lg overflow-hidden bg-black border border-white/10">
-									<video ref={webcamVideoRef} autoPlay muted playsInline className="w-full h-32 object-cover" />
+									<video ref={webcamVideoRef} autoPlay muted playsInline className="w-full aspect-video object-contain" />
 									<div className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/70 rounded text-[9px] text-white/70">Webcam</div>
 								</div>
 							)}
