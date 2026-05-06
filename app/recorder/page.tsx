@@ -69,7 +69,7 @@ export default function RecorderPage() {
 	const displayStreamRef = useRef<MediaStream | null>(null);
 	const timerRef = useRef<number | null>(null);
 	const startTimeRef = useRef(0);
-	const channelRef = useRef<BroadcastChannel | null>(null);
+
 
 	const screenVideoRef = useRef<HTMLVideoElement>(null);
 	const webcamVideoRef = useRef<HTMLVideoElement>(null);
@@ -80,12 +80,6 @@ export default function RecorderPage() {
 
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search);
-		const channelId = params.get("channel");
-		if (channelId) {
-			const bc = new BroadcastChannel(`recorder-${channelId}`);
-			channelRef.current = bc;
-			bc.postMessage({ type: "recorder-ready" });
-		}
 
 		const modesParam = params.get("modes");
 		if (modesParam) {
@@ -95,14 +89,21 @@ export default function RecorderPage() {
 			if (parsed.length > 0) setEnabledModes(new Set(parsed));
 		}
 
-		return () => {
-			channelRef.current?.close();
-		};
+		// Notify the opener we're ready
+		if (window.opener) {
+			try {
+				window.opener.postMessage({ type: "recorder-ready" }, "*");
+			} catch (e) {
+				console.warn("[Recorder] Could not notify opener:", e);
+			}
+		}
 	}, []);
 
 	useEffect(() => {
 		const handleBeforeUnload = () => {
-			channelRef.current?.postMessage({ type: "recorder-closed" });
+			if (window.opener) {
+				try { window.opener.postMessage({ type: "recorder-closed" }, "*"); } catch { /* ignore */ }
+			}
 		};
 		window.addEventListener("beforeunload", handleBeforeUnload);
 		return () => window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -172,12 +173,17 @@ export default function RecorderPage() {
 		draw();
 	}, []);
 
+	const sendToOpener = useCallback((msg: Record<string, unknown>) => {
+		if (window.opener) {
+			try { window.opener.postMessage(msg, "*"); } catch (e) { console.warn("[Recorder] postMessage failed:", e); }
+		}
+	}, []);
+
 	const sendChunkToEditor = useCallback(async (streamIndex: number, blob: Blob) => {
-		const bc = channelRef.current;
-		if (!bc) return;
+		if (!window.opener) return;
 		try {
 			const buffer = await blob.arrayBuffer();
-			bc.postMessage({ type: "stream-chunk", streamIndex, data: buffer });
+			window.opener.postMessage({ type: "stream-chunk", streamIndex, data: buffer }, "*");
 			setStreamMetas((prev) => {
 				const next = [...prev];
 				if (next[streamIndex]) {
@@ -306,7 +312,7 @@ export default function RecorderPage() {
 				return { mode: rs.mode, filename: `${MODE_META[rs.mode].filePrefix}-${ts}.${ext}`, mimeType, bytesSent: 0 };
 			});
 			setStreamMetas(initMetas);
-			channelRef.current?.postMessage({ type: "stream-init", streams: initMetas.map((m) => ({ mode: m.mode, filename: m.filename, mimeType: m.mimeType })) });
+			sendToOpener({ type: "stream-init", streams: initMetas.map((m) => ({ mode: m.mode, filename: m.filename, mimeType: m.mimeType })) });
 
 			for (const rs of recorders) rs.recorder.start(1000);
 
@@ -360,8 +366,8 @@ export default function RecorderPage() {
 		audioCtxsRef.current = [];
 
 		// Tell the editor all data has been streamed
-		if (channelRef.current) {
-			channelRef.current.postMessage({ type: "stream-done" });
+		if (window.opener) {
+			sendToOpener({ type: "stream-done" });
 			setSentCount(streamMetas.length);
 			setPhase("done");
 		} else {

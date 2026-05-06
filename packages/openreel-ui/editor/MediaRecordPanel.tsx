@@ -42,8 +42,8 @@ interface StreamInfo {
   chunks: ArrayBuffer[];
 }
 
-function openRecorderPopup(modes: RecordingMode[], channelId: string): Window | null {
-  const url = `/recorder?channel=${channelId}&modes=${modes.join(",")}`;
+function openRecorderPopup(modes: RecordingMode[]): Window | null {
+  const url = `/recorder?modes=${modes.join(",")}`;
   const w = 700;
   const h = 550;
   const left = Math.round((screen.availWidth - w) / 2);
@@ -66,10 +66,8 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [isReceiving, setIsReceiving] = useState(false);
 
-  const channelRef = useRef<BroadcastChannel | null>(null);
   const popupWinRef = useRef<Window | null>(null);
   const pollRef = useRef<number | null>(null);
-  const channelIdRef = useRef<string>("");
   const streamsRef = useRef<StreamInfo[]>([]);
   const [streamProgress, setStreamProgress] = useState<Array<{ mode: RecordingMode; bytes: number }>>([]);
 
@@ -129,9 +127,7 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
     setIsImporting(false);
   }, [importMedia]);
 
-  const cleanupChannel = useCallback(() => {
-    channelRef.current?.close();
-    channelRef.current = null;
+  const cleanupPopup = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -149,40 +145,15 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
       await assembleAndImport();
       toast.success("Partial Recording", "Recorder closed early — imported available data");
     }
-    cleanupChannel();
+    cleanupPopup();
     setIsPopupOpen(false);
-  }, [assembleAndImport, cleanupChannel]);
+  }, [assembleAndImport, cleanupPopup]);
 
-  const handleOpenRecorder = useCallback(() => {
-    if (enabledModes.size === 0) return;
-
-    // If popup is still open, just focus it
-    if (isPopupOpen && popupWinRef.current && !popupWinRef.current.closed) {
-      popupWinRef.current.focus();
-      return;
-    }
-
-    // Clean up any previous channel
-    cleanupChannel();
-
-    const channelId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    channelIdRef.current = channelId;
-    const channel = new BroadcastChannel(`recorder-${channelId}`);
-    channelRef.current = channel;
-
-    const win = openRecorderPopup(Array.from(enabledModes), channelId);
-    popupWinRef.current = win;
-    setIsPopupOpen(true);
-
-    // Poll for window close — the only reliable cross-window detection method
-    pollRef.current = window.setInterval(() => {
-      if (popupWinRef.current && popupWinRef.current.closed) {
-        handlePrematureClose();
-      }
-    }, 500);
-
-    channel.onmessage = async (event) => {
+  // Listen for postMessage from the recorder popup
+  useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
       const data = event.data;
+      if (!data || typeof data.type !== "string") return;
 
       if (data.type === "stream-init") {
         // Recording started — initialize receive buffers
@@ -215,17 +186,44 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
         // All data streamed — assemble and import
         setIsReceiving(false);
         await assembleAndImport();
-        cleanupChannel();
+        cleanupPopup();
         setIsPopupOpen(false);
       }
     };
-  }, [enabledModes, isPopupOpen, cleanupChannel, handlePrematureClose, assembleAndImport]);
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [assembleAndImport, cleanupPopup]);
+
+  const handleOpenRecorder = useCallback(() => {
+    if (enabledModes.size === 0) return;
+
+    // If popup is still open, just focus it
+    if (isPopupOpen && popupWinRef.current && !popupWinRef.current.closed) {
+      popupWinRef.current.focus();
+      return;
+    }
+
+    // Clean up any previous state
+    cleanupPopup();
+
+    const win = openRecorderPopup(Array.from(enabledModes));
+    popupWinRef.current = win;
+    setIsPopupOpen(true);
+
+    // Poll for window close — the only reliable cross-window detection method
+    pollRef.current = window.setInterval(() => {
+      if (popupWinRef.current && popupWinRef.current.closed) {
+        handlePrematureClose();
+      }
+    }, 500);
+  }, [enabledModes, isPopupOpen, cleanupPopup, handlePrematureClose]);
 
   useEffect(() => {
     return () => {
-      cleanupChannel();
+      cleanupPopup();
     };
-  }, [cleanupChannel]);
+  }, [cleanupPopup]);
 
   return (
     <div className="space-y-2">

@@ -196,27 +196,34 @@ export const ScreenRecorder: React.FC<ScreenRecorderProps> = ({
                 </p>
                 <button
                   onClick={() => {
-                    const channelId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-                    const url = `/recorder?channel=${channelId}&modes=screen`;
+                    const url = `/recorder?modes=screen`;
                     const w = 700, h = 550;
                     const left = Math.round((screen.availWidth - w) / 2);
                     const top = Math.round((screen.availHeight - h) / 2);
                     window.open(url, "media-recorder", `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no`);
 
-                    const bc = new BroadcastChannel(`recorder-${channelId}`);
-                    bc.onmessage = (evt) => {
-                      if (evt.data.type === "recording-complete") {
-                        const files: Array<{ buffer: ArrayBuffer; filename: string; mimeType: string }> = evt.data.files;
-                        for (const f of files) {
-                          const blob = new Blob([f.buffer], { type: f.mimeType });
+                    // Use postMessage instead of BroadcastChannel (partitioned in iframes)
+                    const chunks: ArrayBuffer[] = [];
+                    let mimeType = "video/webm";
+                    const handler = (evt: MessageEvent) => {
+                      const d = evt.data;
+                      if (!d || typeof d.type !== "string") return;
+                      if (d.type === "stream-init" && d.streams?.[0]) {
+                        mimeType = d.streams[0].mimeType || mimeType;
+                      } else if (d.type === "stream-chunk") {
+                        chunks.push(d.data);
+                      } else if (d.type === "stream-done") {
+                        window.removeEventListener("message", handler);
+                        if (chunks.length > 0) {
+                          const blob = new Blob(chunks, { type: mimeType });
                           onRecordingComplete(blob);
                         }
-                        bc.close();
                         onClose();
-                      } else if (evt.data.type === "recorder-closed") {
-                        bc.close();
+                      } else if (d.type === "recorder-closed") {
+                        window.removeEventListener("message", handler);
                       }
                     };
+                    window.addEventListener("message", handler);
                   }}
                   className="mt-2 flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-medium rounded-lg transition-colors"
                 >
