@@ -94,12 +94,15 @@ export const MediaRecordPanel: React.FC<MediaRecordPanelProps> = () => {
 
     for (const stream of validStreams) {
       try {
-        const blob = new Blob(stream.chunks, { type: stream.mimeType });
-        const mediaFile = new File([blob], stream.filename, { type: stream.mimeType });
+        // Strip codec params (e.g. "video/webm;codecs=vp9,opus" → "video/webm")
+        // HighLevel's media API only recognizes base MIME types
+        const baseMime = stream.mimeType.split(";")[0].trim();
+        const blob = new Blob(stream.chunks, { type: baseMime });
+        const mediaFile = new File([blob], stream.filename, { type: baseMime });
         const result = await importMedia(mediaFile);
 
         if (uploadFn) {
-          uploadFn(blob, stream.filename, stream.mimeType)
+          uploadFn(blob, stream.filename, baseMime)
             .then((url) => {
               console.log(`[MediaRecordPanel] Recording uploaded: ${url}`);
               if (result.actionId) {
