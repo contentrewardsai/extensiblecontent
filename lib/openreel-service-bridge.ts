@@ -12,7 +12,7 @@ import type { MediaEditorContext } from "@/app/experiences/[experienceId]/media/
 
 declare global {
 	interface Window {
-		__CFS_ttsGenerate?: (text: string, options?: { voiceId?: string }) => Promise<{ blob: Blob; duration: number }>;
+		__CFS_ttsGenerate?: (text: string, options?: { voice?: string }) => Promise<{ blob: Blob; duration: number }>;
 		__CFS_sttGenerate?: (audioBlob: Blob) => Promise<{ words: Array<{ text: string; start: number; end: number }> }>;
 		FFmpegLocal?: {
 			extractSegment: (inputUrl: string, startSec: number, endSec: number) => Promise<Blob>;
