@@ -217,6 +217,7 @@ export const AIGenTab: React.FC = () => {
           />
         </FeatureSection>
 
+        {/* Multi-Camera Editing hidden until fully wired up
         <FeatureSection title="Pro Tools" icon={Video}>
           <FeatureCard
             icon={Video}
@@ -231,6 +232,7 @@ export const AIGenTab: React.FC = () => {
             onClick={() => handleFeatureClick("multicam")}
           />
         </FeatureSection>
+        */}
 
         {hasMergeFields && (
           <FeatureSection title="Template Data" icon={GitMerge}>

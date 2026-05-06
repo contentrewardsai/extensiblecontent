@@ -24,18 +24,69 @@ declare global {
 
 export async function generateTTS(
 	text: string,
-	options?: { voiceId?: string },
+	options?: { voiceId?: string; speed?: number },
 ): Promise<{ blob: Blob; duration: number }> {
 	if (!window.__CFS_ttsGenerate) {
 		throw new Error("TTS engine not loaded. Ensure Kokoro scripts are loaded.");
 	}
-	const result = await window.__CFS_ttsGenerate(text, options);
-	// __CFS_ttsGenerate may return just a Blob (legacy) or { blob, duration }
-	if (result instanceof Blob) {
-		const duration = await extractAudioDuration(result);
-		return { blob: result, duration };
+	const runtimeOpts = options?.voiceId ? { voice: options.voiceId } : undefined;
+	const raw = await window.__CFS_ttsGenerate(text, runtimeOpts);
+
+	let blob: Blob;
+	let duration: number;
+	if (raw instanceof Blob) {
+		blob = raw;
+		duration = await extractAudioDuration(raw);
+	} else {
+		blob = raw.blob;
+		duration = raw.duration;
 	}
-	return result;
+
+	const speed = options?.speed ?? 1.0;
+	if (speed !== 1.0) {
+		blob = await resampleAudioBlob(blob, speed);
+		duration = duration / speed;
+	}
+
+	return { blob, duration };
+}
+
+/** Re-encode an audio blob at a different playback rate to change its speed. */
+async function resampleAudioBlob(blob: Blob, speed: number): Promise<Blob> {
+	const ctx = new AudioContext();
+	const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+	const newLength = Math.ceil(decoded.length / speed);
+	const offline = new OfflineAudioContext(decoded.numberOfChannels, newLength, decoded.sampleRate);
+	const src = offline.createBufferSource();
+	src.buffer = decoded;
+	src.playbackRate.value = speed;
+	src.connect(offline.destination);
+	src.start(0);
+	const rendered = await offline.startRendering();
+	ctx.close().catch(() => {});
+
+	// Encode to WAV
+	const numCh = rendered.numberOfChannels;
+	const sr = rendered.sampleRate;
+	const bps = 16;
+	const blockAlign = numCh * (bps / 8);
+	const dataSize = rendered.length * blockAlign;
+	const buf = new ArrayBuffer(44 + dataSize);
+	const v = new DataView(buf);
+	const w = (off: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+	w(0, "RIFF"); v.setUint32(4, 36 + dataSize, true); w(8, "WAVE");
+	w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+	v.setUint16(22, numCh, true); v.setUint32(24, sr, true);
+	v.setUint32(28, sr * blockAlign, true); v.setUint16(32, blockAlign, true);
+	v.setUint16(34, bps, true); w(36, "data"); v.setUint32(40, dataSize, true);
+	const ch0 = rendered.getChannelData(0);
+	let off = 44;
+	for (let i = 0; i < rendered.length; i++) {
+		const s = Math.max(-1, Math.min(1, ch0[i]));
+		v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+		off += 2;
+	}
+	return new Blob([buf], { type: "audio/wav" });
 }
 
 /** Decode a Blob to extract its audio duration via AudioContext. */

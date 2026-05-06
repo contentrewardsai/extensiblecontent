@@ -13,7 +13,7 @@ import {
 import type { TtsProvider } from "../../stores/settings-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import type { ElevenLabsVoice } from "./tts-types";
-import { KOKORO_VOICES } from "./tts-constants";
+import { KOKORO_VOICES, KOKORO_LANGUAGES } from "./tts-constants";
 
 interface VoiceBrowserProps {
   provider: TtsProvider;
@@ -41,6 +41,7 @@ export const VoiceBrowser: React.FC<VoiceBrowserProps> = ({
   const [showAllVoices, setShowAllVoices] = useState(false);
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [kokoroLang, setKokoroLang] = useState("en-US");
 
   const isFavoriteVoice = useCallback(
     (voiceId: string) => favoriteVoices.some((v) => v.voiceId === voiceId),
@@ -111,29 +112,65 @@ export const VoiceBrowser: React.FC<VoiceBrowserProps> = ({
     });
   }, [allVoices, voiceSearch]);
 
+  const filteredKokoroVoices = useMemo(
+    () => KOKORO_VOICES.filter((v) => v.language === kokoroLang),
+    [kokoroLang],
+  );
+
+  const selectedLangMeta = useMemo(
+    () => KOKORO_LANGUAGES.find((l) => l.code === kokoroLang),
+    [kokoroLang],
+  );
+
   if (provider === "kokoro") {
     return (
-      <div className="space-y-2">
-        <label className="text-[10px] font-medium text-text-secondary">
-          Voice
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          {KOKORO_VOICES.map((voice) => (
-            <button
-              key={voice.id}
-              onClick={() => onSelectVoice(voice.id)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] transition-colors ${
-                selectedVoice === voice.id
-                  ? "bg-primary text-white font-medium"
-                  : "bg-background-tertiary text-text-secondary hover:text-text-primary border border-border"
-              }`}
-            >
-              <User size={10} />
-              <span>{voice.name}</span>
-              <span className="text-[8px] opacity-70">{voice.gender === "female" ? "F" : "M"}</span>
-              <span className="text-[7px] opacity-50">{voice.language === "en-GB" ? "🇬🇧" : "🇺🇸"}</span>
-            </button>
-          ))}
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-medium text-text-secondary">
+            Language
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {KOKORO_LANGUAGES.map((lang) => (
+              <button
+                key={lang.code}
+                onClick={() => setKokoroLang(lang.code)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] transition-colors ${
+                  kokoroLang === lang.code
+                    ? "bg-primary text-white font-medium"
+                    : "bg-background-tertiary text-text-secondary hover:text-text-primary border border-border"
+                }`}
+              >
+                <span>{lang.flag}</span>
+                <span>{lang.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-medium text-text-secondary">
+            Voice
+            <span className="ml-1 text-text-muted font-normal">
+              {selectedLangMeta?.flag} {filteredKokoroVoices.length} voices
+            </span>
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {filteredKokoroVoices.map((voice) => (
+              <button
+                key={voice.id}
+                onClick={() => onSelectVoice(voice.id)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] transition-colors ${
+                  selectedVoice === voice.id
+                    ? "bg-primary text-white font-medium"
+                    : "bg-background-tertiary text-text-secondary hover:text-text-primary border border-border"
+                }`}
+              >
+                <User size={10} />
+                <span>{voice.name}</span>
+                <span className="text-[8px] opacity-70">{voice.gender === "female" ? "F" : "M"}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     );

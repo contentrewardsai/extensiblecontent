@@ -14,7 +14,7 @@ interface UseTtsActionsOptions {
   enhancedPreview: string | null;
   allVoices: ElevenLabsVoice[];
   favoriteVoices: Array<{ voiceId: string; name: string; previewUrl?: string }>;
-  generateWithKokoro: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
+  generateWithKokoro: (text: string, voiceId: string, speed?: number, signal?: AbortSignal) => Promise<Blob>;
   generateWithElevenLabs: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
   enhanceViaLlm: (text: string, signal?: AbortSignal) => Promise<string>;
   setText: (text: string) => void;
@@ -172,7 +172,7 @@ export function useTtsActions(options: UseTtsActionsOptions): UseTtsActionsRetur
 
       const blob = provider === "elevenlabs"
         ? await generateWithElevenLabs(finalText, selectedVoice, controller.signal)
-        : await generateWithKokoro(finalText, selectedVoice, controller.signal);
+        : await generateWithKokoro(finalText, selectedVoice, speed, controller.signal);
 
       storeSetAudio(blob);
 

@@ -4,6 +4,7 @@ import { Slider } from "@openreel/ui";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
 import { toast } from "../../stores/notification-store";
+import { initializeEffectsBridge } from "../../bridges/effects-bridge";
 import {
   FILTER_PRESETS,
   FILTER_CATEGORIES,
@@ -107,8 +108,10 @@ export const FilterPresetsPanel: React.FC<FilterPresetsPanelProps> = ({
   );
 
   const handleApplyPreset = useCallback(
-    (preset: FilterPreset) => {
+    async (preset: FilterPreset) => {
       if (!targetClipId) return;
+
+      await initializeEffectsBridge();
 
       const existingEffects = getVideoEffects(targetClipId);
       existingEffects.forEach((effect) => {
@@ -125,8 +128,10 @@ export const FilterPresetsPanel: React.FC<FilterPresetsPanelProps> = ({
     [targetClipId, addVideoEffect, getVideoEffects, removeVideoEffect],
   );
 
-  const handleClearEffects = useCallback(() => {
+  const handleClearEffects = useCallback(async () => {
     if (!targetClipId) return;
+
+    await initializeEffectsBridge();
 
     const existingEffects = getVideoEffects(targetClipId);
     existingEffects.forEach((effect) => {

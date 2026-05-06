@@ -47,6 +47,7 @@ import { getMediaBridge, initializeMediaBridge } from "../bridges/media-bridge";
 import {
   createEmptyProject,
   calculateTimelineDuration,
+  addSubtitleToProject,
   type ClipHistoryEntry,
 } from "./project/index";
 import {
@@ -2937,6 +2938,10 @@ export const useProjectStore = create<ProjectState>()(
             backgroundColor: style.backgroundColor || undefined,
           } : undefined
         );
+
+        set((state) => ({
+          project: addSubtitleToProject(state.project, subtitle),
+        }));
       },
 
       /**
@@ -3767,8 +3772,23 @@ export const useProjectStore = create<ProjectState>()(
 
         const effect = effectsBridge.getEffect(clipId, result.effectId);
         if (effect) {
-          // Trigger re-render by updating project state
-          set({ project: { ...get().project, modifiedAt: Date.now() } });
+          const { project } = get();
+          const coreEffect = { id: effect.id, type: effect.type, enabled: effect.enabled, params: effect.params };
+          const updatedTracks = project.timeline.tracks.map((track) => ({
+            ...track,
+            clips: track.clips.map((clip) =>
+              clip.id === clipId
+                ? { ...clip, effects: [...clip.effects, coreEffect] }
+                : clip,
+            ),
+          }));
+          set({
+            project: {
+              ...project,
+              timeline: { ...project.timeline, tracks: updatedTracks },
+              modifiedAt: Date.now(),
+            },
+          });
         }
         return effect || null;
       },
@@ -3844,8 +3864,22 @@ export const useProjectStore = create<ProjectState>()(
           return false;
         }
 
-        // Trigger re-render by updating project state
-        set({ project: { ...get().project, modifiedAt: Date.now() } });
+        const { project } = get();
+        const updatedTracks = project.timeline.tracks.map((track) => ({
+          ...track,
+          clips: track.clips.map((clip) =>
+            clip.id === clipId
+              ? { ...clip, effects: clip.effects.filter((e) => e.id !== effectId) }
+              : clip,
+          ),
+        }));
+        set({
+          project: {
+            ...project,
+            timeline: { ...project.timeline, tracks: updatedTracks },
+            modifiedAt: Date.now(),
+          },
+        });
         return true;
       },
 

@@ -21,7 +21,7 @@ interface UseElevenLabsApiReturn {
   allModels: ElevenLabsModel[];
   isLoadingVoices: boolean;
   isLoadingModels: boolean;
-  generateWithKokoro: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
+  generateWithKokoro: (text: string, voiceId: string, speed?: number, signal?: AbortSignal) => Promise<Blob>;
   generateWithElevenLabs: (text: string, voiceId: string, signal?: AbortSignal) => Promise<Blob>;
   generateWithPiper: (text: string, voice: string, speed: number, signal?: AbortSignal) => Promise<Blob>;
   enhanceViaLlm: (text: string, signal?: AbortSignal) => Promise<string>;
@@ -151,10 +151,10 @@ export function useElevenLabsApi(options: UseElevenLabsApiOptions): UseElevenLab
     }
   }, [provider]);
 
-  const generateWithKokoro = useCallback(async (inputText: string, voiceId: string, signal?: AbortSignal): Promise<Blob> => {
+  const generateWithKokoro = useCallback(async (inputText: string, voiceId: string, speed?: number, signal?: AbortSignal): Promise<Blob> => {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     try {
-      const result = await kokoroGenerateTTS(inputText, { voiceId });
+      const result = await kokoroGenerateTTS(inputText, { voiceId, speed });
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       return result.blob;
     } catch (err) {

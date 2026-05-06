@@ -2,7 +2,11 @@ import React, { useState, useCallback, useMemo } from "react";
 import { Subtitles, AlertCircle, Loader2 } from "lucide-react";
 import { useProjectStore } from "../../stores/project-store";
 import { useUIStore } from "../../stores/ui-store";
-import type { Subtitle, SubtitleStyle } from "@openreel/core";
+import type { Subtitle, SubtitleStyle, CaptionAnimationStyle } from "@openreel/core";
+import {
+  CAPTION_ANIMATION_STYLES,
+  getAnimationStyleDisplayName,
+} from "@openreel/core";
 import {
   Select,
   SelectTrigger,
@@ -79,6 +83,7 @@ function audioBufferToWav(buffer: AudioBuffer): Blob {
 function groupWordsIntoSubtitles(
   words: WhisperWord[],
   clipStartTime: number,
+  animation: CaptionAnimationStyle = "word-highlight",
   maxWords = 10,
   maxDuration = 5,
 ): Subtitle[] {
@@ -94,25 +99,29 @@ function groupWordsIntoSubtitles(
     const isPunctuation = /[.!?]$/.test(word.text);
 
     if ((exceedsWords || exceedsDuration) && currentWords.length > 0) {
-      subtitles.push(buildSubtitle(currentWords, clipStartTime));
+      subtitles.push(buildSubtitle(currentWords, clipStartTime, animation));
       currentWords = [word];
       groupStart = word.start;
     } else {
       currentWords.push(word);
       if (isPunctuation && currentWords.length >= 3) {
-        subtitles.push(buildSubtitle(currentWords, clipStartTime));
+        subtitles.push(buildSubtitle(currentWords, clipStartTime, animation));
         currentWords = [];
       }
     }
   }
 
   if (currentWords.length > 0) {
-    subtitles.push(buildSubtitle(currentWords, clipStartTime));
+    subtitles.push(buildSubtitle(currentWords, clipStartTime, animation));
   }
   return subtitles;
 }
 
-function buildSubtitle(words: WhisperWord[], clipStartTime: number): Subtitle {
+function buildSubtitle(
+  words: WhisperWord[],
+  clipStartTime: number,
+  animation: CaptionAnimationStyle = "word-highlight",
+): Subtitle {
   const text = words.map((w) => w.text).join(" ").trim();
   return {
     id: `auto-caption-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -125,7 +134,7 @@ function buildSubtitle(words: WhisperWord[], clipStartTime: number): Subtitle {
       startTime: clipStartTime + w.start,
       endTime: clipStartTime + w.end,
     })),
-    animationStyle: "none",
+    animationStyle: animation,
   };
 }
 
@@ -138,6 +147,7 @@ export const AutoCaptionPanel: React.FC = () => {
   const [phase, setPhase] = useState<Phase>("idle");
   const [statusMessage, setStatusMessage] = useState("");
   const [selectedStyle, setSelectedStyle] = useState("default");
+  const [animationStyle, setAnimationStyle] = useState<CaptionAnimationStyle>("word-highlight");
   const [error, setError] = useState<string | null>(null);
   const [generatedSubtitles, setGeneratedSubtitles] = useState<Subtitle[]>([]);
 
@@ -243,7 +253,7 @@ export const AutoCaptionPanel: React.FC = () => {
         return;
       }
 
-      const subtitles = groupWordsIntoSubtitles(words, clip.startTime);
+      const subtitles = groupWordsIntoSubtitles(words, clip.startTime, animationStyle);
       setGeneratedSubtitles(subtitles);
       setPhase("done");
       setStatusMessage(`${subtitles.length} caption${subtitles.length !== 1 ? "s" : ""} generated.`);
@@ -252,7 +262,7 @@ export const AutoCaptionPanel: React.FC = () => {
       setPhase("error");
       setError(err instanceof Error ? err.message : "Transcription failed");
     }
-  }, [selectedClip, selectedMediaItem, allAudioVideoClips]);
+  }, [selectedClip, selectedMediaItem, allAudioVideoClips, animationStyle]);
 
   const handleApply = useCallback(async () => {
     for (const sub of generatedSubtitles) {
@@ -320,6 +330,25 @@ export const AutoCaptionPanel: React.FC = () => {
               {CAPTION_STYLE_PRESETS.map((preset) => (
                 <SelectItem key={preset.id} value={preset.id}>
                   {preset.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-text-secondary">Animation</span>
+          <Select
+            value={animationStyle}
+            onValueChange={(v) => setAnimationStyle(v as CaptionAnimationStyle)}
+            disabled={isProcessing}
+          >
+            <SelectTrigger className="w-auto min-w-[120px] bg-background-secondary border-border text-text-primary text-[10px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-background-secondary border-border">
+              {CAPTION_ANIMATION_STYLES.map((style) => (
+                <SelectItem key={style} value={style}>
+                  {getAnimationStyleDisplayName(style)}
                 </SelectItem>
               ))}
             </SelectContent>

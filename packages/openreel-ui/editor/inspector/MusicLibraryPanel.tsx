@@ -127,6 +127,7 @@ export const MusicLibraryPanel: React.FC = () => {
     let cancelled = false;
     const loadSounds = async () => {
       const engine = await getSoundLibraryEngine();
+      await engine.ensureInitialized();
       if (!cancelled) {
         setAllMusic(engine.getMusic());
         setAllSfx(engine.getSFX());
