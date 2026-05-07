@@ -38,7 +38,7 @@ import {
 } from "@openreel/core";
 import { ExportDialog } from "./ExportDialog";
 import { ScreenRecorder } from "./ScreenRecorder";
-import { HistoryPanel } from "./inspector/HistoryPanel";
+
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import { toast } from "../stores/notification-store";
@@ -87,6 +87,8 @@ export const Toolbar: React.FC = () => {
     toggleKeyframeEditor,
     panels,
     togglePanel,
+    isHistoryOpen,
+    setHistoryOpen,
   } = useUIStore();
   const { mode: themeMode, toggleTheme } = useThemeStore();
   const { navigate } = useRouter();
@@ -94,7 +96,7 @@ export const Toolbar: React.FC = () => {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isRecorderOpen, setIsRecorderOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
   const { importMedia } = useProjectStore();
   const { track } = useAnalytics();
 
@@ -861,7 +863,7 @@ export const Toolbar: React.FC = () => {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+              onClick={() => setHistoryOpen(!isHistoryOpen)}
               className={`p-2 rounded-lg transition-colors ${
                 isHistoryOpen
                   ? "bg-primary/20 text-primary"
@@ -1047,29 +1049,6 @@ export const Toolbar: React.FC = () => {
       />
 
       <SettingsDialog />
-
-      {isHistoryOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-40"
-            onClick={() => setIsHistoryOpen(false)}
-          />
-          <div className="fixed top-16 right-0 bottom-0 w-80 bg-background-secondary border-l border-border z-50 shadow-2xl animate-in slide-in-from-right duration-200">
-            <div className="flex items-center justify-between p-3 border-b border-border">
-              <span className="text-sm font-medium text-text-primary">Action History</span>
-              <button
-                onClick={() => setIsHistoryOpen(false)}
-                className="p-1.5 rounded hover:bg-background-tertiary text-text-muted hover:text-text-primary transition-colors"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="h-[calc(100%-49px)]">
-              <HistoryPanel />
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 };

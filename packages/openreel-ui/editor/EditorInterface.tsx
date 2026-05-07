@@ -6,6 +6,7 @@ import { Preview } from "./Preview";
 import { InspectorPanel } from "./InspectorPanel";
 import { Timeline } from "./Timeline";
 import { KeyframeEditorPanel } from "./KeyframeEditorPanel";
+import { HistoryPanel } from "./inspector/HistoryPanel";
 import { AudioMixer } from "../audio-mixer";
 import { KeyboardShortcutsOverlay } from "./KeyboardShortcutsOverlay";
 import { PanelErrorBoundary } from "../ErrorBoundary";
@@ -172,6 +173,8 @@ export const EditorInterface: React.FC = () => {
     getSelectedClipIds,
     panels,
     setPanelVisible,
+    isHistoryOpen,
+    setHistoryOpen,
   } = useUIStore();
   const { project, updateClipKeyframes } = useProjectStore();
   const tracks = project.timeline.tracks;
@@ -331,6 +334,24 @@ export const EditorInterface: React.FC = () => {
               copiedKeyframes={copiedKeyframes}
             />
           </PanelErrorBoundary>
+        )}
+
+        {/* History Sidebar — participates in flex layout so it pushes content */}
+        {isHistoryOpen && (
+          <div className="w-72 shrink-0 bg-background-secondary border-l border-border flex flex-col animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between p-3 border-b border-border">
+              <span className="text-sm font-medium text-text-primary">Action History</span>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                className="p-1.5 rounded hover:bg-background-tertiary text-text-muted hover:text-text-primary transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <HistoryPanel />
+            </div>
+          </div>
         )}
       </div>
 

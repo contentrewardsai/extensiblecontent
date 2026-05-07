@@ -35,13 +35,14 @@ export const HistoryPanel: React.FC = () => {
   const [newSnapshotName, setNewSnapshotName] = useState("");
   const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
 
-  const getClipDescription = (type: "shape" | "text" | "svg" | "sticker"): string => {
+  const getClipDescription = (type: "shape" | "text" | "svg" | "sticker", action?: "create" | "delete"): string => {
+    const verb = action === "delete" ? "Delete" : "Create";
     switch (type) {
-      case "text": return "Create text clip";
-      case "shape": return "Create shape";
-      case "svg": return "Import SVG";
-      case "sticker": return "Add sticker";
-      default: return "Create clip";
+      case "text": return `${verb} text clip`;
+      case "shape": return `${verb} shape`;
+      case "svg": return action === "delete" ? "Delete SVG" : "Import SVG";
+      case "sticker": return action === "delete" ? "Remove sticker" : "Add sticker";
+      default: return `${verb} clip`;
     }
   };
 
@@ -64,7 +65,7 @@ export const HistoryPanel: React.FC = () => {
       clipUndoStack.forEach((entry, idx) => {
         displayEntries.push({
           id: `clip-${entry.clipId}-${idx}`,
-          description: getClipDescription(entry.type),
+          description: getClipDescription(entry.type, entry.action),
           timestamp: Date.now() - (clipUndoStack.length - idx) * 1000,
           isCurrent: idx === clipUndoStack.length - 1 && clipRedoStack.length === 0,
           isClipEntry: true,

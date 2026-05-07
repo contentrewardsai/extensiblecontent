@@ -86,6 +86,7 @@ export interface UIState {
   motionPathMode: boolean;
   motionPathClipId: string | null;
   keyframeEditorOpen: boolean;
+  isHistoryOpen: boolean;
   select: (item: SelectionItem, addToSelection?: boolean) => void;
   selectMultiple: (items: SelectionItem[]) => void;
   deselect: (itemId: string) => void;
@@ -127,6 +128,8 @@ export interface UIState {
   setMotionPathMode: (enabled: boolean, clipId?: string) => void;
   setKeyframeEditorOpen: (open: boolean) => void;
   toggleKeyframeEditor: () => void;
+  setHistoryOpen: (open: boolean) => void;
+  toggleHistory: () => void;
   exportState: {
     isExporting: boolean;
     progress: number;
@@ -219,6 +222,8 @@ export const useUIStore = create<UIState>()(
         motionPathClipId: null,
 
         keyframeEditorOpen: false,
+
+        isHistoryOpen: false,
 
         showWelcomeScreen: true,
         skipWelcomeScreen: false,
@@ -517,6 +522,14 @@ export const useUIStore = create<UIState>()(
 
         toggleKeyframeEditor: () => {
           set((state) => ({ keyframeEditorOpen: !state.keyframeEditorOpen }));
+        },
+
+        setHistoryOpen: (open: boolean) => {
+          set({ isHistoryOpen: open });
+        },
+
+        toggleHistory: () => {
+          set((state) => ({ isHistoryOpen: !state.isHistoryOpen }));
         },
 
         setShowWelcomeScreen: (show: boolean) => {
