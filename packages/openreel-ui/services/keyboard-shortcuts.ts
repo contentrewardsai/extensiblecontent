@@ -513,19 +513,22 @@ class KeyboardShortcutsManager {
   startListening(): void {
     if (this.isListening) return;
     this.isListening = true;
-    window.addEventListener("keydown", this.handleKeyDown);
+    // Use capture phase to intercept before parent frame handlers (HighLevel iframe)
+    document.addEventListener("keydown", this.handleKeyDown, true);
   }
 
   stopListening(): void {
     if (!this.isListening) return;
     this.isListening = false;
-    window.removeEventListener("keydown", this.handleKeyDown);
+    document.removeEventListener("keydown", this.handleKeyDown, true);
   }
 
   private handleKeyDown = (e: KeyboardEvent): void => {
+    // Skip when typing in text inputs or contenteditable elements
     if (
       e.target instanceof HTMLInputElement ||
-      e.target instanceof HTMLTextAreaElement
+      e.target instanceof HTMLTextAreaElement ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable)
     ) {
       return;
     }

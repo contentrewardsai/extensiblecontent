@@ -86,6 +86,7 @@ export interface ProjectState {
   // Action system
   actionExecutor: ActionExecutor;
   actionHistory: ActionHistory;
+  historyVersion: number;
 
   // Clip history for graphics/text clips (outside main timeline)
   clipUndoStack: ClipHistoryEntry[];
@@ -419,12 +420,19 @@ export const useProjectStore = create<ProjectState>()(
     const actionHistory = new ActionHistory();
     const actionExecutor = new ActionExecutor(actionHistory);
 
+    // Auto-bump historyVersion whenever the action history changes (push/undo/redo)
+    // This ensures Zustand triggers re-renders for components watching historyVersion
+    actionHistory.subscribe(() => {
+      set({ historyVersion: get().historyVersion + 1 });
+    });
+
     return {
       // Initial state - create empty project (Requirement 1.1)
       project: createEmptyProject(),
       photoProjects: new Map(),
       actionExecutor,
       actionHistory,
+      historyVersion: 0,
       clipUndoStack: [] as ClipHistoryEntry[],
       clipRedoStack: [] as ClipHistoryEntry[],
       isLoading: false,
@@ -438,10 +446,14 @@ export const useProjectStore = create<ProjectState>()(
       ) => {
         const newHistory = new ActionHistory();
         const newExecutor = new ActionExecutor(newHistory);
+        newHistory.subscribe(() => {
+          set({ historyVersion: get().historyVersion + 1 });
+        });
         set({
           project: createEmptyProject(name, settings),
           actionHistory: newHistory,
           actionExecutor: newExecutor,
+          historyVersion: 0,
           clipUndoStack: [],
           clipRedoStack: [],
           error: null,
@@ -470,6 +482,11 @@ export const useProjectStore = create<ProjectState>()(
         const newHistory = new ActionHistory();
         const newExecutor = new ActionExecutor(newHistory);
 
+        // Subscribe new history to auto-bump historyVersion
+        newHistory.subscribe(() => {
+          set({ historyVersion: get().historyVersion + 1 });
+        });
+
         // Fix legacy projects where timeline.duration was never persisted
         const computedDuration = project.timeline.tracks.reduce((max, track) =>
           track.clips.reduce((m, c) => Math.max(m, c.startTime + c.duration), max), 0);
@@ -481,6 +498,7 @@ export const useProjectStore = create<ProjectState>()(
           project: fixedProject,
           actionHistory: newHistory,
           actionExecutor: newExecutor,
+          historyVersion: 0,
           clipUndoStack: [],
           clipRedoStack: [],
           error: null,
@@ -1410,6 +1428,8 @@ export const useProjectStore = create<ProjectState>()(
         const result = await actionExecutor.execute(action, project);
         if (result.success) {
           set({ project: { ...project } });
+        } else {
+          console.warn("[ProjectStore] removeClip failed:", result.error);
         }
         return result;
       },

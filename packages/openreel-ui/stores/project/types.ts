@@ -48,6 +48,7 @@ export interface ProjectState {
   photoProjects: Map<string, PhotoProject>;
   actionExecutor: ActionExecutor;
   actionHistory: ActionHistory;
+  historyVersion: number;
   clipUndoStack: ClipHistoryEntry[];
   clipRedoStack: ClipHistoryEntry[];
   isLoading: boolean;

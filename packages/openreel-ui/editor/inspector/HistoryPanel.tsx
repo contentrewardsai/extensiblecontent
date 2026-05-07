@@ -28,7 +28,7 @@ interface DisplayEntry {
 }
 
 export const HistoryPanel: React.FC = () => {
-  const { actionHistory, undo, redo, canUndo, canRedo, clipUndoStack, clipRedoStack } = useProjectStore();
+  const { actionHistory, undo, redo, canUndo, canRedo, clipUndoStack, clipRedoStack, historyVersion } = useProjectStore();
   const [combinedHistory, setCombinedHistory] = useState<DisplayEntry[]>([]);
   const [snapshots, setSnapshots] = useState<HistorySnapshot[]>([]);
   const [showSnapshots, setShowSnapshots] = useState(false);
@@ -77,7 +77,7 @@ export const HistoryPanel: React.FC = () => {
     updateHistory();
     const unsubscribe = actionHistory.subscribe(updateHistory);
     return () => unsubscribe();
-  }, [actionHistory, clipUndoStack, clipRedoStack]);
+  }, [actionHistory, clipUndoStack, clipRedoStack, historyVersion]);
 
   const handleUndo = useCallback(async () => {
     if (canUndo()) {
