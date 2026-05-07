@@ -50,6 +50,8 @@ export const HistoryPanel: React.FC = () => {
       const actionEntries = actionHistory.getDisplayHistory();
       setSnapshots(actionHistory.getSnapshots());
 
+      console.log("[HistoryPanel] updateHistory fired | actionEntries:", actionEntries.length, "| clipUndoStack:", clipUndoStack.length, "| historyVersion:", historyVersion, "| undoStackSize:", actionHistory.getUndoStackSize());
+
       const displayEntries: DisplayEntry[] = actionEntries.map((item, idx) => ({
         id: `action-${item.entry.action.id}-${idx}`,
         description: item.entry.description,

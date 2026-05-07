@@ -51,6 +51,7 @@ export class ActionExecutor {
     const validationResult = this.validator.validate(action, project);
 
     if (!validationResult.valid) {
+      console.warn("[ActionExecutor] Validation failed for", action.type, ":", validationResult.errors);
       return {
         success: false,
         error: {
@@ -60,20 +61,29 @@ export class ActionExecutor {
         },
       };
     }
-    const projectSnapshot = JSON.parse(JSON.stringify(project));
-    const inverseAction = this.inverseGenerator.generate(
-      action,
-      projectSnapshot,
-    );
+    let inverseAction: Action | null = null;
+    try {
+      // Use structured clone to avoid JSON.stringify failures with Blobs/Files
+      const projectSnapshot = this.safeCloneProject(project);
+      inverseAction = this.inverseGenerator.generate(
+        action,
+        projectSnapshot,
+      );
+    } catch (snapshotError) {
+      console.warn("[ActionExecutor] Snapshot/inverse generation failed (non-fatal):", snapshotError);
+      // Continue without inverse — the action can still be applied, just won't be undoable
+    }
     try {
       await this.applyAction(action as TimelineAction, project);
       this.history.push(action, inverseAction);
+      console.log("[ActionExecutor] Action applied & pushed to history:", action.type, "| History size:", this.history.getUndoStackSize());
 
       return {
         success: true,
         actionId: action.id,
       };
     } catch (error) {
+      console.error("[ActionExecutor] applyAction threw:", action.type, error);
       return {
         success: false,
         error: {
@@ -82,6 +92,29 @@ export class ActionExecutor {
             error instanceof Error ? error.message : "Unknown error occurred",
         },
       };
+    }
+  }
+
+  /**
+   * Safe clone that handles non-serializable fields (Blob, File, FileHandle).
+   * Falls back to a shallow structure if structuredClone isn't available.
+   */
+  private safeCloneProject(project: Project): Project {
+    try {
+      // Strip non-cloneable fields before cloning
+      const strippable = project.mediaLibrary.items.map((item) => ({
+        ...item,
+        blob: undefined,
+        fileHandle: undefined,
+      }));
+      const cleanProject = {
+        ...project,
+        mediaLibrary: { ...project.mediaLibrary, items: strippable },
+      };
+      return JSON.parse(JSON.stringify(cleanProject));
+    } catch {
+      // Last resort: return the project as-is (inverse generation may be imperfect)
+      return project;
     }
   }
 

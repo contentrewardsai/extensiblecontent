@@ -36,6 +36,8 @@ export type ClipHistoryEntryType = "shape" | "text" | "svg" | "sticker";
 
 export interface ClipHistoryEntry {
   type: ClipHistoryEntryType;
+  /** 'create' means undo = delete; 'delete' means undo = re-create */
+  action: "create" | "delete";
   clipId: string;
   trackId: string;
   clipData: ShapeClip | TextClip | SVGClip | StickerClip;

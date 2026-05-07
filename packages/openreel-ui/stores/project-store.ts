@@ -504,6 +504,10 @@ export const useProjectStore = create<ProjectState>()(
           error: null,
         });
 
+        // Auto-create an initial snapshot so users have a baseline to compare against
+        newHistory.createSnapshot("Template Loaded");
+        console.log("[ProjectStore] loadProject complete — initial snapshot created, tracks:", fixedProject.timeline.tracks.length, "clips:", fixedProject.timeline.tracks.reduce((n, t) => n + t.clips.length, 0));
+
         // Auto-restore placeholder assets from saved FileSystemFileHandles (same machine)
         const placeholders = fixedProject.mediaLibrary.items.filter(
           (item) => item.isPlaceholder && item.sourceFile,
@@ -2319,6 +2323,60 @@ export const useProjectStore = create<ProjectState>()(
         // Check clip undo stack first (higher priority than global action history)
         if (clipUndoStack.length > 0) {
           const entry = clipUndoStack[clipUndoStack.length - 1];
+
+          // Undo 'delete' = recreate the clip from saved data
+          if (entry.action === 'delete') {
+            let restored = false;
+            if (entry.type === 'shape') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) {
+                const shapeData = entry.clipData as any;
+                graphicsEngine.createShape(
+                  { shapeType: shapeData.shapeType, width: 200, height: 200, style: shapeData.style },
+                  entry.trackId, shapeData.startTime, shapeData.duration,
+                );
+                restored = true;
+              }
+            } else if (entry.type === 'text') {
+              const titleEngine = useEngineStore.getState().getTitleEngine();
+              if (titleEngine) {
+                const textData = entry.clipData as any;
+                titleEngine.createTextClip({
+                  trackId: entry.trackId,
+                  startTime: textData.startTime,
+                  text: textData.text,
+                  duration: textData.duration,
+                  style: textData.style,
+                });
+                restored = true;
+              }
+            } else if (entry.type === 'svg') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) {
+                const svgData = entry.clipData as any;
+                graphicsEngine.importSVG(svgData.svgContent, entry.trackId, svgData.startTime, svgData.duration);
+                restored = true;
+              }
+            } else if (entry.type === 'sticker') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) {
+                const stickerData = entry.clipData as any;
+                graphicsEngine.addStickerClip({ ...stickerData, trackId: entry.trackId });
+                restored = true;
+              }
+            }
+
+            if (restored) {
+              set({
+                project: { ...project, modifiedAt: Date.now() },
+                clipUndoStack: clipUndoStack.slice(0, -1),
+                clipRedoStack: [...clipRedoStack, entry],
+              });
+              return { success: true };
+            }
+          }
+
+          // Undo 'create' = delete the clip (original behavior)
           let deleted = false;
 
           // Dispatch to appropriate engine based on clip type, then remove from engines' internal state
@@ -2441,6 +2499,33 @@ export const useProjectStore = create<ProjectState>()(
         // Check clip redo stack first (graphics/text/svg/sticker clips previously undone)
         if (clipRedoStack.length > 0) {
           const entry = clipRedoStack[clipRedoStack.length - 1];
+          // Redo for 'delete' action = delete again
+          if (entry.action === 'delete') {
+            let deleted = false;
+            if (entry.type === 'shape') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) { deleted = graphicsEngine.deleteShapeClip(entry.clipId); }
+            } else if (entry.type === 'text') {
+              const titleEngine = useEngineStore.getState().getTitleEngine();
+              if (titleEngine) { deleted = titleEngine.deleteTextClip(entry.clipId); }
+            } else if (entry.type === 'svg') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) { deleted = graphicsEngine.deleteSVGClip(entry.clipId); }
+            } else if (entry.type === 'sticker') {
+              const graphicsEngine = useEngineStore.getState().getGraphicsEngine();
+              if (graphicsEngine) { deleted = graphicsEngine.deleteStickerClip(entry.clipId); }
+            }
+            if (deleted) {
+              set({
+                project: { ...get().project, modifiedAt: Date.now() },
+                clipUndoStack: [...clipUndoStack, entry],
+                clipRedoStack: clipRedoStack.slice(0, -1),
+              });
+              return { success: true };
+            }
+          }
+
+          // Redo for 'create' action = recreate (original behavior)
           let restored = false;
           let newTrackId: string | undefined;
 
@@ -2732,6 +2817,7 @@ export const useProjectStore = create<ProjectState>()(
         const { clipUndoStack } = get();
         const historyEntry: ClipHistoryEntry = {
           type: "text",
+          action: "create",
           clipId: textClip.id,
           trackId,
           clipData: { ...textClip }, // Store full clip data for redo reconstruction
@@ -3181,6 +3267,7 @@ export const useProjectStore = create<ProjectState>()(
         const { clipUndoStack } = get();
         const historyEntry: ClipHistoryEntry = {
           type: "shape",
+          action: "create",
           clipId: shapeClip.id,
           trackId,
           clipData: { ...shapeClip }, // Store full clip data for redo reconstruction
@@ -3328,6 +3415,7 @@ export const useProjectStore = create<ProjectState>()(
           const { clipUndoStack } = get();
           const historyEntry: ClipHistoryEntry = {
             type: "svg",
+            action: "create",
             clipId: svgClip.id,
             trackId,
             clipData: { ...svgClip }, // Store full SVG clip including svgContent for redo
@@ -3440,15 +3528,38 @@ export const useProjectStore = create<ProjectState>()(
         if (!graphicsEngine) {
           return false;
         }
+        // Save clip data for undo before deleting
+        const clipData = graphicsEngine.getShapeClip(clipId);
         const deleted = graphicsEngine.deleteShapeClip(clipId);
         if (deleted) {
-          const { project } = get();
-          set({
-            project: {
-              ...project,
-              modifiedAt: Date.now(),
-            },
-          });
+          const { project, clipUndoStack } = get();
+          // Check if the track is now empty after deletion
+          const trackId = clipData?.trackId;
+          const hadEmptyTrack = trackId ? !graphicsEngine.getAllShapeClips().some(c => c.trackId === trackId) : false;
+          if (clipData) {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+              clipUndoStack: [...clipUndoStack, {
+                type: 'shape' as const,
+                action: 'delete' as const,
+                clipId,
+                trackId: clipData.trackId || '',
+                clipData: clipData as any,
+                hadEmptyTrackUndo: hadEmptyTrack,
+              }],
+              clipRedoStack: [],
+            });
+          } else {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+            });
+          }
         }
         return deleted;
       },
@@ -3458,15 +3569,33 @@ export const useProjectStore = create<ProjectState>()(
         if (!graphicsEngine) {
           return false;
         }
+        const clipData = graphicsEngine.getSVGClip(clipId);
         const deleted = graphicsEngine.deleteSVGClip(clipId);
         if (deleted) {
-          const { project } = get();
-          set({
-            project: {
-              ...project,
-              modifiedAt: Date.now(),
-            },
-          });
+          const { project, clipUndoStack } = get();
+          if (clipData) {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+              clipUndoStack: [...clipUndoStack, {
+                type: 'svg' as const,
+                action: 'delete' as const,
+                clipId,
+                trackId: clipData.trackId || '',
+                clipData: clipData as any,
+              }],
+              clipRedoStack: [],
+            });
+          } else {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+            });
+          }
         }
         return deleted;
       },
@@ -3476,15 +3605,33 @@ export const useProjectStore = create<ProjectState>()(
         if (!graphicsEngine) {
           return false;
         }
+        const clipData = graphicsEngine.getStickerClip(clipId);
         const deleted = graphicsEngine.deleteStickerClip(clipId);
         if (deleted) {
-          const { project } = get();
-          set({
-            project: {
-              ...project,
-              modifiedAt: Date.now(),
-            },
-          });
+          const { project, clipUndoStack } = get();
+          if (clipData) {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+              clipUndoStack: [...clipUndoStack, {
+                type: 'sticker' as const,
+                action: 'delete' as const,
+                clipId,
+                trackId: clipData.trackId || '',
+                clipData: clipData as any,
+              }],
+              clipRedoStack: [],
+            });
+          } else {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+            });
+          }
         }
         return deleted;
       },
@@ -3494,15 +3641,33 @@ export const useProjectStore = create<ProjectState>()(
         if (!titleEngine) {
           return false;
         }
+        const clipData = titleEngine.getTextClip(clipId);
         const deleted = titleEngine.deleteTextClip(clipId);
         if (deleted) {
-          const { project } = get();
-          set({
-            project: {
-              ...project,
-              modifiedAt: Date.now(),
-            },
-          });
+          const { project, clipUndoStack } = get();
+          if (clipData) {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+              clipUndoStack: [...clipUndoStack, {
+                type: 'text' as const,
+                action: 'delete' as const,
+                clipId,
+                trackId: clipData.trackId || '',
+                clipData: clipData as any,
+              }],
+              clipRedoStack: [],
+            });
+          } else {
+            set({
+              project: {
+                ...project,
+                modifiedAt: Date.now(),
+              },
+            });
+          }
         }
         return deleted;
       },
